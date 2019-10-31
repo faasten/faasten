@@ -5,5 +5,5 @@ sudo chown :snapfaas /etc/snapfaas
 sudo chmod 775 /etc/snapfaas
 
 cp ./bins/snapctr/default-conf.yaml /etc/snapfaas
-cp ./vmlinux /etc/snapfaas
+cp ./resources/vmlinux /etc/snapfaas
 
