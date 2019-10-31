@@ -8,6 +8,8 @@ edition = "2018"
 name = "snapctr"
 path = "bins/snapctr/main.rs"
 
+[lib]
+
 [dependencies]
 url = "2.1.0"
 clap = "2.33.0"
