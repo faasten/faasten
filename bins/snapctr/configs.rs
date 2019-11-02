@@ -26,10 +26,10 @@ impl ControllerConfig {
         };
         info!("Using controller config: {}", config_url);
 
-        return ControllerConfig::new_controller_config(&config_url);
+        return ControllerConfig::initialize(&config_url);
     }
 
-    fn new_controller_config(config_url: &str) -> ControllerConfig {
+    fn initialize(config_url: &str) -> ControllerConfig {
         if let Ok(config_url) = Url::parse(config_url) {
             let config_path = Path::new(config_url.path());
             // populate a ControllerConfig struct from the yaml file

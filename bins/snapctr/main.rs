@@ -17,6 +17,7 @@ use simple_logger;
 use shellexpand;
 
 mod configs;
+mod gateway;
 
 fn main() {
 
@@ -47,7 +48,6 @@ fn main() {
                           .get_matches();
 
     // populate the in-memory config struct
-
     let mut ctr_config = configs::ControllerConfig::new(matches.value_of("config"));
 
     if let Some(kernel_url) = matches.value_of("kernel") {
@@ -63,7 +63,9 @@ fn main() {
     // prepare worker pool
 
 
-    // start request manager
+    // start gateway
+    // TODO:support an HTTP gateway in addition to file gateway
+    
 
 
     // start admitting and processing incoming requests
