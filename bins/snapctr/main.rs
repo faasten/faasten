@@ -15,6 +15,7 @@ use url::{Url, ParseError};
 use clap::{Arg, App};
 use simple_logger;
 use shellexpand;
+use gateway::Gateway;
 
 mod configs;
 mod gateway;
@@ -65,6 +66,11 @@ fn main() {
 
     // start gateway
     // TODO:support an HTTP gateway in addition to file gateway
+    let request_file_url = matches.value_of("requests file").expect("rf");
+    let frontend = gateway::FileGateway::listen(request_file_url).unwrap();
+    println!("{:?}", frontend );
+    let it = frontend.incoming();
+
     
 
 

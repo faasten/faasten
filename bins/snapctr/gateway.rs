@@ -1,25 +1,21 @@
 
-use std::io::BufReader;
+use std::io::{BufReader, Lines};
 use std::fs::File;
+use std::io::BufRead;
 
-pub trait Gateway<T> {
+pub trait Gateway<T, I> {
     fn listen(source: &str) -> std::io::Result<T>;
-//    fn incoming<T>(&self) -> T
-//        where T: Iterator;
+    fn incoming(self) -> I
+        where I: Iterator;
 }
 
+#[derive(Debug)]
 pub struct FileGateway {
     url: String,
-//    file: File,
     reader: BufReader<File>,
 }
 
-impl FileGateway {
-//    pub fn new() -> FileGateway {
-//    }
-}
-
-impl Gateway<FileGateway> for FileGateway {
+impl Gateway<FileGateway, Lines<BufReader<File>>> for FileGateway {
     fn listen(source: &str) -> std::io::Result<FileGateway>{
         match File::open(source) {
             Err(e) => Err(e),
@@ -31,6 +27,10 @@ impl Gateway<FileGateway> for FileGateway {
                 })
             }
         }
+    }
+
+    fn incoming(self) -> Lines<BufReader<File>> {
+        return self.reader.lines();
     }
 }
 
