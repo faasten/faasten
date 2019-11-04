@@ -17,4 +17,7 @@ log = "0.4"
 simple_logger = "1.3.0"
 serde = {version = "1.0.102", features = ["derive"]}
 serde_yaml = "0.8.11"
+serde_json = "*"
 shellexpand = "1.0.0"
+futures = "0.1.29"
+tokio = "0.1.22"

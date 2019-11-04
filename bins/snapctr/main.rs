@@ -14,11 +14,51 @@ use log::{error, warn, info};
 use url::{Url, ParseError};
 use clap::{Arg, App};
 use simple_logger;
-use shellexpand;
+use futures::{Future, Async, Poll};
 use gateway::Gateway;
+use tokio;
 
 mod configs;
 mod gateway;
+mod request;
+
+struct RequestEcho {
+    request: request::Request,
+}
+
+
+impl Future for RequestEcho {
+    type Item = ();
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        println!("Function: {}", self.request.function);
+        println!("Payload: {:?}", self.request.payload);
+        return Ok(Async::Ready(()));
+    }
+}
+
+struct Display<T>(T);
+
+impl<T> Future for Display<T>
+    where
+        T: Future,
+        T::Item: std::fmt::Display,
+{
+    type Item = ();
+    type Error = T::Error;
+
+    fn poll(&mut self) -> Poll<(), T::Error> {
+        let value = match self.0.poll() {
+            Ok(Async::Ready(value)) => value,
+            Ok(Async::NotReady) => return Ok(Async::NotReady),
+            Err(err) => return Err(err),
+        };
+
+        println!("VALUE: {}", value);
+        Ok(Async::Ready(()))
+    }
+}
 
 fn main() {
 
@@ -46,6 +86,11 @@ fn main() {
                                .long("requests_file")
                                .takes_value(true)
                                .help("File containing JSON-lines of requests"))
+                          .arg(Arg::with_name("port number")
+                               .long("port")
+                               .short("p")
+                               .takes_value(true)
+                               .help("Port on which SnapFaaS accepts requests"))
                           .get_matches();
 
     // populate the in-memory config struct
@@ -67,14 +112,14 @@ fn main() {
     // start gateway
     // TODO:support an HTTP gateway in addition to file gateway
     let request_file_url = matches.value_of("requests file").expect("rf");
-    let frontend = gateway::FileGateway::listen(request_file_url).unwrap();
-    println!("{:?}", frontend );
-    let it = frontend.incoming();
-
-    
-
+    let gateway = gateway::FileGateway::listen(request_file_url).unwrap();
 
     // start admitting and processing incoming requests
+    for req in gateway.incoming() {
+        println!("{:?}", req);
+        let future = RequestEcho{request: req.unwrap()};
+        tokio::run(future);
+    }
 
 }
 

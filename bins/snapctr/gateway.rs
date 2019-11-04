@@ -2,11 +2,21 @@
 use std::io::{BufReader, Lines};
 use std::fs::File;
 use std::io::BufRead;
+use std::net::TcpListener;
+use super::request;
 
-pub trait Gateway<T, I> {
-    fn listen(source: &str) -> std::io::Result<T>;
-    fn incoming(self) -> I
-        where I: Iterator;
+pub const DEFAULT_PORT: &str = "8888";
+
+/// A gateway listens on a endpoint and accepts requests
+/// For example a FileGateway "listens" to a file and accepts
+/// each line as request JSON string.
+/// A HTTPGateway listens on a TCP port and accepts requests from
+/// HTTP POST commands.
+pub trait Gateway {
+    type Iter: Iterator;
+    fn listen(source: &str) -> std::io::Result<Self>
+        where Self: std::marker::Sized;
+    fn incoming(self) -> Self::Iter;
 }
 
 #[derive(Debug)]
@@ -15,8 +25,10 @@ pub struct FileGateway {
     reader: BufReader<File>,
 }
 
-impl Gateway<FileGateway, Lines<BufReader<File>>> for FileGateway {
-    fn listen(source: &str) -> std::io::Result<FileGateway>{
+impl Gateway for FileGateway {
+    type Iter = FileRequestIter;
+
+    fn listen(source: &str) -> std::io::Result<Self>{
         match File::open(source) {
             Err(e) => Err(e),
             Ok(file) => {
@@ -29,8 +41,36 @@ impl Gateway<FileGateway, Lines<BufReader<File>>> for FileGateway {
         }
     }
 
-    fn incoming(self) -> Lines<BufReader<File>> {
-        return self.reader.lines();
+    fn incoming(self) -> Self::Iter {
+        return FileRequestIter {reader: self.reader};
     }
+}
+
+#[derive(Debug)]
+pub struct FileRequestIter {
+    reader: BufReader<File>
+}
+
+impl Iterator for FileRequestIter {
+    type Item = std::io::Result<request::Request>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut buf = String::new();
+        match self.reader.read_line(&mut buf) {
+            Ok(0) => None,
+            Ok(_n) => match request::parse_json(buf) {
+                Ok(req) => Some(Ok(req)),
+                Err(e) => Some(Err(std::io::Error::from(e)))
+            }
+            Err(e) => Some(Err(e))
+        }
+    }
+}
+
+
+#[derive(Debug)]
+pub struct HTTPGateway {
+    port: u32,
+    listener: TcpListener,
 }
 
