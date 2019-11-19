@@ -1,9 +1,8 @@
-
 use std::io::{BufReader, Lines};
 use std::fs::File;
 use std::io::BufRead;
 use std::net::TcpListener;
-use super::request;
+use snapfaas::request;
 
 pub const DEFAULT_PORT: &str = "8888";
 

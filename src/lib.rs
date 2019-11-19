@@ -1,3 +1,7 @@
+pub mod request;
+pub mod worker;
+pub mod workerpool;
+
 use std::string::String;
 
 const LOCAL_FILE_URL_PREFIX: &str = "file://localhost";

@@ -16,16 +16,15 @@ use clap::{Arg, App};
 use simple_logger;
 use futures::{Future, Async, Poll};
 use gateway::Gateway;
-use tokio;
+use snapfaas::*;
+use std::thread;
 
 mod configs;
 mod gateway;
-mod request;
 
 struct RequestEcho {
     request: request::Request,
 }
-
 
 impl Future for RequestEcho {
     type Item = ();
@@ -107,6 +106,7 @@ fn main() {
     info!("{:?}", ctr_config);
 
     // prepare worker pool
+    let mut wp = workerpool::WorkerPool::new();
 
 
     // start gateway
@@ -116,10 +116,15 @@ fn main() {
 
     // start admitting and processing incoming requests
     for req in gateway.incoming() {
-        println!("{:?}", req);
-        let future = RequestEcho{request: req.unwrap()};
-        tokio::run(future);
+        if req.is_err() {
+            continue;
+        }
+
+        let worker = wp.acquire();
+        println!("req (main): {:?}", req);
+        worker.send_req(req.unwrap());
     }
 
+    thread::sleep(std::time::Duration::from_secs(2))
 }
 

@@ -61,7 +61,6 @@ impl ControllerConfig {
     pub fn set_kernel_boot_args(&mut self, args: &str) {
         self.kernel_boot_args= args.to_string();
     }
-
 }
 
 
