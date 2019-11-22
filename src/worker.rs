@@ -11,26 +11,57 @@ use std::time::Duration;
 /// From JoinHandle we can get the &Thread which then gives us ThreadId and
 /// park() function. We can't peel off the JoinHandle to get Thread because
 /// JoinHandle struct owns Thread as a field.
+#[derive(Debug)]
 pub struct Worker {
     thread: JoinHandle<()>,
 //    curr_req: Option<Request>,
-    req_sender: Sender<Request>
+    pub req_sender: Sender<(Request, Worker)>,
+    state: State,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum State {
+    WaitForReq,
+    Done
 }
 
 impl Worker {
     pub fn new() -> Worker {
         let (tx, rx) = mpsc::channel();
+
         let handle = thread::spawn(move || {
             let req = rx.recv();
             println!("req (worker): {:?}", req);
+            
+            return;
         });
+
         Worker {
             thread: handle,
             req_sender: tx,
+            state: State::WaitForReq
         }
     }
 
-    pub fn send_req(&self, req: Request) -> Result<(), SendError<Request>> {
-        return self.req_sender.send(req);
+    pub fn transition(&mut self, s: State) {
+        self.state = s;
     }
+
+    fn wait_for_req(rx: Receiver<Request>) {
+        let req = rx.recv();
+
+    }
+
+    fn echo_req(req: &Request) {
+        println!("req (worker): {:?}", req);
+    }
+
+    /*
+    pub fn send_req(self, req: Request) -> Result<(), SendError<(Request, Worker)>> {
+        if self.state != State::WaitForReq {
+            panic!("worker not in WaitForReq state");
+        }
+        return self.req_sender.send((req,self));
+    }
+    */
 }

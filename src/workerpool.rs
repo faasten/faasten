@@ -16,6 +16,7 @@ pub struct WorkerPool {
 impl WorkerPool {
     pub fn new() -> WorkerPool {
         let mut pool = Vec::with_capacity(10);
+
         for _ in 0..10 {
             pool.push(Worker::new());
         }
@@ -30,4 +31,6 @@ impl WorkerPool {
     pub fn acquire(&mut self) -> Worker {
         return self.pool.pop().expect("Worker pool is empty");
     }
+
+    
 }

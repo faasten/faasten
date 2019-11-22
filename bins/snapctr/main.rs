@@ -22,43 +22,6 @@ use std::thread;
 mod configs;
 mod gateway;
 
-struct RequestEcho {
-    request: request::Request,
-}
-
-impl Future for RequestEcho {
-    type Item = ();
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        println!("Function: {}", self.request.function);
-        println!("Payload: {:?}", self.request.payload);
-        return Ok(Async::Ready(()));
-    }
-}
-
-struct Display<T>(T);
-
-impl<T> Future for Display<T>
-    where
-        T: Future,
-        T::Item: std::fmt::Display,
-{
-    type Item = ();
-    type Error = T::Error;
-
-    fn poll(&mut self) -> Poll<(), T::Error> {
-        let value = match self.0.poll() {
-            Ok(Async::Ready(value)) => value,
-            Ok(Async::NotReady) => return Ok(Async::NotReady),
-            Err(err) => return Err(err),
-        };
-
-        println!("VALUE: {}", value);
-        Ok(Async::Ready(()))
-    }
-}
-
 fn main() {
 
     simple_logger::init().expect("simple_logger init failed");
@@ -108,7 +71,6 @@ fn main() {
     // prepare worker pool
     let mut wp = workerpool::WorkerPool::new();
 
-
     // start gateway
     // TODO:support an HTTP gateway in addition to file gateway
     let request_file_url = matches.value_of("requests file").expect("rf");
@@ -116,13 +78,19 @@ fn main() {
 
     // start admitting and processing incoming requests
     for req in gateway.incoming() {
+        // ignore invalid requests for now
         if req.is_err() {
             continue;
         }
-
-        let worker = wp.acquire();
         println!("req (main): {:?}", req);
-        worker.send_req(req.unwrap());
+
+        // acquire a worker from the pool and just pass it the request
+        // send_req() here does not block
+        let worker = wp.acquire();
+        let req_sender = worker.req_sender.clone();
+        req_sender.send((req.unwrap(), worker));
+
+        // it's passible for worker to be deallocated when exiting this for loop
     }
 
     thread::sleep(std::time::Duration::from_secs(2))
