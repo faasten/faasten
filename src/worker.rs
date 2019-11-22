@@ -4,6 +4,8 @@
 use std::thread;
 use std::thread::JoinHandle;
 use std::sync::mpsc;
+use std::sync::Mutex;
+use std::sync::Arc;
 use std::sync::mpsc::{Sender, Receiver, SendError};
 use crate::request::Request;
 use std::time::Duration;
@@ -15,7 +17,6 @@ use std::time::Duration;
 pub struct Worker {
     thread: JoinHandle<()>,
 //    curr_req: Option<Request>,
-    pub req_sender: Sender<(Request, Worker)>,
     state: State,
 }
 
@@ -26,19 +27,18 @@ pub enum State {
 }
 
 impl Worker {
-    pub fn new() -> Worker {
-        let (tx, rx) = mpsc::channel();
+    pub fn new(receiver: Arc<Mutex<Receiver<Request>>>) -> Worker {
 
         let handle = thread::spawn(move || {
-            let req = rx.recv();
-            println!("req (worker): {:?}", req);
+            loop {
+                let req = receiver.lock().unwrap().recv().unwrap();
+                println!("req (worker): {:?}", req);
+            }
             
-            return;
         });
 
         Worker {
             thread: handle,
-            req_sender: tx,
             state: State::WaitForReq
         }
     }
