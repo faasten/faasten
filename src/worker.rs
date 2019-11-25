@@ -7,42 +7,93 @@ use std::sync::mpsc;
 use std::sync::Mutex;
 use std::sync::Arc;
 use std::sync::mpsc::{Sender, Receiver, SendError};
-use crate::request::Request;
 use std::time::Duration;
+use std::io;
+use std::io::Result;
+
+use log::{error, warn, info};
+
+use crate::request::Request;
+use crate::message::Message;
 
 /// From JoinHandle we can get the &Thread which then gives us ThreadId and
 /// park() function. We can't peel off the JoinHandle to get Thread because
 /// JoinHandle struct owns Thread as a field.
 #[derive(Debug)]
 pub struct Worker {
-    thread: JoinHandle<()>,
-//    curr_req: Option<Request>,
-    state: State,
+    pub thread: JoinHandle<()>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum State {
-    WaitForReq,
-    Done
+    WaitForMsg,
+    Shutdown,
+    Response,
+    ReqFail,
+
 }
 
 impl Worker {
-    pub fn new(receiver: Arc<Mutex<Receiver<Request>>>) -> Worker {
+    pub fn new(receiver: Arc<Mutex<Receiver<Message>>>) -> Worker {
 
         let handle = thread::spawn(move || {
-            loop {
-                let req = receiver.lock().unwrap().recv().unwrap();
-                println!("req (worker): {:?}", req);
-            }
+
+                let id = thread::current().id();
+                let mut state = State::WaitForMsg;
+                loop {
+                    match state {
+                        State::WaitForMsg=> {
+                            let msg: Message = receiver.lock().unwrap().recv().unwrap();
+                            state = Worker::process_msg(msg);
+                            continue;
+                        },
+                        State::Shutdown => {
+                            info!("Worker {:?}: shutdown received", id);
+                            return;
+                        },
+                        State::Response => {
+                            state = State::WaitForMsg;
+                        },
+                        State::ReqFail => {
+                            state = State::WaitForMsg;
+                        }
+                    }
+                }
             
         });
 
         Worker {
             thread: handle,
-            state: State::WaitForReq
         }
     }
 
+    pub fn process_msg(msg: Message) -> State {
+        match msg {
+            Message::Shutdown => {
+                return State::Shutdown;
+            },
+            Message::Request(req) => {
+                match Worker::process_req(req) {
+                    Ok(res) => {
+                        info!("process result: {:?}", res);
+                        return State::Response;
+                    },
+                    Err(err) => {
+                        info!("process result: {:?}", err);
+                        return State::ReqFail;
+                    },
+                }
+            }
+        }
+    }
+
+    pub fn process_req(req: Request) -> Result<String> {
+        let id = thread::current().id();
+        info!("worker {:?} recv: {:?}", id, req);
+        return Ok(String::from("success"));
+    }
+
+    /*
     pub fn transition(&mut self, s: State) {
         self.state = s;
     }
@@ -56,7 +107,6 @@ impl Worker {
         println!("req (worker): {:?}", req);
     }
 
-    /*
     pub fn send_req(self, req: Request) -> Result<(), SendError<(Request, Worker)>> {
         if self.state != State::WaitForReq {
             panic!("worker not in WaitForReq state");

@@ -80,17 +80,16 @@ fn main() {
     for req in gateway.incoming() {
         // ignore invalid requests for now
         if req.is_err() {
+            error!("Invalid request: {:?}", req);
             continue;
         }
+
+        let req = req.unwrap();
         println!("req (main): {:?}", req);
 
-        // acquire a worker from the pool and just pass it the request
-        // send_req() here does not block
-        wp.send_req(req.unwrap());
-
-        // it's passible for worker to be deallocated when exiting this for loop
+        wp.send_req(req);
     }
 
-    thread::sleep(std::time::Duration::from_secs(2))
+    wp.shutdown();
 }
 

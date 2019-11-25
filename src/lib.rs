@@ -1,6 +1,7 @@
 pub mod request;
 pub mod worker;
 pub mod workerpool;
+pub mod message;
 
 use std::string::String;
 
