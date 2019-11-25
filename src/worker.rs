@@ -37,24 +37,17 @@ impl Worker {
         let handle = thread::spawn(move || {
 
                 let id = thread::current().id();
-                let mut state = State::WaitForMsg;
                 loop {
-                    match state {
-                        State::WaitForMsg=> {
-                            let msg: Message = receiver.lock().unwrap().recv().unwrap();
-                            state = Worker::process_msg(msg);
-                            continue;
+                    let msg: Message = receiver.lock().unwrap().recv().unwrap();
+                    match msg {
+                        Message::Shutdown => {info!("Thread {:?} shutdown received", id); return;},
+                        Message::Request(req, rsp_sender) => {
+                            match Worker::process_req(req) {
+                                Ok(rsp) => {rsp_sender.send(Message::Response(rsp));},
+                                Err(err) => info!("Request failed: {:?}", err)
+                            }
                         },
-                        State::Shutdown => {
-                            info!("Worker {:?}: shutdown received", id);
-                            return;
-                        },
-                        State::Response => {
-                            state = State::WaitForMsg;
-                        },
-                        State::ReqFail => {
-                            state = State::WaitForMsg;
-                        }
+                        _ => {error!("Invalid message to thread {:?}: {:?}", id, msg);}
                     }
                 }
             
@@ -62,31 +55,6 @@ impl Worker {
 
         Worker {
             thread: handle,
-        }
-    }
-
-    pub fn process_msg(msg: Message) -> State {
-        match msg {
-            Message::Shutdown => {
-                return State::Shutdown;
-            },
-            Message::Request(req, rsp_sender) => {
-                match Worker::process_req(req) {
-                    Ok(rsp) => {
-                        //info!("process result: {:?}", rsp);
-                        rsp_sender.send(Message::Response(rsp));
-                        return State::Response;
-                    },
-                    Err(err) => {
-                        info!("Request failed: {:?}", err);
-                        return State::ReqFail;
-                    },
-                }
-            }
-            _ => {
-                error!("Invalid worker message");
-                return State::WaitForMsg;
-            }
         }
     }
 
