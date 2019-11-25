@@ -1,4 +1,4 @@
-use std::io::{BufReader, Lines};
+use std::io::{BufReader};
 use std::fs::File;
 use std::io::BufRead;
 use std::net::TcpListener;
@@ -62,7 +62,7 @@ impl Gateway for FileGateway {
 }
 
 impl FileGateway {
-    pub fn create_serializer_thread(rx: Receiver<Message>) -> JoinHandle<()> {
+    fn create_serializer_thread(rx: Receiver<Message>) -> JoinHandle<()> {
         return thread::spawn(move || {
             loop {
                 match rx.recv() {
@@ -71,19 +71,29 @@ impl FileGateway {
                             Message::Response(rsp) => {
                                 warn!("{:?}", rsp);
                             },
+                            Message::Shutdown => {
+                                return;
+                            }
                             _ => {
                                 error!("Reponse serializer received a non-response");
                             }
                         }
                     },
                     Err(err) => {
-                        error!("Invalid response: {:?}", err);
+                        //error!("Invalid response: {:?}", err);
+                        ()
                     },
                 }
             }
         });
 
     }
+
+    pub fn shutdown(self) {
+        &self.rsp_sender.send(Message::Shutdown);
+        self.rsp_serializer.join();
+    }
+
 }
 
 #[derive(Debug)]

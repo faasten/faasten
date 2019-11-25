@@ -9,16 +9,13 @@
 //!   2. kernel boot argument
 //!   3. function store and their files' locations
 
-use std::string::String;
-use log::{error, warn, info};
-use url::{Url, ParseError};
+use log::{error, info};
 use clap::{Arg, App};
 use simple_logger;
 use snapfaas::configs;
 use snapfaas::workerpool;
 use snapfaas::gateway;
 use snapfaas::gateway::Gateway;
-use std::thread;
 
 fn main() {
 
@@ -85,7 +82,7 @@ fn main() {
         let (req, rsp_sender) = task.unwrap();
         println!("req (main): {:?}", req);
 
-        wp.send_req(req);
+        wp.send_req(req, rsp_sender);
     }
 
     wp.shutdown();

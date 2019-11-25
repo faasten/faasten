@@ -3,15 +3,13 @@
 //! machine:
 use std::thread;
 use std::thread::JoinHandle;
-use std::sync::mpsc;
 use std::sync::Mutex;
 use std::sync::Arc;
 use std::sync::mpsc::{Sender, Receiver, SendError};
 use std::time::Duration;
-use std::io;
 use std::io::Result;
 
-use log::{error, warn, info};
+use log::{error, info};
 
 use crate::request::Request;
 use crate::message::Message;
@@ -72,14 +70,15 @@ impl Worker {
             Message::Shutdown => {
                 return State::Shutdown;
             },
-            Message::Request(req) => {
+            Message::Request(req, rsp_sender) => {
                 match Worker::process_req(req) {
-                    Ok(res) => {
-                        info!("process result: {:?}", res);
+                    Ok(rsp) => {
+                        //info!("process result: {:?}", rsp);
+                        rsp_sender.send(Message::Response(rsp));
                         return State::Response;
                     },
                     Err(err) => {
-                        info!("process result: {:?}", err);
+                        info!("Request failed: {:?}", err);
                         return State::ReqFail;
                     },
                 }

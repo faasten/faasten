@@ -41,8 +41,8 @@ impl WorkerPool {
         }
     }
 
-    pub fn send_req(&self, req: Request) {
-        self.req_sender.send(Message::Request(req));
+    pub fn send_req(&self, req: Request, rsp_sender: Sender<Message>) {
+        self.req_sender.send(Message::Request(req, rsp_sender));
     }
 
     pub fn shutdown(self) {
