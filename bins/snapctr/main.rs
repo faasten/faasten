@@ -14,13 +14,11 @@ use log::{error, warn, info};
 use url::{Url, ParseError};
 use clap::{Arg, App};
 use simple_logger;
-use futures::{Future, Async, Poll};
-use gateway::Gateway;
-use snapfaas::*;
+use snapfaas::configs;
+use snapfaas::workerpool;
+use snapfaas::gateway;
+use snapfaas::gateway::Gateway;
 use std::thread;
-
-mod configs;
-mod gateway;
 
 fn main() {
 
@@ -69,7 +67,7 @@ fn main() {
     info!("{:?}", ctr_config);
 
     // prepare worker pool
-    let mut wp = workerpool::WorkerPool::new();
+    let wp = workerpool::WorkerPool::new();
 
     // start gateway
     // TODO:support an HTTP gateway in addition to file gateway

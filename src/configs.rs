@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::fs::File;
 use url::{Url, ParseError};
 use log::{error, warn, info};
-use snapfaas::*;
+use crate::*;
 
 const DEFAULT_CONTROLLER_CONFIG_URL: &str = "file://localhost/etc/snapfaas/default-conf.yaml";
 
