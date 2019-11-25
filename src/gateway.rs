@@ -2,6 +2,14 @@ use std::io::{BufReader, Lines};
 use std::fs::File;
 use std::io::BufRead;
 use std::net::TcpListener;
+use std::sync::mpsc;
+use std::sync::mpsc::{Sender, Receiver};
+use std::thread;
+use std::thread::JoinHandle;
+
+use log::{error, warn, info};
+
+use crate::message::Message;
 use crate::request;
 
 pub const DEFAULT_PORT: &str = "8888";
@@ -22,6 +30,8 @@ pub trait Gateway {
 pub struct FileGateway {
     url: String,
     reader: BufReader<File>,
+    rsp_sender: Sender<Message>,
+    rsp_serializer: JoinHandle<()>,
 }
 
 impl Gateway for FileGateway {
@@ -32,33 +42,66 @@ impl Gateway for FileGateway {
             Err(e) => Err(e),
             Ok(file) => {
                 let reader = BufReader::new(file);
+
+                let (tx, rx) = mpsc::channel();
+                let handle = FileGateway::create_serializer_thread(rx);
+
                 Ok(FileGateway {
                     url: source.to_string(),
                     reader: reader,
+                    rsp_sender: tx,
+                    rsp_serializer: handle,
                 })
             }
         }
     }
 
     fn incoming(self) -> Self::Iter {
-        return FileRequestIter {reader: self.reader};
+        return FileRequestIter {reader: self.reader, rsp_sender: self.rsp_sender.clone()};
+    }
+}
+
+impl FileGateway {
+    pub fn create_serializer_thread(rx: Receiver<Message>) -> JoinHandle<()> {
+        return thread::spawn(move || {
+            loop {
+                match rx.recv() {
+                    Ok(msg) => {
+                        match msg {
+                            Message::Response(rsp) => {
+                                warn!("{:?}", rsp);
+                            },
+                            _ => {
+                                error!("Reponse serializer received a non-response");
+                            }
+                        }
+                    },
+                    Err(err) => {
+                        error!("Invalid response: {:?}", err);
+                    },
+                }
+            }
+        });
+
     }
 }
 
 #[derive(Debug)]
 pub struct FileRequestIter {
-    reader: BufReader<File>
+    reader: BufReader<File>,
+    rsp_sender: Sender<Message>,
 }
 
 impl Iterator for FileRequestIter {
-    type Item = std::io::Result<request::Request>;
+    type Item = std::io::Result<(request::Request, Sender<Message>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut buf = String::new();
+
         match self.reader.read_line(&mut buf) {
             Ok(0) => None,
             Ok(_n) => match request::parse_json(buf) {
-                Ok(req) => Some(Ok(req)),
+                Ok(req) => Some(Ok((req, self.rsp_sender.clone()))),
                 Err(e) => Some(Err(std::io::Error::from(e)))
             }
             Err(e) => Some(Err(e))

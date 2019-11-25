@@ -4,4 +4,5 @@ use crate::request;
 pub enum Message {
     Shutdown,
     Request(request::Request),
+    Response(String),
 }

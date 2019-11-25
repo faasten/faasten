@@ -75,14 +75,14 @@ fn main() {
     let gateway = gateway::FileGateway::listen(request_file_url).unwrap();
 
     // start admitting and processing incoming requests
-    for req in gateway.incoming() {
+    for task in gateway.incoming() {
         // ignore invalid requests for now
-        if req.is_err() {
-            error!("Invalid request: {:?}", req);
+        if task.is_err() {
+            error!("Invalid task: {:?}", task);
             continue;
         }
 
-        let req = req.unwrap();
+        let (req, rsp_sender) = task.unwrap();
         println!("req (main): {:?}", req);
 
         wp.send_req(req);

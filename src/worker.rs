@@ -84,6 +84,10 @@ impl Worker {
                     },
                 }
             }
+            _ => {
+                error!("Invalid worker message");
+                return State::WaitForMsg;
+            }
         }
     }
 
