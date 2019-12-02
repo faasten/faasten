@@ -68,21 +68,12 @@ impl FileGateway {
                 match rx.recv() {
                     Ok(msg) => {
                         match msg {
-                            Message::Response(rsp) => {
-                                warn!("{:?}", rsp);
-                            },
-                            Message::Shutdown => {
-                                return;
-                            }
-                            _ => {
-                                error!("Reponse serializer received a non-response");
-                            }
+                            Message::Response(rsp) => warn!("{:?}", rsp),
+                            Message::Shutdown => return,
+                            _ => error!("Reponse serializer received a non-response"),
                         }
                     },
-                    Err(err) => {
-                        //error!("Invalid response: {:?}", err);
-                        ()
-                    },
+                    Err(_) => () //TODO: handle errors
                 }
             }
         });

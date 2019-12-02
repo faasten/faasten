@@ -40,17 +40,23 @@ impl Worker {
                 loop {
                     let msg: Message = receiver.lock().unwrap().recv().unwrap();
                     match msg {
-                        Message::Shutdown => {info!("Thread {:?} shutdown received", id); return;},
+                        Message::Shutdown => {
+                            info!("Thread {:?} shutdown received", id);
+                            return;
+                        },
                         Message::Request(req, rsp_sender) => {
                             match Worker::process_req(req) {
-                                Ok(rsp) => {rsp_sender.send(Message::Response(rsp));},
+                                Ok(rsp) => {
+                                    if let Err(e) = rsp_sender.send(Message::Response(rsp)) {
+                                        error!("[thread: {:?}] response failed to send: {:?}", id, e);
+                                    }
+                                },
                                 Err(err) => info!("Request failed: {:?}", err)
                             }
                         },
                         _ => {error!("Invalid message to thread {:?}: {:?}", id, msg);}
                     }
                 }
-            
         });
 
         Worker {

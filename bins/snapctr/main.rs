@@ -55,11 +55,11 @@ fn main() {
 
     if let Some(kernel_url) = matches.value_of("kernel") {
         ctr_config.set_kernel_path(kernel_url);
-    };
+    }
 
     if let Some(kernel_boot_args) = matches.value_of("kernel boot args") {
         ctr_config.set_kernel_boot_args(kernel_boot_args);
-    };
+    }
 
     info!("{:?}", ctr_config);
 
@@ -68,8 +68,8 @@ fn main() {
 
     // start gateway
     // TODO:support an HTTP gateway in addition to file gateway
-    let request_file_url = matches.value_of("requests file").expect("rf");
-    let gateway = gateway::FileGateway::listen(request_file_url).unwrap();
+    let request_file_url = matches.value_of("requests file").expect("Request file not specified");
+    let gateway = gateway::FileGateway::listen(request_file_url).expect("Failed to create gateway");
 
     // start admitting and processing incoming requests
     for task in gateway.incoming() {
@@ -80,7 +80,7 @@ fn main() {
         }
 
         let (req, rsp_sender) = task.unwrap();
-        println!("req (main): {:?}", req);
+        info!("req (main): {:?}", req);
 
         wp.send_req(req, rsp_sender);
     }
