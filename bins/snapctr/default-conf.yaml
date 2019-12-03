@@ -1,2 +1,5 @@
-kernel_path: "file://localhost/etc/snapfaas/vmlinux"
+kernel_path: "file://localhost/etc/snapfaas/resources/vmlinux"
 kernel_boot_args: "quiet console=none reboot=k panic=1 pci=off"
+runtimefs_dir: "file://localhost/etc/snapfaas/resources/runtimefs/"
+appfs_dir: "file://localhost/etc/snapfaas/resources/appfs/"
+function_config: "file://localhost/etc/snapfaas/resources/example_function_configs.yaml"

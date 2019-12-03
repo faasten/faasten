@@ -4,6 +4,7 @@ pub mod workerpool;
 pub mod message;
 pub mod gateway;
 pub mod configs;
+pub mod controller;
 
 use std::string::String;
 

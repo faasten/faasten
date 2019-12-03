@@ -13,6 +13,9 @@ const DEFAULT_CONTROLLER_CONFIG_URL: &str = "file://localhost/etc/snapfaas/defau
 pub struct ControllerConfig {
     pub kernel_path: String,
     pub kernel_boot_args: String,
+    pub runtimefs_dir: String,
+    pub appfs_dir: String,
+    pub function_config: String,
 }
 
 impl ControllerConfig {
@@ -51,6 +54,9 @@ impl ControllerConfig {
         return ControllerConfig {
             kernel_path: "".to_string(),
             kernel_boot_args: "".to_string(),
+            runtimefs_dir: "".to_string(),
+            appfs_dir: "".to_string(),
+            function_config: "".to_string(),
         };
     }
 
@@ -97,11 +103,11 @@ impl Configuration {
             FunctionConfig {
                 name: c.name.clone(),
                 runtimefs: [self.runtimefs_dir.clone(), c.runtimefs.clone()].iter().collect(),
-                appfs: [self.appfs_dir.clone(), c.appfs.clone()].iter().collect(), 
+                appfs: [self.appfs_dir.clone(), c.appfs.clone()].iter().collect(),
                 vcpus: c.vcpus,
                 memory: c.memory,
                 concurrency_limit: c.concurrency_limit,
-                load_dir: c.load_dir.clone(), 
+                load_dir: c.load_dir.clone(),
             }
         })
     }

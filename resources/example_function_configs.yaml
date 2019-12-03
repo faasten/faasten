@@ -1,0 +1,14 @@
+- name: "loremjs"
+  runtimefs: "nodejs.ext4"
+  appfs: "loremjs.ext4"
+  vcpus: 1
+  memory: 128
+  concurrency_limit: 1
+  load_dir: "./images/snapshots/nodejs-128"
+- name: "lorempy2"
+  runtimefs: "python2.ext4"
+  appfs: "lorempy2.ext4"
+  vcpus: 1
+  memory: 128
+  concurrency_limit: 1
+  load_dir: "./images/snapshots/python2-128"
