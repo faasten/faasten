@@ -16,6 +16,7 @@ use snapfaas::configs;
 use snapfaas::workerpool;
 use snapfaas::gateway;
 use snapfaas::gateway::Gateway;
+use snapfaas::controller::Controller;
 
 fn main() {
 
@@ -62,6 +63,9 @@ fn main() {
     }
 
     info!("{:?}", ctr_config);
+
+    let controller = Controller::new(ctr_config);
+    info!("{:?}", controller);
 
     // prepare worker pool
     let wp = workerpool::WorkerPool::new();

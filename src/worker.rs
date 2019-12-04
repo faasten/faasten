@@ -14,9 +14,6 @@ use log::{error, info};
 use crate::request::Request;
 use crate::message::Message;
 
-/// From JoinHandle we can get the &Thread which then gives us ThreadId and
-/// park() function. We can't peel off the JoinHandle to get Thread because
-/// JoinHandle struct owns Thread as a field.
 #[derive(Debug)]
 pub struct Worker {
     pub thread: JoinHandle<()>,
@@ -28,7 +25,6 @@ pub enum State {
     Shutdown,
     Response,
     ReqFail,
-
 }
 
 impl Worker {

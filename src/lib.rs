@@ -7,6 +7,9 @@ pub mod configs;
 pub mod controller;
 
 use std::string::String;
+use std::fs::File;
+use std::io::{Error, ErrorKind, Result};
+use url::Url;
 
 const LOCAL_FILE_URL_PREFIX: &str = "file://localhost";
 /// check if a string is a url string
@@ -30,4 +33,24 @@ pub fn convert_fs_path_to_url (path: &str) -> String {
     url.push_str(&shellexpand::tilde(path));
 
     return url;
+}
+
+/// Open a file specified by a URL in the form of a string
+pub fn open_url(url: &str) -> Result<File> {
+    if !check_url(url) {
+        return Err(Error::new(ErrorKind::Other, "not Url"));
+    }
+
+    match Url::parse(url) {
+        Ok(url)=> {
+            //println!("{:?}", url);
+            //println!("{:?}", url.scheme());
+            //println!("{:?}", url.host());
+            //println!("{:?}", url.path());
+            //println!("{:?}", url.username());
+            return File::open(url.path());
+        }
+        Err(_)=> return Err(Error::new(ErrorKind::Other, "Url parse failed")),
+    }
+    
 }
