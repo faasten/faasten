@@ -25,6 +25,8 @@ pub struct Controller {
     function_configs: BTreeMap<String, FunctionConfig>,
     idle: HashMap<String, VmList>,
     total_num_vms: AtomicUsize,
+    total_mem: usize,
+    free_mem: AtomicUsize,
 }
 
 impl Controller {
@@ -48,6 +50,8 @@ impl Controller {
                         function_configs: function_configs,
                         idle: idle,
                         total_num_vms: AtomicUsize::new(0),
+                        total_mem: get_machine_memory(),
+                        free_mem: AtomicUsize::new(get_machine_memory()),
                     });
                 }
                 error!("serde_yaml failed to parse function config file");
@@ -91,6 +95,15 @@ impl Controller {
 
     pub fn get_function_config(&self, function_name: &str) -> Option<FunctionConfig> {
         self.function_configs.get(function_name).cloned()
+    }
+
+    /// should only be called once before Vms are launch. Not supporting
+    /// changing total available memory on the fly.
+    pub fn set_total_mem(&mut self, mem: usize) {
+        if mem > 0 && mem < get_machine_memory() {
+            self.total_mem = mem;
+            self.free_mem = AtomicUsize::new(mem);
+        }
     }
 }
 

@@ -67,6 +67,9 @@ impl ControllerConfig {
     pub fn set_kernel_boot_args(&mut self, args: &str) {
         self.kernel_boot_args= args.to_string();
     }
+
+    pub fn set_total_mem(&mut self, mem: usize) {
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]

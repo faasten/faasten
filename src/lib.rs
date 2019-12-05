@@ -9,10 +9,14 @@ pub mod vm;
 
 use std::string::String;
 use std::fs::File;
-use std::io::{Error, ErrorKind, Result};
+use std::io::{BufReader, BufRead, Error, ErrorKind, Result};
 use url::Url;
 
 const LOCAL_FILE_URL_PREFIX: &str = "file://localhost";
+const MEM_FILE: &str = "/proc/meminfo";     // meminfo file on linux
+const KB_IN_MB: usize = 1024;
+const MEM_4G: usize = 4096;  // in MB
+
 /// check if a string is a url string
 /// TODO: maybe a more comprehensive check is needed but low priority
 pub fn check_url(path: &str) -> bool {
@@ -54,4 +58,25 @@ pub fn open_url(url: &str) -> Result<File> {
         Err(_)=> return Err(Error::new(ErrorKind::Other, "Url parse failed")),
     }
     
+}
+
+pub fn get_machine_memory() -> usize {
+    let memfile = File::open(MEM_FILE).expect("Couldn't open /proc/meminfo");
+    for line in BufReader::new(memfile).lines() {
+        match line {
+            Ok(c) => {
+                let parts: Vec<&str> = c.split(':').map(|s| s.trim()).collect();
+                if parts[0] == "MemTotal" {
+                    let mut mem = parts[1].split(' ').collect::<Vec<&str>>()[0]
+                                  .parse::<usize>().unwrap();
+                    mem = mem / KB_IN_MB;
+                    return mem;
+                }
+            },
+            Err(e) => {
+                panic!("Reading meminfo file error: {:?}", e);
+            }
+        }
+    }
+    panic!("Cannot file MemTotal in /proc/meminfo");
 }

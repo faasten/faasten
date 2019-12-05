@@ -3,3 +3,4 @@ kernel_boot_args: "quiet console=none reboot=k panic=1 pci=off"
 runtimefs_dir: "file://localhost/etc/snapfaas/resources/runtimefs/"
 appfs_dir: "file://localhost/etc/snapfaas/resources/appfs/"
 function_config: "file://localhost/etc/snapfaas/example_function_configs.yaml"
+total_mem: 0

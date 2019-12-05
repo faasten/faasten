@@ -1,19 +1,19 @@
 //! Workers proxies requests and responses between the request manager and VMs.
 //! Each worker runs in its own thread and is modeled as the following state
 //! machine:
+use std::result::Result;
+use std::sync::mpsc::{Receiver, SendError, Sender};
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread;
 use std::thread::JoinHandle;
-use std::sync::Mutex;
-use std::sync::Arc;
-use std::sync::mpsc::{Sender, Receiver, SendError};
 use std::time::Duration;
-use std::result::Result;
 
 use log::{error, info};
 
-use crate::request::Request;
-use crate::message::Message;
 use crate::controller::Controller;
+use crate::message::Message;
+use crate::request::Request;
 use crate::vm::Vm;
 
 #[derive(Debug)]
@@ -30,36 +30,33 @@ pub enum State {
 }
 
 impl Worker {
-
     pub fn new(receiver: Arc<Mutex<Receiver<Message>>>, ctr: Arc<Controller>) -> Worker {
         let handle = thread::spawn(move || {
+            let id = thread::current().id();
 
-                let id = thread::current().id();
-                loop {
-                    let msg: Message = receiver.lock().unwrap().recv().unwrap();
-                    match msg {
-                        Message::Shutdown => {
-                            info!("Thread {:?} shutdown received", id);
-                            return;
-                        },
-                        Message::Request(req, rsp_sender) => {
-                            match Worker::process_req(req, &ctr) {
-                                Ok(rsp) => {
-                                    if let Err(e) = rsp_sender.send(Message::Response(rsp)) {
-                                        error!("[thread: {:?}] response failed to send: {:?}", id, e);
-                                    }
-                                },
-                                Err(err) => info!("Request failed: {:?}", err)
+            loop {
+                let msg: Message = receiver.lock().unwrap().recv().unwrap();
+                match msg {
+                    Message::Shutdown => {
+                        info!("Thread {:?} shutdown received", id);
+                        return;
+                    }
+                    Message::Request(req, rsp_sender) => match Worker::process_req(req, &ctr) {
+                        Ok(rsp) => {
+                            if let Err(e) = rsp_sender.send(Message::Response(rsp)) {
+                                error!("[thread: {:?}] response failed to send: {:?}", id, e);
                             }
-                        },
-                        _ => {error!("Invalid message to thread {:?}: {:?}", id, msg);}
+                        }
+                        Err(err) => info!("Request failed: {:?}", err),
+                    },
+                    _ => {
+                        error!("Invalid message to thread {:?}: {:?}", id, msg);
                     }
                 }
+            }
         });
 
-        Worker {
-            thread: handle,
-        }
+        Worker { thread: handle }
     }
 
     /// Send a request to a Vm, wait for Vm's response and return the result.
@@ -81,13 +78,14 @@ impl Worker {
         let func_config = func_config.unwrap();
 
         info!("[Worker {:?}] recv: {:?}", id, req);
-        let vm = ctr.get_idle_vm(&function_name)
-                 .or(ctr.allocate(&function_name))
-                 .or(ctr.evict_and_allocate(func_config.memory, &function_name));
-        
+        let vm = ctr
+            .get_idle_vm(&function_name)
+            .or(ctr.allocate(&function_name))
+            .or(ctr.evict_and_allocate(func_config.memory, &function_name));
+
         let res = match vm {
-            None=> Err(String::from("Resource exhaustion")),
-            Some(vm)=> {
+            None => Err(String::from("Resource exhaustion")),
+            Some(vm) => {
                 let res = vm.process_req(req);
                 ctr.release(&function_name, vm);
                 res
