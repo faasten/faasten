@@ -64,11 +64,11 @@ fn main() {
 
     info!("{:?}", ctr_config);
 
-    let controller = Controller::new(ctr_config);
+    let controller = Controller::new(ctr_config).expect("Cannot create controller");
     info!("{:?}", controller);
 
     // prepare worker pool
-    let wp = workerpool::WorkerPool::new();
+    let wp = workerpool::WorkerPool::new(controller);
 
     // start gateway
     // TODO:support an HTTP gateway in addition to file gateway

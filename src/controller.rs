@@ -7,14 +7,11 @@ use url::Url;
 
 use crate::configs::{ControllerConfig, FunctionConfig};
 use crate::*;
+use crate::vm::Vm;
 
 use log::{error};
 use serde_yaml;
 
-#[derive(Debug)]
-pub struct Vm {
-    id: usize,
-}
 
 #[derive(Debug)]
 pub struct VmList {
@@ -31,6 +28,9 @@ pub struct Controller {
 }
 
 impl Controller {
+
+    /// create and return a Controller value
+    /// The Controller value encapsulates the idle lists and function configs
     pub fn new(ctr_config: ControllerConfig) -> Option<Controller> {
         let mut function_configs = BTreeMap::<String, FunctionConfig>::new();
         let mut idle = HashMap::<String, VmList>::new();
@@ -38,8 +38,6 @@ impl Controller {
             Ok(fd) => {
                 let apps: serde_yaml::Result<Vec<FunctionConfig>> = serde_yaml::from_reader(fd);
                 if let Ok(apps) = apps {
-                    // populate function_configs map
-                    // Create idle list
                     for app in apps {
                         let name = app.name.clone();
                         function_configs.insert(name.clone(), app);
@@ -69,7 +67,7 @@ impl Controller {
         return None;
     }
 
-    pub fn allocate(&self) -> Option<Vm> {
+    pub fn allocate(&self, function_name: &str) -> Option<Vm> {
         let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
         return Some(Vm {
             id: id,
@@ -78,6 +76,17 @@ impl Controller {
 
     pub fn evict(&self, mem: usize) -> bool {
         return false;
+    }
+
+    pub fn evict_and_allocate(&self, mem: usize, function_name: &str) -> Option<Vm> {
+        if !self.evict(mem) {
+            return None;
+        }
+        return self.allocate(function_name);
+    }
+
+    pub fn get_function_config(&self, function_name: &str) -> Option<FunctionConfig> {
+        self.function_configs.get(function_name).cloned()
     }
 }
 
@@ -100,6 +109,7 @@ impl VmList {
     }
 
     pub fn push(&self, val: Vm) {
-        self.list.lock().unwrap().push(val)
+        self.list.lock().expect("poisoned lock on idle list").push(val);
+        self.num_vms.fetch_add(1, Ordering::Relaxed);
     }
 }

@@ -7,12 +7,14 @@ use std::sync::Mutex;
 use std::sync::Arc;
 use std::sync::mpsc::{Sender, Receiver, SendError};
 use std::time::Duration;
-use std::io::Result;
+use std::result::Result;
 
 use log::{error, info};
 
 use crate::request::Request;
 use crate::message::Message;
+use crate::controller::Controller;
+use crate::vm::Vm;
 
 #[derive(Debug)]
 pub struct Worker {
@@ -28,8 +30,8 @@ pub enum State {
 }
 
 impl Worker {
-    pub fn new(receiver: Arc<Mutex<Receiver<Message>>>) -> Worker {
 
+    pub fn new(receiver: Arc<Mutex<Receiver<Message>>>, ctr: Arc<Controller>) -> Worker {
         let handle = thread::spawn(move || {
 
                 let id = thread::current().id();
@@ -41,7 +43,7 @@ impl Worker {
                             return;
                         },
                         Message::Request(req, rsp_sender) => {
-                            match Worker::process_req(req) {
+                            match Worker::process_req(req, &ctr) {
                                 Ok(rsp) => {
                                     if let Err(e) = rsp_sender.send(Message::Response(rsp)) {
                                         error!("[thread: {:?}] response failed to send: {:?}", id, e);
@@ -60,31 +62,33 @@ impl Worker {
         }
     }
 
-    pub fn process_req(req: Request) -> Result<String> {
+    /// Send a request to a Vm, wait for Vm's response and return the result.
+    /// A worker will first try to acquire an idle Vm to handle the request.
+    /// If there are no idle Vms for the particular request, it will try to
+    /// allocate a new Vm. If there's not enough resources on the machine to
+    /// allocate a new Vm, it will try to evict an idle Vm from another
+    /// function's idle list, and then allocate a new Vm.
+    /// After processing the request, the worker will push its Vm into the idle
+    /// list of its function.
+    pub fn process_req(req: Request, ctr: &Arc<Controller>) -> Result<String, String> {
         let id = thread::current().id();
-        info!("worker {:?} recv: {:?}", id, req);
-        return Ok(String::from("success"));
-    }
-
-    /*
-    pub fn transition(&mut self, s: State) {
-        self.state = s;
-    }
-
-    fn wait_for_req(rx: Receiver<Request>) {
-        let req = rx.recv();
-
-    }
-
-    fn echo_req(req: &Request) {
-        println!("req (worker): {:?}", req);
-    }
-
-    pub fn send_req(self, req: Request) -> Result<(), SendError<(Request, Worker)>> {
-        if self.state != State::WaitForReq {
-            panic!("worker not in WaitForReq state");
+        let func_config = ctr.get_function_config(&req.function);
+        if func_config.is_none() {
+            error!("[Worker {:?}] Unknown request: {:?}", id, req);
+            return Err(String::from("Unknown request"));
         }
-        return self.req_sender.send((req,self));
+        let func_config = func_config.unwrap();
+
+        info!("[Worker {:?}] recv: {:?}", id, req);
+        let vm = ctr.get_idle_vm(&req.function)
+                 .or(ctr.allocate(&req.function))
+                 .or(ctr.evict_and_allocate(func_config.memory, &req.function));
+        
+        let res = match vm {
+            None=> Err(String::from("Resource exhaustion")),
+            Some(vm)=> vm.send_req(req),
+        };
+
+        return res;
     }
-    */
 }

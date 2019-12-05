@@ -13,31 +13,36 @@ use log::{error, warn, info};
 use crate::worker::Worker;
 use crate::request::Request;
 use crate::message::Message;
+use crate::controller::Controller;
 
 const DEFAULT_NUM_WORKERS: usize = 10;
 
 pub struct WorkerPool {
     pool: Vec<Worker>,
     max_num_workers: usize,
-    req_sender: Sender<Message>
+    req_sender: Sender<Message>,
+    controller: Arc<Controller>,
 }
 
 impl WorkerPool {
-    pub fn new() -> WorkerPool {
+    pub fn new(controller: Controller) -> WorkerPool {
         let mut pool = Vec::with_capacity(DEFAULT_NUM_WORKERS);
 
         let (tx, rx) = mpsc::channel();
         let rx = Arc::new(Mutex::new(rx));
 
+        let controller = Arc::new(controller);
+
 
         for _ in 0..DEFAULT_NUM_WORKERS {
-            pool.push(Worker::new(rx.clone()));
+            pool.push(Worker::new(rx.clone(), controller.clone()));
         }
 
         WorkerPool {
             pool: pool,
             max_num_workers: DEFAULT_NUM_WORKERS,
             req_sender: tx,
+            controller: controller,
         }
     }
 
