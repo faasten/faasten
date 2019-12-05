@@ -60,6 +60,10 @@ impl Controller {
         }
     }
 
+    pub fn release(&self, function_name: &str, vm: Vm) {
+        self.idle.get(function_name).unwrap().push(vm); // unwrap should always work
+    }
+
     pub fn get_idle_vm(&self, function_name: &str) -> Option<Vm> {
         if let Some(idle) = self.idle.get(function_name) {
             return idle.pop();

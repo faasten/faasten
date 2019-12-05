@@ -12,7 +12,7 @@ impl Vm {
         }
     }
 
-    pub fn send_req(&self, req: Request) -> Result<String, String> {
+    pub fn process_req(&self, req: Request) -> Result<String, String> {
         return Ok(String::from("success"));
     }
 }

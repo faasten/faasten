@@ -62,8 +62,6 @@ fn main() {
         ctr_config.set_kernel_boot_args(kernel_boot_args);
     }
 
-    info!("{:?}", ctr_config);
-
     let controller = Controller::new(ctr_config).expect("Cannot create controller");
     info!("{:?}", controller);
 

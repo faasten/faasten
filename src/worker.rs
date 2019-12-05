@@ -72,7 +72,8 @@ impl Worker {
     /// list of its function.
     pub fn process_req(req: Request, ctr: &Arc<Controller>) -> Result<String, String> {
         let id = thread::current().id();
-        let func_config = ctr.get_function_config(&req.function);
+        let function_name = req.function.clone();
+        let func_config = ctr.get_function_config(&function_name);
         if func_config.is_none() {
             error!("[Worker {:?}] Unknown request: {:?}", id, req);
             return Err(String::from("Unknown request"));
@@ -80,13 +81,17 @@ impl Worker {
         let func_config = func_config.unwrap();
 
         info!("[Worker {:?}] recv: {:?}", id, req);
-        let vm = ctr.get_idle_vm(&req.function)
-                 .or(ctr.allocate(&req.function))
-                 .or(ctr.evict_and_allocate(func_config.memory, &req.function));
+        let vm = ctr.get_idle_vm(&function_name)
+                 .or(ctr.allocate(&function_name))
+                 .or(ctr.evict_and_allocate(func_config.memory, &function_name));
         
         let res = match vm {
             None=> Err(String::from("Resource exhaustion")),
-            Some(vm)=> vm.send_req(req),
+            Some(vm)=> {
+                let res = vm.process_req(req);
+                ctr.release(&function_name, vm);
+                res
+            }
         };
 
         return res;
