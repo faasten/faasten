@@ -117,6 +117,10 @@ impl Controller {
             passes = passes + 1;
         }
 
+        if freed >= mem {
+            return true;
+        }
+
         return false;
     }
 
