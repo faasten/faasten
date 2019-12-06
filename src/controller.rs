@@ -87,7 +87,7 @@ impl Controller {
         ) {
             Ok(_) => {
                 let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
-                return Some(Vm { id: id });
+                return Some(Vm::new(id));
             }
             Err(_) => {
                 return None;
@@ -97,14 +97,30 @@ impl Controller {
 
     /// Evict one or more vms to free `mem` MB of memory
     pub fn evict(&self, mem: usize) -> bool {
+        let mut freed: usize = 0;
+        let mut passes = 0;
+        while freed < mem && passes < 3 {
+            for key in self.idle.keys() {
+                let vmlist = self.idle.get(key).unwrap();
+
+                // instead of evicting from the first non-empty list in the map,
+                // collect some function popularity data and evict based on that.
+                // This is where some policies can be implemented.
+                if let Ok(mut mutex) = vmlist.list.try_lock() {
+                    if let Some(vm) = mutex.pop() {
+                        vm.shutdown();
+                        self.free_mem.fetch_add(vm.memory, Ordering::Relaxed);
+                        freed = freed + vm.memory;
+                    }
+                }
+            }
+            passes = passes + 1;
+        }
+
         return false;
     }
 
-    pub fn evict_and_allocate(
-        &self,
-        mem: usize,
-        function_config: &FunctionConfig,
-    ) -> Option<Vm> {
+    pub fn evict_and_allocate(&self, mem: usize, function_config: &FunctionConfig) -> Option<Vm> {
         if !self.evict(mem) {
             return None;
         }
@@ -113,6 +129,10 @@ impl Controller {
 
     pub fn get_function_config(&self, function_name: &str) -> Option<&FunctionConfig> {
         self.function_configs.get(function_name)
+    }
+
+    pub fn get_function_memory(&self, function_name: &str) -> Option<usize> {
+        self.function_configs.get(function_name).map(|f| f.memory)
     }
 
     /// should only be called once before Vms are launch. Not supporting
