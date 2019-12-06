@@ -83,8 +83,8 @@ impl Worker {
 
         let vm = ctr
             .get_idle_vm(&function_name)
-            .or(ctr.allocate(func_config))
-            .or(ctr.evict_and_allocate(func_config.memory, func_config));
+            .or_else(|| {ctr.allocate(func_config)})
+            .or_else(|| {ctr.evict_and_allocate(func_config.memory, func_config)});
 
         let res = match vm {
             None => Err(String::from("Resource exhaustion")),
