@@ -1,3 +1,4 @@
+#![feature(no_more_cas)]
 pub mod request;
 pub mod worker;
 pub mod workerpool;

@@ -1,17 +1,15 @@
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
-use std::sync::Mutex;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use url::Url;
 
 use crate::configs::{ControllerConfig, FunctionConfig};
-use crate::*;
 use crate::vm::Vm;
+use crate::*;
 
-use log::{error};
+use log::error;
 use serde_yaml;
-
 
 #[derive(Debug)]
 pub struct VmList {
@@ -30,7 +28,6 @@ pub struct Controller {
 }
 
 impl Controller {
-
     /// create and return a Controller value
     /// The Controller value encapsulates the idle lists and function configs
     pub fn new(ctr_config: ControllerConfig) -> Option<Controller> {
@@ -64,10 +61,12 @@ impl Controller {
         }
     }
 
+    /// Push the vm onto its function's idle list
     pub fn release(&self, function_name: &str, vm: Vm) {
         self.idle.get(function_name).unwrap().push(vm); // unwrap should always work
     }
 
+    /// Try to find an idle vm from the function's idle list
     pub fn get_idle_vm(&self, function_name: &str) -> Option<Vm> {
         if let Some(idle) = self.idle.get(function_name) {
             return idle.pop();
@@ -75,26 +74,45 @@ impl Controller {
         return None;
     }
 
-    pub fn allocate(&self, function_name: &str) -> Option<Vm> {
-        let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
-        return Some(Vm {
-            id: id,
-        });
+    /// Try to allocate and launch a new vm for a function
+    /// Allocation can fail when there's not enough resources on the machine.
+    pub fn allocate(&self, function_config: &FunctionConfig) -> Option<Vm> {
+        match self.free_mem.fetch_update(
+            |x| match x >= function_config.memory {
+                true => Some(x - function_config.memory),
+                false => None,
+            },
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(_) => {
+                let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
+                return Some(Vm { id: id });
+            }
+            Err(_) => {
+                return None;
+            }
+        }
     }
 
+    /// Evict one or more vms to free `mem` MB of memory
     pub fn evict(&self, mem: usize) -> bool {
         return false;
     }
 
-    pub fn evict_and_allocate(&self, mem: usize, function_name: &str) -> Option<Vm> {
+    pub fn evict_and_allocate(
+        &self,
+        mem: usize,
+        function_config: &FunctionConfig,
+    ) -> Option<Vm> {
         if !self.evict(mem) {
             return None;
         }
-        return self.allocate(function_name);
+        return self.allocate(function_config);
     }
 
-    pub fn get_function_config(&self, function_name: &str) -> Option<FunctionConfig> {
-        self.function_configs.get(function_name).cloned()
+    pub fn get_function_config(&self, function_name: &str) -> Option<&FunctionConfig> {
+        self.function_configs.get(function_name)
     }
 
     /// should only be called once before Vms are launch. Not supporting
@@ -126,7 +144,14 @@ impl VmList {
     }
 
     pub fn push(&self, val: Vm) {
-        self.list.lock().expect("poisoned lock on idle list").push(val);
+        self.list
+            .lock()
+            .expect("poisoned lock on idle list")
+            .push(val);
         self.num_vms.fetch_add(1, Ordering::Relaxed);
     }
 }
+
+// check concurrent allocate() correctly decrements Controller.free_mem
+// check vms are correctly pushed concurrently to idle lists after use with release()
+// check get_idle_vm() returns unique vms to concurrent calls
