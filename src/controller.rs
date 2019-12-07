@@ -113,7 +113,7 @@ impl Controller {
                 // instead of evicting from the first non-empty list in the map,
                 // collect some function popularity data and evict based on that.
                 // This is where some policies can be implemented.
-                if let Some(vm) = vmlist.pop() {
+                if let Some(vm) = vmlist.try_pop() {
                     vm.shutdown();
                     self.free_mem.fetch_add(vm.memory, Ordering::Relaxed);
                     freed = freed + vm.memory;
@@ -161,6 +161,8 @@ impl VmList {
         }
     }
 
+    /// Pop a vm from self.list if the list is not empty.
+    /// This function blocks if it cannot grab the lock on self.list.
     pub fn pop(&self) -> Option<Vm> {
         match self.list.lock().expect("poisoned lock on idle list").pop() {
             Some(v) => {
@@ -168,6 +170,23 @@ impl VmList {
                 return Some(v);
             }
             None => return None,
+        }
+    }
+
+    /// try to grab the mutex on self.list. If try_lock() fails, just return
+    /// None instead of blocking.
+    pub fn try_pop(&self) -> Option<Vm> {
+        match self.list.try_lock() {
+            Ok(mut locked_list) => {
+                match locked_list.pop() {
+                    Some(vm) => {
+                        self.num_vms.fetch_sub(1, Ordering::Relaxed);
+                        return Some(vm);
+                    }
+                    None => return None,
+                }
+            }
+            Err(_) => return None
         }
     }
 
