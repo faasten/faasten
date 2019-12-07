@@ -182,252 +182,410 @@ impl VmList {
 // check vms are correctly pushed concurrently to idle lists after use with release()
 // check get_idle_vm() returns unique vms to concurrent calls
 #[cfg(test)]
-/// Helper function to create a Controller value with `mem` amount of memory
-/// If `mem` is set to 0, the amount of memory is set to the total memory
-/// of the machine.
-fn build_controller(mem: usize) -> Controller {
-    let ctr_config = ControllerConfig {
-        kernel_path: "".to_string(),
-        kernel_boot_args: "".to_string(),
-        runtimefs_dir: "".to_string(),
-        appfs_dir: "".to_string(),
-        function_config: "file://localhost/etc/snapfaas/example_function_configs.yaml".to_string(),
-    };
+mod tests {
+    use super::*;
 
-    let mut ctr = Controller::new(ctr_config).unwrap();
-    if mem != 0 {
-        ctr.total_mem = mem;
-        ctr.free_mem = AtomicUsize::new(mem);
-    }
-    return ctr;
-}
+    /// Helper function to create a Controller value with `mem` amount of memory
+    /// If `mem` is set to 0, the amount of memory is set to the total memory
+    /// of the machine.
+    fn build_controller(mem: usize) -> Controller {
+        let ctr_config = ControllerConfig {
+            kernel_path: "".to_string(),
+            kernel_boot_args: "".to_string(),
+            runtimefs_dir: "".to_string(),
+            appfs_dir: "".to_string(),
+            function_config: "file://localhost/etc/snapfaas/example_function_configs.yaml"
+                .to_string(),
+        };
 
-#[test]
-fn test_allocate() {
-    let controller = build_controller(0);
-    let lp_config = controller.get_function_config("lorempy2").unwrap();
-    let total_mem = controller.total_mem;
-    let num_vms = 100;
-
-    for i in 0..num_vms {
-        controller.allocate(lp_config);
-    }
-
-    assert_eq!(controller.total_num_vms.load(Ordering::Relaxed), num_vms);
-    assert_eq!(
-        controller.free_mem.load(Ordering::Relaxed),
-        total_mem - num_vms * 128
-    );
-}
-
-#[test]
-fn test_allocate_concurrent() {
-    let controller = build_controller(0);
-    let total_mem = controller.total_mem;
-    let num_vms = 123;
-
-    let sctr = Arc::new(controller);
-
-    let mut handles = vec![];
-
-    for i in 0..num_vms {
-        let ctr = sctr.clone();
-        let h = thread::spawn(move || {
-            let c = ctr.get_function_config("lorempy2").unwrap();
-            ctr.allocate(c);
-        });
-        handles.push(h);
-    }
-
-    for h in handles {
-        h.join();
-    }
-
-    assert_eq!(sctr.total_num_vms.load(Ordering::Relaxed), num_vms);
-    assert_eq!(
-        sctr.free_mem.load(Ordering::Relaxed),
-        total_mem - num_vms * 128
-    );
-}
-
-#[test]
-fn test_allocate_resource_limit() {
-    let controller = build_controller(1024);
-    let lp_config = controller.get_function_config("lorempy2").unwrap();
-
-    for i in 0..8 {
-        if let None = controller.allocate(lp_config) {
-            panic!("allocate failed before exhausting resources");
+        let mut ctr = Controller::new(ctr_config).unwrap();
+        if mem != 0 {
+            ctr.total_mem = mem;
+            ctr.free_mem = AtomicUsize::new(mem);
         }
+        return ctr;
     }
 
-    if let Some(vm) = controller.allocate(lp_config) {
-        panic!("allocate succeeds after exhausting resources");
+    #[test]
+    /// Allocate should correctly increment `total_num_vms` and decrement `free_mem`.
+    fn test_allocate() {
+        let controller = build_controller(0);
+        let lp_config = controller.get_function_config("lorempy2").unwrap();
+        let total_mem = controller.total_mem;
+        let num_vms = 100;
+
+        for i in 0..num_vms {
+            controller.allocate(lp_config);
+        }
+
+        assert_eq!(controller.total_num_vms.load(Ordering::Relaxed), num_vms);
+        assert_eq!(
+            controller.free_mem.load(Ordering::Relaxed),
+            total_mem - num_vms * 128
+        );
     }
 
-    assert_eq!(controller.total_num_vms.load(Ordering::Relaxed), 8);
-    assert_eq!(controller.free_mem.load(Ordering::Relaxed), 0);
-}
+    #[test]
+    /// Allocate should correctly increment `total_num_vms` and decrement `free_mem`.
+    fn test_allocate_concurrent() {
+        let controller = build_controller(0);
+        let total_mem = controller.total_mem;
+        let num_vms = 123;
 
-#[test]
-fn test_allocate_resource_limit_concurrent() {
-    let controller = build_controller(0);
-    let total_mem = controller.total_mem;
-    let num_vms = 124;
+        let sctr = Arc::new(controller);
 
-    let sctr = Arc::new(controller);
+        let mut handles = vec![];
 
-    let mut handles = vec![];
+        for i in 0..num_vms {
+            let ctr = sctr.clone();
+            let h = thread::spawn(move || {
+                let c = ctr.get_function_config("lorempy2").unwrap();
+                ctr.allocate(c);
+            });
+            handles.push(h);
+        }
 
-    for i in 0..num_vms {
-        let ctr = sctr.clone();
-        let h = thread::spawn(move || {
-            let c = ctr.get_function_config("lorempy2").unwrap();
-            if let None = ctr.allocate(c) {
+        for h in handles {
+            h.join();
+        }
+
+        assert_eq!(sctr.total_num_vms.load(Ordering::Relaxed), num_vms);
+        assert_eq!(
+            sctr.free_mem.load(Ordering::Relaxed),
+            total_mem - num_vms * 128
+        );
+    }
+
+    #[test]
+    /// Allocate should fail when resources are exhausted.
+    /// `total_num_vms` and `free_mem` should also be correct.
+    fn test_allocate_resource_limit() {
+        let controller = build_controller(1024);
+        let lp_config = controller.get_function_config("lorempy2").unwrap();
+
+        for i in 0..8 {
+            if let None = controller.allocate(lp_config) {
                 panic!("allocate failed before exhausting resources");
             }
-        });
-        handles.push(h);
-    }
+        }
 
-    for h in handles {
-        h.join();
-    }
-
-    let c = sctr.get_function_config("lorempy2").unwrap();
-    for i in 0..num_vms {
-        if let Some(vm) = sctr.allocate(c) {
+        if let Some(vm) = controller.allocate(lp_config) {
             panic!("allocate succeeds after exhausting resources");
         }
+
+        assert_eq!(controller.total_num_vms.load(Ordering::Relaxed), 8);
+        assert_eq!(controller.free_mem.load(Ordering::Relaxed), 0);
     }
 
-    assert_eq!(sctr.total_num_vms.load(Ordering::Relaxed), num_vms);
-    assert_eq!(
-        sctr.free_mem.load(Ordering::Relaxed),
-        total_mem - num_vms * 128
-    );
-}
+    #[test]
+    /// Allocate should fail when resources are exhausted.
+    /// `total_num_vms` and `free_mem` should also be correct.
+    fn test_allocate_resource_limit_concurrent() {
+        let controller = build_controller(0);
+        let total_mem = controller.total_mem;
+        let num_vms = 124;
 
-#[test]
-fn test_release() {
-    let controller = build_controller(1024);
-    let lp_config = controller.get_function_config("lorempy2").unwrap();
+        let sctr = Arc::new(controller);
 
-    assert_eq!(
-        controller
-            .idle
-            .get(&lp_config.name)
-            .unwrap()
-            .num_vms
-            .load(Ordering::Relaxed),
-        0
-    );
-    assert_eq!(
-        controller
-            .idle
-            .get(&lp_config.name)
-            .unwrap()
-            .list
-            .lock()
-            .unwrap()
-            .len(),
-        0
-    );
-    assert_eq!(controller.free_mem.load(Ordering::Relaxed), 1024);
+        let mut handles = vec![];
 
-    for _ in 0..8 {
-        match controller.allocate(lp_config) {
-            Some(vm) => controller.release(&lp_config.name, vm),
-            None => panic!("allocate failed before exhausting resources"),
+        for i in 0..num_vms {
+            let ctr = sctr.clone();
+            let h = thread::spawn(move || {
+                let c = ctr.get_function_config("lorempy2").unwrap();
+                if let None = ctr.allocate(c) {
+                    panic!("allocate failed before exhausting resources");
+                }
+            });
+            handles.push(h);
         }
-    }
 
-    assert_eq!(
-        controller
-            .idle
-            .get(&lp_config.name)
-            .unwrap()
-            .num_vms
-            .load(Ordering::Relaxed),
-        8
-    );
-    assert_eq!(
-        controller
-            .idle
-            .get(&lp_config.name)
-            .unwrap()
-            .list
-            .lock()
-            .unwrap()
-            .len(),
-        8
-    );
-    assert_eq!(controller.free_mem.load(Ordering::Relaxed), 0);
-}
-
-#[test]
-fn test_allocate_release_get_idle() {
-    let controller = build_controller(1024);
-    let lp_config = controller.get_function_config("lorempy2").unwrap();
-
-    for _ in 0..8 {
-        match controller.allocate(lp_config) {
-            Some(vm) => controller.release(&lp_config.name, vm),
-            None => panic!("allocate failed before exhausting resources"),
+        for h in handles {
+            h.join();
         }
-    }
 
-    assert_eq!(
-        controller
-            .idle
-            .get(&lp_config.name)
-            .unwrap()
-            .num_vms
-            .load(Ordering::Relaxed),
-        8
-    );
-    assert_eq!(
-        controller
-            .idle
-            .get(&lp_config.name)
-            .unwrap()
-            .list
-            .lock()
-            .unwrap()
-            .len(),
-        8
-    );
-
-    for _ in 0..8 {
-        if let None = controller.get_idle_vm(&lp_config.name) {
-            panic!("idle list should not be empty")
+        let c = sctr.get_function_config("lorempy2").unwrap();
+        for i in 0..num_vms {
+            if let Some(vm) = sctr.allocate(c) {
+                panic!("allocate succeeds after exhausting resources");
+            }
         }
+
+        assert_eq!(sctr.total_num_vms.load(Ordering::Relaxed), num_vms);
+        assert_eq!(
+            sctr.free_mem.load(Ordering::Relaxed),
+            total_mem - num_vms * 128
+        );
     }
 
-    if let Some(vm) = controller.get_idle_vm(&lp_config.name) {
-        panic!("idle list should be empty")
+    #[test]
+    /// release should add vm to its idle list and increment the list's `num_vms`
+    fn test_release() {
+        let controller = build_controller(1024);
+        let lp_config = controller.get_function_config("lorempy2").unwrap();
+
+        assert_eq!(
+            controller
+                .idle
+                .get(&lp_config.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            controller
+                .idle
+                .get(&lp_config.name)
+                .unwrap()
+                .list
+                .lock()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(controller.free_mem.load(Ordering::Relaxed), 1024);
+
+        for _ in 0..8 {
+            match controller.allocate(lp_config) {
+                Some(vm) => controller.release(&lp_config.name, vm),
+                None => panic!("allocate failed before exhausting resources"),
+            }
+        }
+
+        assert_eq!(
+            controller
+                .idle
+                .get(&lp_config.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            8
+        );
+        assert_eq!(
+            controller
+                .idle
+                .get(&lp_config.name)
+                .unwrap()
+                .list
+                .lock()
+                .unwrap()
+                .len(),
+            8
+        );
+        assert_eq!(controller.free_mem.load(Ordering::Relaxed), 0);
     }
 
-    assert_eq!(controller.free_mem.load(Ordering::Relaxed), 0);
+    #[test]
+    /// release should add vm to its idle list and increment the list's `num_vms`
+    fn test_release_concurrent() {
+        let controller = build_controller(0);
+        let total_mem = controller.total_mem;
+        let num_vms = 124;
 
-    assert_eq!(
-        controller
-            .idle
-            .get(&lp_config.name)
-            .unwrap()
-            .num_vms
-            .load(Ordering::Relaxed),
-        0
-    );
-    assert_eq!(
-        controller
-            .idle
-            .get(&lp_config.name)
-            .unwrap()
-            .list
-            .lock()
-            .unwrap()
-            .len(),
-        0
-    );
+        let sctr = Arc::new(controller);
+        let c = sctr.get_function_config("lorempy2").unwrap();
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            0
+        );
+        assert_eq!(sctr.free_mem.load(Ordering::Relaxed), total_mem);
+
+        let mut handles = vec![];
+
+        for i in 0..num_vms {
+            let ctr = sctr.clone();
+            let h = thread::spawn(move || {
+                let c = ctr.get_function_config("lorempy2").unwrap();
+                match ctr.allocate(c) {
+                    Some(vm) => ctr.release(&c.name, vm),
+                    None => panic!("allocate failed before exhausting resources"),
+                }
+            });
+            handles.push(h);
+        }
+
+        for h in handles {
+            h.join();
+        }
+
+        let c = sctr.get_function_config("lorempy2").unwrap();
+        for i in 0..num_vms {
+            if let Some(vm) = sctr.allocate(c) {
+                panic!("allocate succeeds after exhausting resources");
+            }
+        }
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            num_vms
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            num_vms
+        );
+        assert_eq!(
+            sctr.free_mem.load(Ordering::Relaxed),
+            total_mem - 128 * num_vms
+        );
+    }
+
+    #[test]
+    /// get_idle_vm should remove a vm from its idle list, return Some(vm) and
+    /// decrement the list's `num_vms`. It should return None if the idle list is empty.
+    fn test_get_idle() {
+        let controller = build_controller(0);
+        let total_mem = controller.total_mem;
+        let num_vms = 124;
+
+        let sctr = Arc::new(controller);
+        let c = sctr.get_function_config("lorempy2").unwrap();
+
+        for _ in 0..num_vms {
+            match sctr.allocate(c) {
+                Some(vm) => sctr.release(&c.name, vm),
+                None => panic!("allocate failed before exhausting resources"),
+            }
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            num_vms
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            num_vms
+        );
+
+        for _ in 0..num_vms {
+            if let None = sctr.get_idle_vm(&c.name) {
+                panic!("idle list should not be empty")
+            }
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            0
+        );
+
+        if let Some(vm) = sctr.get_idle_vm(&c.name) {
+            panic!("idle list should be empty");
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            0
+        );
+    }
+
+    #[test]
+    /// get_idle_vm should remove a vm from its idle list, return Some(vm) and
+    /// decrement the list's `num_vms`. It should return None if the idle list is empty.
+    fn test_get_idle_concurrent() {
+        let controller = build_controller(0);
+        let total_mem = controller.total_mem;
+        let num_vms = 124;
+
+        let sctr = Arc::new(controller);
+        let c = sctr.get_function_config("lorempy2").unwrap();
+
+        for _ in 0..num_vms {
+            match sctr.allocate(c) {
+                Some(vm) => sctr.release(&c.name, vm),
+                None => panic!("allocate failed before exhausting resources"),
+            }
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            num_vms
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            num_vms
+        );
+
+        let mut handles = vec![];
+
+        for _ in 0..num_vms {
+            let ctr = sctr.clone();
+            let h = thread::spawn(move || {
+                let c = ctr.get_function_config("lorempy2").unwrap();
+                if let None = ctr.get_idle_vm(&c.name) {
+                    panic!("idle list should not be empty")
+                }
+            });
+            handles.push(h);
+        }
+
+        for h in handles {
+            h.join();
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            0
+        );
+
+        if let Some(vm) = sctr.get_idle_vm(&c.name) {
+            panic!("idle list should be empty");
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            0
+        );
+    }
 }
