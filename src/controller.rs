@@ -113,15 +113,10 @@ impl Controller {
                 // instead of evicting from the first non-empty list in the map,
                 // collect some function popularity data and evict based on that.
                 // This is where some policies can be implemented.
-                if let Ok(mut mutex) = vmlist.list.try_lock() {
-                    println!("lock acquired. List len: {:?}", mutex.len());
-                    if let Some(vm) = mutex.pop() {
-                        vm.shutdown();
-                        self.free_mem.fetch_add(vm.memory, Ordering::Relaxed);
-                        println!("freed {:?}", freed);
-                        freed = freed + vm.memory;
-                        println!("freed {:?}", freed);
-                    }
+                if let Some(vm) = vmlist.pop() {
+                    vm.shutdown();
+                    self.free_mem.fetch_add(vm.memory, Ordering::Relaxed);
+                    freed = freed + vm.memory;
                 }
             }
         }
@@ -630,8 +625,6 @@ mod tests {
         for i in 0..num_vms {
             if !sctr.evict(c.memory) {
                 panic!("idle list should not be empty")
-            } else {
-                println!("{:?}th evict succeeds", i);
             }
         }
 
