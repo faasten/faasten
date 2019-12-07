@@ -107,7 +107,6 @@ impl Controller {
 
         while freed < mem && start.elapsed() < EVICTION_TIMEOUT {
             for key in self.idle.keys() {
-                println!("{:?}", key);
                 let vmlist = self.idle.get(key).unwrap();
 
                 // instead of evicting from the first non-empty list in the map,
