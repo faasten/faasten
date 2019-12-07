@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
-use url::Url;
-use std::thread;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
+use url::Url;
 
 use crate::configs::{ControllerConfig, FunctionConfig};
 use crate::vm::Vm;
@@ -195,7 +195,7 @@ fn build_controller(mem: usize) -> Controller {
     };
 
     let mut ctr = Controller::new(ctr_config).unwrap();
-    if mem != 0 { 
+    if mem != 0 {
         ctr.total_mem = mem;
         ctr.free_mem = AtomicUsize::new(mem);
     }
@@ -214,7 +214,10 @@ fn test_allocate() {
     }
 
     assert_eq!(controller.total_num_vms.load(Ordering::Relaxed), num_vms);
-    assert_eq!(controller.free_mem.load(Ordering::Relaxed), total_mem - num_vms*128);
+    assert_eq!(
+        controller.free_mem.load(Ordering::Relaxed),
+        total_mem - num_vms * 128
+    );
 }
 
 #[test]
@@ -223,7 +226,7 @@ fn test_allocate_concurrent() {
     let total_mem = controller.total_mem;
     let num_vms = 123;
 
-    let sctr =  Arc::new(controller);
+    let sctr = Arc::new(controller);
 
     let mut handles = vec![];
 
@@ -241,7 +244,10 @@ fn test_allocate_concurrent() {
     }
 
     assert_eq!(sctr.total_num_vms.load(Ordering::Relaxed), num_vms);
-    assert_eq!(sctr.free_mem.load(Ordering::Relaxed), total_mem - num_vms * 128);
+    assert_eq!(
+        sctr.free_mem.load(Ordering::Relaxed),
+        total_mem - num_vms * 128
+    );
 }
 
 #[test]
@@ -296,7 +302,10 @@ fn test_allocate_resource_limit_concurrent() {
     }
 
     assert_eq!(sctr.total_num_vms.load(Ordering::Relaxed), num_vms);
-    assert_eq!(sctr.free_mem.load(Ordering::Relaxed), total_mem - num_vms * 128);
+    assert_eq!(
+        sctr.free_mem.load(Ordering::Relaxed),
+        total_mem - num_vms * 128
+    );
 }
 
 #[test]
@@ -304,8 +313,26 @@ fn test_release() {
     let controller = build_controller(1024);
     let lp_config = controller.get_function_config("lorempy2").unwrap();
 
-    assert_eq!(controller.idle.get(&lp_config.name).unwrap().num_vms.load(Ordering::Relaxed), 0);
-    assert_eq!(controller.idle.get(&lp_config.name).unwrap().list.lock().unwrap().len(), 0);
+    assert_eq!(
+        controller
+            .idle
+            .get(&lp_config.name)
+            .unwrap()
+            .num_vms
+            .load(Ordering::Relaxed),
+        0
+    );
+    assert_eq!(
+        controller
+            .idle
+            .get(&lp_config.name)
+            .unwrap()
+            .list
+            .lock()
+            .unwrap()
+            .len(),
+        0
+    );
     assert_eq!(controller.free_mem.load(Ordering::Relaxed), 1024);
 
     for _ in 0..8 {
@@ -315,10 +342,29 @@ fn test_release() {
         }
     }
 
-    assert_eq!(controller.idle.get(&lp_config.name).unwrap().num_vms.load(Ordering::Relaxed), 8);
-    assert_eq!(controller.idle.get(&lp_config.name).unwrap().list.lock().unwrap().len(), 8);
+    assert_eq!(
+        controller
+            .idle
+            .get(&lp_config.name)
+            .unwrap()
+            .num_vms
+            .load(Ordering::Relaxed),
+        8
+    );
+    assert_eq!(
+        controller
+            .idle
+            .get(&lp_config.name)
+            .unwrap()
+            .list
+            .lock()
+            .unwrap()
+            .len(),
+        8
+    );
     assert_eq!(controller.free_mem.load(Ordering::Relaxed), 0);
 }
+
 #[test]
 fn test_allocate_release_get_idle() {
     let controller = build_controller(1024);
@@ -331,8 +377,26 @@ fn test_allocate_release_get_idle() {
         }
     }
 
-    assert_eq!(controller.idle.get(&lp_config.name).unwrap().num_vms.load(Ordering::Relaxed), 8);
-    assert_eq!(controller.idle.get(&lp_config.name).unwrap().list.lock().unwrap().len(), 8);
+    assert_eq!(
+        controller
+            .idle
+            .get(&lp_config.name)
+            .unwrap()
+            .num_vms
+            .load(Ordering::Relaxed),
+        8
+    );
+    assert_eq!(
+        controller
+            .idle
+            .get(&lp_config.name)
+            .unwrap()
+            .list
+            .lock()
+            .unwrap()
+            .len(),
+        8
+    );
 
     for _ in 0..8 {
         if let None = controller.get_idle_vm(&lp_config.name) {
@@ -346,6 +410,24 @@ fn test_allocate_release_get_idle() {
 
     assert_eq!(controller.free_mem.load(Ordering::Relaxed), 0);
 
-    assert_eq!(controller.idle.get(&lp_config.name).unwrap().num_vms.load(Ordering::Relaxed), 0);
-    assert_eq!(controller.idle.get(&lp_config.name).unwrap().list.lock().unwrap().len(), 0);
+    assert_eq!(
+        controller
+            .idle
+            .get(&lp_config.name)
+            .unwrap()
+            .num_vms
+            .load(Ordering::Relaxed),
+        0
+    );
+    assert_eq!(
+        controller
+            .idle
+            .get(&lp_config.name)
+            .unwrap()
+            .list
+            .lock()
+            .unwrap()
+            .len(),
+        0
+    );
 }
