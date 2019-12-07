@@ -1,4 +1,5 @@
 use crate::request::Request;
+use crate::configs::FunctionConfig;
 
 #[derive(Debug)]
 pub struct Vm {
@@ -7,10 +8,10 @@ pub struct Vm {
 }
 
 impl Vm {
-    pub fn new(id: usize) -> Vm {
+    pub fn new(id: usize, function_config: &FunctionConfig) -> Vm {
         Vm {
             id: id,
-            memory: 0,
+            memory: function_config.memory,
         }
     }
 

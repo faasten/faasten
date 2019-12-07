@@ -14,7 +14,7 @@ use crate::*;
 use log::error;
 use serde_yaml;
 
-const EVICTION_TIMEOUT: Duration = Duration::from_secs(5);
+const EVICTION_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub struct VmList {
@@ -92,7 +92,7 @@ impl Controller {
         ) {
             Ok(_) => {
                 let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
-                return Some(Vm::new(id));
+                return Some(Vm::new(id,function_config));
             }
             Err(_) => {
                 return None;
@@ -107,16 +107,20 @@ impl Controller {
 
         while freed < mem && start.elapsed() < EVICTION_TIMEOUT {
             for key in self.idle.keys() {
+                println!("{:?}", key);
                 let vmlist = self.idle.get(key).unwrap();
 
                 // instead of evicting from the first non-empty list in the map,
                 // collect some function popularity data and evict based on that.
                 // This is where some policies can be implemented.
                 if let Ok(mut mutex) = vmlist.list.try_lock() {
+                    println!("lock acquired. List len: {:?}", mutex.len());
                     if let Some(vm) = mutex.pop() {
                         vm.shutdown();
                         self.free_mem.fetch_add(vm.memory, Ordering::Relaxed);
+                        println!("freed {:?}", freed);
                         freed = freed + vm.memory;
+                        println!("freed {:?}", freed);
                     }
                 }
             }
@@ -590,5 +594,85 @@ mod tests {
             sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
             0
         );
+    }
+
+    #[test]
+    /// evict should remove a vm from its idle list and increment `free_mem`.
+    fn test_eviction_single_vm() {
+        let controller = build_controller(0);
+        let total_mem = controller.total_mem;
+        let num_vms = 124;
+
+        let sctr = Arc::new(controller);
+        let c = sctr.get_function_config("lorempy2").unwrap();
+
+        for _ in 0..num_vms {
+            match sctr.allocate(c) {
+                Some(vm) => sctr.release(&c.name, vm),
+                None => panic!("allocate failed before exhausting resources"),
+            }
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            num_vms
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            num_vms
+        );
+        assert_eq!(sctr.free_mem.load(Ordering::Relaxed), sctr.total_mem-128*num_vms);
+
+        for i in 0..num_vms {
+            if !sctr.evict(c.memory) {
+                panic!("idle list should not be empty")
+            } else {
+                println!("{:?}th evict succeeds", i);
+            }
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            0
+        );
+
+        if let Some(vm) = sctr.get_idle_vm(&c.name) {
+            panic!("idle list should be empty");
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            0
+        );
+ 
+    }
+
+    /// evict should continue removing vms from its idle list and incrementing
+    /// `free_mem` until at least `mem` amount of memory are freed.
+    fn test_eviction_multi_vms() {
+    }
+
+    /// evict should fail and return if there's nothing idle to evict
+    fn test_eviction_failure_not_block() {
     }
 }
