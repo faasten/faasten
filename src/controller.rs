@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use url::Url;
+use std::time::{Duration, Instant};
 
 use crate::configs::{ControllerConfig, FunctionConfig};
 use crate::vm::Vm;
@@ -12,6 +13,8 @@ use crate::*;
 
 use log::error;
 use serde_yaml;
+
+const EVICTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub struct VmList {
@@ -100,8 +103,9 @@ impl Controller {
     /// Evict one or more vms to free `mem` MB of memory
     pub fn evict(&self, mem: usize) -> bool {
         let mut freed: usize = 0;
-        let mut passes = 0;
-        while freed < mem && passes < 3 {
+        let start = Instant::now();
+
+        while freed < mem && start.elapsed() < EVICTION_TIMEOUT {
             for key in self.idle.keys() {
                 let vmlist = self.idle.get(key).unwrap();
 
@@ -116,7 +120,6 @@ impl Controller {
                     }
                 }
             }
-            passes = passes + 1;
         }
 
         if freed >= mem {
