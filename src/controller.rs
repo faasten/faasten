@@ -303,9 +303,9 @@ mod tests {
     fn test_allocate_resource_limit_concurrent() {
         let controller = build_controller(0);
         let total_mem = controller.total_mem;
-        let num_vms = 124;
 
         let sctr = Arc::new(controller);
+        let num_vms = total_mem/sctr.get_function_config("lorempy2").unwrap().memory;
 
         let mut handles = vec![];
 
@@ -401,10 +401,10 @@ mod tests {
     fn test_release_concurrent() {
         let controller = build_controller(0);
         let total_mem = controller.total_mem;
-        let num_vms = 124;
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
+        let num_vms = total_mem/c.memory;
 
         assert_eq!(
             sctr.idle
@@ -468,10 +468,10 @@ mod tests {
     fn test_get_idle() {
         let controller = build_controller(0);
         let total_mem = controller.total_mem;
-        let num_vms = 124;
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
+        let num_vms = total_mem/c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(c) {
@@ -536,10 +536,10 @@ mod tests {
     fn test_get_idle_concurrent() {
         let controller = build_controller(0);
         let total_mem = controller.total_mem;
-        let num_vms = 124;
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
+        let num_vms = total_mem/c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(c) {
@@ -614,10 +614,10 @@ mod tests {
     fn test_eviction_single_vm() {
         let controller = build_controller(0);
         let total_mem = controller.total_mem;
-        let num_vms = 124;
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
+        let num_vms = total_mem/c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(c) {
@@ -683,10 +683,10 @@ mod tests {
     fn test_eviction_single_vm_concurrent() {
         let controller = build_controller(0);
         let total_mem = controller.total_mem;
-        let num_vms = 124;
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
+        let num_vms = total_mem/c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(c) {
@@ -766,10 +766,10 @@ mod tests {
     fn test_eviction_multi_vms() {
         let controller = build_controller(0);
         let total_mem = controller.total_mem;
-        let num_vms = 123;
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
+        let num_vms = total_mem/c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(c) {
@@ -819,10 +819,10 @@ mod tests {
     fn test_eviction_multi_vms_concurrent() {
         let controller = build_controller(0);
         let total_mem = controller.total_mem;
-        let num_vms = 124;
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
+        let num_vms = total_mem/c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(c) {
