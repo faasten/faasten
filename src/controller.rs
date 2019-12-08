@@ -14,7 +14,7 @@ use crate::*;
 use log::error;
 use serde_yaml;
 
-const EVICTION_TIMEOUT: Duration = Duration::from_secs(1);
+const EVICTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub struct VmList {
@@ -675,15 +675,272 @@ mod tests {
             sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
             0
         );
- 
+
     }
 
+    #[test]
+    /// evict should remove a vm from its idle list and increment `free_mem`.
+    fn test_eviction_single_vm_concurrent() {
+        let controller = build_controller(0);
+        let total_mem = controller.total_mem;
+        let num_vms = 124;
+
+        let sctr = Arc::new(controller);
+        let c = sctr.get_function_config("lorempy2").unwrap();
+
+        for _ in 0..num_vms {
+            match sctr.allocate(c) {
+                Some(vm) => sctr.release(&c.name, vm),
+                None => panic!("allocate failed before exhausting resources"),
+            }
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            num_vms
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            num_vms
+        );
+        assert_eq!(sctr.free_mem.load(Ordering::Relaxed), sctr.total_mem-c.memory*num_vms);
+
+        let mut handles = vec![];
+
+        for _ in 0..num_vms {
+
+            let ctr = sctr.clone();
+            let h = thread::spawn(move || {
+                let c = ctr.get_function_config("lorempy2").unwrap();
+                if !ctr.evict(c.memory) {
+                    panic!("idle list should not be empty")
+                }
+
+            });
+            handles.push(h);
+        }
+
+        for h in handles {
+            h.join();
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            0
+        );
+
+        if let Some(vm) = sctr.get_idle_vm(&c.name) {
+            panic!("idle list should be empty");
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            0
+        );
+
+    }
+
+    #[test]
     /// evict should continue removing vms from its idle list and incrementing
     /// `free_mem` until at least `mem` amount of memory are freed.
     fn test_eviction_multi_vms() {
+        let controller = build_controller(0);
+        let total_mem = controller.total_mem;
+        let num_vms = 123;
+
+        let sctr = Arc::new(controller);
+        let c = sctr.get_function_config("lorempy2").unwrap();
+
+        for _ in 0..num_vms {
+            match sctr.allocate(c) {
+                Some(vm) => sctr.release(&c.name, vm),
+                None => panic!("allocate failed before exhausting resources"),
+            }
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            num_vms
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            num_vms
+        );
+        assert_eq!(sctr.free_mem.load(Ordering::Relaxed), sctr.total_mem-c.memory*num_vms);
+
+        let num_evict = num_vms/2;
+
+        for i in 0..num_evict {
+            if !sctr.evict(c.memory*2) {
+                panic!("idle list should not be empty")
+            }
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            num_vms - num_evict*2
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            num_vms - num_evict*2
+        );
+
     }
 
+    #[test]
+    fn test_eviction_multi_vms_concurrent() {
+        let controller = build_controller(0);
+        let total_mem = controller.total_mem;
+        let num_vms = 124;
+
+        let sctr = Arc::new(controller);
+        let c = sctr.get_function_config("lorempy2").unwrap();
+
+        for _ in 0..num_vms {
+            match sctr.allocate(c) {
+                Some(vm) => sctr.release(&c.name, vm),
+                None => panic!("allocate failed before exhausting resources"),
+            }
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            num_vms
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            num_vms
+        );
+        assert_eq!(sctr.free_mem.load(Ordering::Relaxed), sctr.total_mem-c.memory*num_vms);
+
+        let num_evict = num_vms/2;
+
+        let mut handles = vec![];
+        for _ in 0..num_evict {
+            let ctr = sctr.clone();
+            let h = thread::spawn(move || {
+                let c = ctr.get_function_config("lorempy2").unwrap();
+                if !ctr.evict(c.memory*2) {
+                    panic!("idle list should not be empty")
+                }
+            });
+            handles.push(h);
+        }
+
+        for h in handles {
+            h.join();
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            num_vms - num_evict*2
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            num_vms - num_evict*2
+        );
+
+    }
+
+    #[test]
     /// evict should fail and return if there's nothing idle to evict
     fn test_eviction_failure_not_block() {
+        let controller = build_controller(0);
+        let total_mem = controller.total_mem;
+        let num_vms = 1;
+
+        let sctr = Arc::new(controller);
+        let c = sctr.get_function_config("lorempy2").unwrap();
+
+        for _ in 0..num_vms {
+            match sctr.allocate(c) {
+                Some(vm) => sctr.release(&c.name, vm),
+                None => panic!("allocate failed before exhausting resources"),
+            }
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            num_vms
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            num_vms
+        );
+        assert_eq!(sctr.free_mem.load(Ordering::Relaxed), sctr.total_mem-c.memory*num_vms);
+
+        if sctr.evict(c.memory*2) {
+            panic!("eviction should fail")
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            0
+        );
+
+        if sctr.evict(c.memory) {
+            panic!("eviction should fail")
+        }
+
+        assert_eq!(
+            sctr.idle
+                .get(&c.name)
+                .unwrap()
+                .num_vms
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            0
+        );
     }
 }
