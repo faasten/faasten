@@ -1,0 +1,3 @@
+[submodule "firecracker"]
+	path = firecracker
+	url = git@github.com:princeton-sns/firecracker.git
