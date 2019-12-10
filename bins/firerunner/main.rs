@@ -142,15 +142,22 @@ fn main() {
         .parse::<u32>()
         .unwrap();
 
+    // notify snapfaas that the vm is ready
     io::stdout().write_all(READY);
     io::stdout().flush();
     
     loop {
+        let mut req_header = vec![0;1];
         let mut stdin = io::stdin();
-        let mut req_buf = vec![0;64];
-        stdin.lock().read(&mut req_buf);
+        stdin.lock().read(&mut req_header);
+        let size = req_header[0] as usize;
+
+        let mut req_buf = vec![0;size];
+        stdin.lock().read_exact(&mut req_buf);
 
         //stdout.lock().write_fmt(format_args!("success"));
+        io::stdout().write_all(&[size as u8]);
+        io::stdout().flush();
         io::stdout().write_all(&req_buf);
         io::stdout().flush();
         //stdout.lock().write_fmt(format_args!("echo: {:?}", req_buf));

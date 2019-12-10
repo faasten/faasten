@@ -87,12 +87,18 @@ impl Vm {
 
     /// Send request to vm and wait for its response
     pub fn process_req(&mut self, req: Request) -> Result<String, String> {
+        let req_str = req.to_string().unwrap();
+        let mut req_sender = self.process.stdin.as_mut().unwrap();
+
+        req_sender.write_all(&[req_str.len() as u8]);
+        self.process.stdin.as_mut().unwrap().flush();
+
         match self
             .process
             .stdin
             .as_mut()
             .unwrap()
-            .write_all(req.to_string().unwrap().as_bytes())
+            .write_all(req_str.as_bytes())
         {
             Ok(_) => (),
             Err(_) => return Err(String::from("Request failed to send")),
@@ -100,14 +106,14 @@ impl Vm {
 
         self.process.stdin.as_mut().unwrap().flush();
 
-        let mut response = vec![0;96];
-        {
-            let stdout = self.process.stdout.as_mut().unwrap();
-            //stdout.read_to_string(&mut ready_msg);
-            stdout.read(&mut response);
-        }
+        let mut rsp_header = vec![0;1];
+        let stdout = self.process.stdout.as_mut().unwrap();
+        stdout.read(&mut rsp_header);
+        let size = rsp_header[0] as usize;
+        let mut rsp_buf = vec![0;size];
+        stdout.read_exact(&mut rsp_buf);
 
-        return Ok(String::from_utf8(response).unwrap());
+        return Ok(String::from_utf8(rsp_buf).unwrap());
     }
 
     pub fn shutdown(&mut self) {
