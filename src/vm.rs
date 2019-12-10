@@ -37,7 +37,7 @@ pub struct Vm {
 impl Vm {
     /// start a vm instance and return a Vm value
     pub fn new(id: usize, function_config: &FunctionConfig) -> Option<Vm> {
-        let mut vm_process = Command::new("/home/luzhuo/Dev/snapfaas/target/release/firerunner")
+        let mut vm_process = Command::new("/etc/snapfaas/firerunner")
             .args(&[
                 "--id",
                 &id.to_string(),

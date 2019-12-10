@@ -4,7 +4,9 @@ sudo mkdir -p /etc/snapfaas
 sudo chown :snapfaas /etc/snapfaas
 sudo chmod 775 /etc/snapfaas
 
-cp ./bins/snapctr/default-conf.yaml /etc/snapfaas
-cp ./resources/vmlinux /etc/snapfaas
-cp ./resources/example_function_configs.yaml /etc/snapfaas
+sudo cp ./bins/snapctr/default-conf.yaml /etc/snapfaas
+sudo cp ./resources/vmlinux /etc/snapfaas
+sudo cp ./resources/example_function_configs.yaml /etc/snapfaas
 
+cargo build --release 2>/dev/null
+cp ./target/release/firerunner /etc/snapfaas
