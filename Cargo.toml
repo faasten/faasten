@@ -8,6 +8,10 @@ edition = "2018"
 name = "snapctr"
 path = "bins/snapctr/main.rs"
 
+[[bin]]
+name = "firerunner"
+path = "bins/firerunner/main.rs"
+
 [lib]
 
 [dependencies]
@@ -19,6 +23,7 @@ serde = {version = "1.0.102", features = ["derive"]}
 serde_yaml = "0.8.11"
 serde_json = "*"
 shellexpand = "1.0.0"
-futures = "0.1.29"
 nix = "0.16.0"
 cgroups = "0.1.0"
+vmm = { path = "firecracker/vmm", features = ["vsock"] }
+sys_util = { path = "firecracker/sys_util" }

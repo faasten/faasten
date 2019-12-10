@@ -4,8 +4,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
-use url::Url;
 use std::time::{Duration, Instant};
+use url::Url;
+
+use log::info;
 
 use crate::configs::{ControllerConfig, FunctionConfig};
 use crate::vm::Vm;
@@ -66,6 +68,17 @@ impl Controller {
         }
     }
 
+    pub fn shutdown(&self) {
+        for key in self.idle.keys() {
+            let vmlist = self.idle.get(key).unwrap();
+            vmlist.list.lock().map(|mut l| {
+                for vm in l.iter_mut() {
+                    vm.shutdown();
+                }
+            });
+        }
+    }
+
     /// Try to find an idle vm from the function's idle list
     pub fn get_idle_vm(&self, function_name: &str) -> Option<Vm> {
         if let Some(idle) = self.idle.get(function_name) {
@@ -82,6 +95,7 @@ impl Controller {
     /// Try to allocate and launch a new vm for a function
     /// Allocation can fail when there's not enough resources on the machine.
     pub fn allocate(&self, function_config: &FunctionConfig) -> Option<Vm> {
+        info!("Allocating new VM");
         match self.free_mem.fetch_update(
             |x| match x >= function_config.memory {
                 true => Some(x - function_config.memory),
@@ -92,7 +106,7 @@ impl Controller {
         ) {
             Ok(_) => {
                 let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
-                return Some(Vm::new(id,function_config));
+                return Vm::new(id, function_config);
             }
             Err(_) => {
                 return None;
@@ -112,7 +126,7 @@ impl Controller {
                 // instead of evicting from the first non-empty list in the map,
                 // collect some function popularity data and evict based on that.
                 // This is where some policies can be implemented.
-                if let Some(vm) = vmlist.try_pop() {
+                if let Some(mut vm) = vmlist.try_pop() {
                     vm.shutdown();
                     self.free_mem.fetch_add(vm.memory, Ordering::Relaxed);
                     freed = freed + vm.memory;
@@ -176,16 +190,14 @@ impl VmList {
     /// None instead of blocking.
     pub fn try_pop(&self) -> Option<Vm> {
         match self.list.try_lock() {
-            Ok(mut locked_list) => {
-                match locked_list.pop() {
-                    Some(vm) => {
-                        self.num_vms.fetch_sub(1, Ordering::Relaxed);
-                        return Some(vm);
-                    }
-                    None => return None,
+            Ok(mut locked_list) => match locked_list.pop() {
+                Some(vm) => {
+                    self.num_vms.fetch_sub(1, Ordering::Relaxed);
+                    return Some(vm);
                 }
-            }
-            Err(_) => return None
+                None => return None,
+            },
+            Err(_) => return None,
         }
     }
 
@@ -305,7 +317,7 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let num_vms = total_mem/sctr.get_function_config("lorempy2").unwrap().memory;
+        let num_vms = total_mem / sctr.get_function_config("lorempy2").unwrap().memory;
 
         let mut handles = vec![];
 
@@ -404,7 +416,7 @@ mod tests {
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
-        let num_vms = total_mem/c.memory;
+        let num_vms = total_mem / c.memory;
 
         assert_eq!(
             sctr.idle
@@ -471,7 +483,7 @@ mod tests {
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
-        let num_vms = total_mem/c.memory;
+        let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(c) {
@@ -539,7 +551,7 @@ mod tests {
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
-        let num_vms = total_mem/c.memory;
+        let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(c) {
@@ -617,7 +629,7 @@ mod tests {
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
-        let num_vms = total_mem/c.memory;
+        let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(c) {
@@ -638,7 +650,10 @@ mod tests {
             sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
             num_vms
         );
-        assert_eq!(sctr.free_mem.load(Ordering::Relaxed), sctr.total_mem-128*num_vms);
+        assert_eq!(
+            sctr.free_mem.load(Ordering::Relaxed),
+            sctr.total_mem - 128 * num_vms
+        );
 
         for i in 0..num_vms {
             if !sctr.evict(c.memory) {
@@ -675,7 +690,6 @@ mod tests {
             sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
             0
         );
-
     }
 
     #[test]
@@ -686,7 +700,7 @@ mod tests {
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
-        let num_vms = total_mem/c.memory;
+        let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(c) {
@@ -707,19 +721,20 @@ mod tests {
             sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
             num_vms
         );
-        assert_eq!(sctr.free_mem.load(Ordering::Relaxed), sctr.total_mem-c.memory*num_vms);
+        assert_eq!(
+            sctr.free_mem.load(Ordering::Relaxed),
+            sctr.total_mem - c.memory * num_vms
+        );
 
         let mut handles = vec![];
 
         for _ in 0..num_vms {
-
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
                 let c = ctr.get_function_config("lorempy2").unwrap();
                 if !ctr.evict(c.memory) {
                     panic!("idle list should not be empty")
                 }
-
             });
             handles.push(h);
         }
@@ -757,7 +772,6 @@ mod tests {
             sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
             0
         );
-
     }
 
     #[test]
@@ -769,7 +783,7 @@ mod tests {
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
-        let num_vms = total_mem/c.memory;
+        let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(c) {
@@ -790,12 +804,15 @@ mod tests {
             sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
             num_vms
         );
-        assert_eq!(sctr.free_mem.load(Ordering::Relaxed), sctr.total_mem-c.memory*num_vms);
+        assert_eq!(
+            sctr.free_mem.load(Ordering::Relaxed),
+            sctr.total_mem - c.memory * num_vms
+        );
 
-        let num_evict = num_vms/2;
+        let num_evict = num_vms / 2;
 
         for i in 0..num_evict {
-            if !sctr.evict(c.memory*2) {
+            if !sctr.evict(c.memory * 2) {
                 panic!("idle list should not be empty")
             }
         }
@@ -806,13 +823,12 @@ mod tests {
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
-            num_vms - num_evict*2
+            num_vms - num_evict * 2
         );
         assert_eq!(
             sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
-            num_vms - num_evict*2
+            num_vms - num_evict * 2
         );
-
     }
 
     #[test]
@@ -822,7 +838,7 @@ mod tests {
 
         let sctr = Arc::new(controller);
         let c = sctr.get_function_config("lorempy2").unwrap();
-        let num_vms = total_mem/c.memory;
+        let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(c) {
@@ -843,16 +859,19 @@ mod tests {
             sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
             num_vms
         );
-        assert_eq!(sctr.free_mem.load(Ordering::Relaxed), sctr.total_mem-c.memory*num_vms);
+        assert_eq!(
+            sctr.free_mem.load(Ordering::Relaxed),
+            sctr.total_mem - c.memory * num_vms
+        );
 
-        let num_evict = num_vms/2;
+        let num_evict = num_vms / 2;
 
         let mut handles = vec![];
         for _ in 0..num_evict {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
                 let c = ctr.get_function_config("lorempy2").unwrap();
-                if !ctr.evict(c.memory*2) {
+                if !ctr.evict(c.memory * 2) {
                     panic!("idle list should not be empty")
                 }
             });
@@ -869,13 +888,12 @@ mod tests {
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
-            num_vms - num_evict*2
+            num_vms - num_evict * 2
         );
         assert_eq!(
             sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
-            num_vms - num_evict*2
+            num_vms - num_evict * 2
         );
-
     }
 
     #[test]
@@ -907,9 +925,12 @@ mod tests {
             sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
             num_vms
         );
-        assert_eq!(sctr.free_mem.load(Ordering::Relaxed), sctr.total_mem-c.memory*num_vms);
+        assert_eq!(
+            sctr.free_mem.load(Ordering::Relaxed),
+            sctr.total_mem - c.memory * num_vms
+        );
 
-        if sctr.evict(c.memory*2) {
+        if sctr.evict(c.memory * 2) {
             panic!("eviction should fail")
         }
 

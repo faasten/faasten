@@ -83,7 +83,7 @@ fn main() {
             controller.set_total_mem(total_mem);
         }
     }
-    info!("{:?}", controller);
+    //info!("{:?}", controller);
 
     // prepare worker pool
     let wp = workerpool::WorkerPool::new(controller);

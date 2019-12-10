@@ -73,11 +73,11 @@ impl ControllerConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct FunctionConfig {
     pub name: String,
-    pub runtimefs: PathBuf,
-    pub appfs: PathBuf,
+    pub runtimefs: String,
+    pub appfs: String,
     pub vcpus: u64,
     pub memory: usize,
     pub concurrency_limit: usize,
-    pub load_dir: PathBuf,
+    pub load_dir: String,
 }
 

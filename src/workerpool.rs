@@ -62,6 +62,8 @@ impl WorkerPool {
                 error!("worker thread {:?} panicked {:?}", id, e);
             }
         }
+
+        self.controller.shutdown();
     }
 
     
