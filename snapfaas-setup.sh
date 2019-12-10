@@ -8,5 +8,10 @@ sudo cp ./bins/snapctr/default-conf.yaml /etc/snapfaas
 sudo cp ./resources/vmlinux /etc/snapfaas
 sudo cp ./resources/example_function_configs.yaml /etc/snapfaas
 
+# initialize submodules
+git submodule init
+git submodule update
+
+# build snapfaas binaries
 cargo build --release 2>/dev/null
 cp ./target/release/firerunner /etc/snapfaas
