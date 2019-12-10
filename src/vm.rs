@@ -8,6 +8,13 @@ use crate::configs::FunctionConfig;
 use crate::request::Request;
 use cgroups::{cgroup_builder::CgroupBuilder, Cgroup};
 
+pub enum VmStatus{
+    NotReady,
+    ReadyToReceive = 1,
+    Unresponsive,
+    Crashed,
+}
+
 #[derive(Debug)]
 pub struct VmAppConfig {
     pub rootfs: String,
@@ -64,7 +71,7 @@ impl Vm {
         let mut vm_process = vm_process.unwrap();
 
         //let mut ready_msg = String::new();
-        let mut ready_msg = vec![0;16];
+        let mut ready_msg = vec![0;2];
         {
             let stdout = vm_process.stdout.as_mut().unwrap();
             //stdout.read_to_string(&mut ready_msg);
@@ -90,6 +97,8 @@ impl Vm {
             Ok(_) => (),
             Err(_) => return Err(String::from("Request failed to send")),
         }
+
+        self.process.stdin.as_mut().unwrap().flush();
 
         let mut response = vec![0;96];
         {

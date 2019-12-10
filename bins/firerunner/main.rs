@@ -9,7 +9,9 @@ use std::os::unix::io::FromRawFd;
 use std::path::PathBuf;
 
 use clap::{App, Arg};
+use snapfaas::vm;
 
+const READY :&[u8] = &[vm::VmStatus::ReadyToReceive as u8];
 fn main() {
     let cmd_arguments = App::new("firecracker")
         .version(crate_version!())
@@ -140,39 +142,17 @@ fn main() {
         .parse::<u32>()
         .unwrap();
 
-    let mut stdout = io::stdout();
-    {
-        /*
-        stdout
-            .lock()
-            .write_fmt(format_args!("kernel: {:?}\n", kernel));
-        */
-        println!("Ready");
-    }
-    /*
-    stdout
-        .lock()
-        .write_fmt(format_args!("kernel args: {:?}", kargs));
-    stdout
-        .lock()
-        .write_fmt(format_args!("rootfs: {:?}", rootfs));
-    stdout.lock().write_fmt(format_args!("appfs: {:?}", appfs));
-    stdout.lock().write_fmt(format_args!(
-        "mem: {:?}, vcpus: {:?}",
-        mem_size_mib, vcpu_count
-    ));
-    stdout
-        .lock()
-        .write_fmt(format_args!("snapshot load dir: {:?}", load_dir));
-    */
-
+    io::stdout().write_all(READY);
+    io::stdout().flush();
+    
     loop {
         let mut stdin = io::stdin();
         let mut req_buf = vec![0;64];
         stdin.lock().read(&mut req_buf);
 
         //stdout.lock().write_fmt(format_args!("success"));
-        println!("echo: {:?}", String::from_utf8(req_buf));
+        io::stdout().write_all(&req_buf);
+        io::stdout().flush();
         //stdout.lock().write_fmt(format_args!("echo: {:?}", req_buf));
     }
 
