@@ -8,13 +8,18 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 use log::info;
+use log::error;
+use serde_yaml;
+extern crate serde;
+extern crate serde_json;
+use serde_json::json;
+use time::precise_time_ns;
 
 use crate::configs::{ControllerConfig, FunctionConfig};
 use crate::vm::Vm;
 use crate::*;
+use crate::metrics::Metrics;
 
-use log::error;
-use serde_yaml;
 
 const EVICTION_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -28,10 +33,11 @@ pub struct VmList {
 pub struct Controller {
     controller_config: ControllerConfig,
     function_configs: BTreeMap<String, FunctionConfig>,
-    idle: HashMap<String, VmList>,
-    total_num_vms: AtomicUsize, // total number of vms ever created
-    total_mem: usize,
+    idle: HashMap<String, VmList>, // from function name to a vector of VMs
+    pub total_num_vms: AtomicUsize, // total number of vms ever created
+    pub total_mem: usize,
     free_mem: AtomicUsize,
+    pub stat: Mutex<Metrics>,
 }
 
 impl Controller {
@@ -56,6 +62,7 @@ impl Controller {
                         total_num_vms: AtomicUsize::new(0),
                         total_mem: get_machine_memory(),
                         free_mem: AtomicUsize::new(get_machine_memory()),
+                        stat: Mutex::new(Metrics::new()),
                     });
                 }
                 error!("serde_yaml failed to parse function config file");
@@ -95,7 +102,6 @@ impl Controller {
     /// Try to allocate and launch a new vm for a function
     /// Allocation can fail when there's not enough resources on the machine.
     pub fn allocate(&self, function_config: &FunctionConfig) -> Option<Vm> {
-        info!("Allocating new VM");
         match self.free_mem.fetch_update(
             |x| match x >= function_config.memory {
                 true => Some(x - function_config.memory),
@@ -106,7 +112,16 @@ impl Controller {
         ) {
             Ok(_) => {
                 let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
-                return Vm::new(id, function_config);
+                info!("Allocating new VM. ID: {:?}, App: {:?}", id, function_config.name);
+                let t1 = precise_time_ns();
+                let vm = Vm::new(id, function_config);
+                let t2 = precise_time_ns();
+                if vm.is_some() {
+                    let mut stat = self.stat.lock().expect("stat lock");
+                    stat.vm_mem_size.insert(id, vm.as_ref().unwrap().memory);
+                    stat.boot_tsp.insert(id, vec![t1, t2]);
+                }
+                return vm;
             }
             Err(_) => {
                 return None;
@@ -127,9 +142,15 @@ impl Controller {
                 // collect some function popularity data and evict based on that.
                 // This is where some policies can be implemented.
                 if let Some(mut vm) = vmlist.try_pop() {
+                    let t1 = precise_time_ns();
                     vm.shutdown();
+                    let t2 = precise_time_ns();
                     self.free_mem.fetch_add(vm.memory, Ordering::Relaxed);
                     freed = freed + vm.memory;
+
+                    let mut stat = self.stat.lock().expect("stat lock");
+                    stat.evict_tsp.insert(vm.id, vec![t1, t2]);
+                    stat.num_evict = stat.num_evict + 1;
                 }
             }
         }
@@ -163,6 +184,23 @@ impl Controller {
             self.total_mem = mem;
             self.free_mem = AtomicUsize::new(mem);
         }
+    }
+
+    pub fn dump_stat(&self) {
+        let stat = self.stat.lock().expect("stat lock");
+        println!("{:?}", stat);
+        let dump = json!({
+            "number of evictions": stat.num_evict,
+            "number of requests completed": stat.num_complete,
+            "boot timestamps": stat.boot_tsp,
+            "vm memory sizes": stat.vm_mem_size,
+            "request/response timestamps":stat.req_rsp_tsp
+        });
+
+	let mut output_file = File::create("stat.log").expect("output file failed to create");
+	if let Err(e) = serde_json::to_writer_pretty(output_file, &dump) {
+	    panic!("failed to write measurement results as json");
+	}
     }
 }
 

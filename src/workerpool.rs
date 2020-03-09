@@ -15,7 +15,7 @@ use crate::request::Request;
 use crate::message::Message;
 use crate::controller::Controller;
 
-const DEFAULT_NUM_WORKERS: usize = 10;
+const DEFAULT_NUM_WORKERS: usize = 5;
 
 pub struct WorkerPool {
     pool: Vec<Worker>,
@@ -25,16 +25,15 @@ pub struct WorkerPool {
 }
 
 impl WorkerPool {
-    pub fn new(controller: Controller) -> WorkerPool {
-        let mut pool = Vec::with_capacity(DEFAULT_NUM_WORKERS);
-
+    pub fn new(controller: Arc<Controller>) -> WorkerPool {
         let (tx, rx) = mpsc::channel();
         let rx = Arc::new(Mutex::new(rx));
 
-        let controller = Arc::new(controller);
 
+        let pool_size = controller.total_mem/128;
+        let mut pool = Vec::with_capacity(pool_size);
 
-        for _ in 0..DEFAULT_NUM_WORKERS {
+        for _ in 0..pool_size {
             pool.push(Worker::new(rx.clone(), controller.clone()));
         }
 
@@ -63,8 +62,14 @@ impl WorkerPool {
             }
         }
 
+        self.controller.stat.lock().expect("stat lock").end_tsp = time::precise_time_ns();
+        self.controller.dump_stat();
+
         self.controller.shutdown();
     }
 
+    pub fn dump_trace(&self) {
+        self.controller.dump_stat();
+    }
     
 }

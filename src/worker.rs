@@ -10,6 +10,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use log::{error, info};
+use time::precise_time_ns;
 
 use crate::controller::Controller;
 use crate::message::Message;
@@ -36,6 +37,7 @@ impl Worker {
 
             loop {
                 let msg: Message = receiver.lock().unwrap().recv().unwrap();
+                info!("Thread {:?} task received: {:?}", id, msg);
                 match msg {
                     Message::Shutdown => {
                         info!("Thread {:?} shutdown received", id);
@@ -43,6 +45,7 @@ impl Worker {
                     }
                     Message::Request(req, rsp_sender) => match Worker::process_req(req, &ctr) {
                         Ok(rsp) => {
+                            info!("Thread {:?} finished processing", id);
                             if let Err(e) = rsp_sender.send(Message::Response(rsp)) {
                                 error!("[thread: {:?}] response failed to send: {:?}", id, e);
                             }
@@ -78,8 +81,8 @@ impl Worker {
         }
         let func_config = func_config.unwrap(); // unwrap should be safe here
 
-        info!("[Worker {:?}] recv: {:?}", id, req);
-        info!("[Worker {:?}] function config: {:?}", id, func_config);
+        //info!("[Worker {:?}] recv: {:?}", id, req);
+        //info!("[Worker {:?}] function config: {:?}", id, func_config);
 
         let vm = ctr
             .get_idle_vm(&function_name)
@@ -87,10 +90,28 @@ impl Worker {
             .or_else(|| ctr.evict_and_allocate(func_config.memory, func_config));
 
         let res = match vm {
-            None => Err(String::from("Resource exhaustion")),
+            None => {
+                {
+                    let mut stat = ctr.stat.lock().expect("stat lock");
+                    stat.num_drop = stat.num_drop + 1;
+                }
+                Err(String::from("Resource exhaustion"))
+            }
             Some(mut vm) => {
+                let t1 = precise_time_ns();
+                // send the request to VM and wait for a response
                 let res = vm.process_req(req);
+                let t2 = precise_time_ns();
+
+                {
+                    let mut stat = ctr.stat.lock().expect("stat lock");
+                    stat.num_complete = stat.num_complete + 1;
+                    stat.req_rsp_tsp.entry(vm.id).or_insert(vec![]).append(&mut vec![t1,t2]);
+                }
+
                 ctr.release(&function_name, vm);
+
+
                 res
             }
         };

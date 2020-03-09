@@ -5,11 +5,13 @@ use serde_json::Value;
 pub struct Request {
     pub function: String,
     pub payload: Value,
+    pub time: u64,
 }
 
 pub fn parse_json(json: String) -> Result<Request, serde_json::Error> {
     serde_json::from_str(json.as_str())
 }
+
 impl Request {
 
     pub fn to_string(&self) -> Result<String, serde_json::Error> {
