@@ -42,9 +42,11 @@ pub struct Vm {
 }
 
 impl Vm {
-    /// start a vm instance and return a Vm value
+    /// Launch a vm instance and return a Vm value
+    /// When this function returns, the VM has finished booting and is ready
+    /// to accept requests.
     pub fn new(id: usize, function_config: &FunctionConfig) -> Option<Vm> {
-        let mut vm_process = Command::new("/etc/snapfaas/firerunner")
+        let mut vm_process = Command::new("target/release/firerunner")
             .args(&[
                 "--id",
                 &id.to_string(),
@@ -117,6 +119,8 @@ impl Vm {
     }
 
     pub fn shutdown(&mut self) {
+        // TODO: not sure if kill() waits for the child process to terminate
+        // before returning.
         self.process.kill();
     }
 }

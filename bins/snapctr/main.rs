@@ -18,6 +18,10 @@ use snapfaas::gateway;
 use snapfaas::gateway::Gateway;
 use snapfaas::workerpool;
 
+use std::sync::Arc;
+
+use time::precise_time_ns;
+
 fn main() {
     simple_logger::init().expect("simple_logger init failed");
 
@@ -85,8 +89,9 @@ fn main() {
     }
     //info!("{:?}", controller);
 
+    let controller = Arc::new(controller);
     // prepare worker pool
-    let wp = workerpool::WorkerPool::new(controller);
+    let wp = workerpool::WorkerPool::new(controller.clone());
 
     // start gateway
     // TODO:support an HTTP gateway in addition to file gateway
@@ -95,7 +100,9 @@ fn main() {
         .expect("Request file not specified");
     let gateway = gateway::FileGateway::listen(request_file_url).expect("Failed to create gateway");
 
+    controller.stat.lock().expect("stat lock").start_tsp = precise_time_ns();
     // start admitting and processing incoming requests
+    let t1 = precise_time_ns();
     for task in gateway.incoming() {
         // ignore invalid requests for now
         if task.is_err() {
@@ -104,10 +111,12 @@ fn main() {
         }
 
         let (req, rsp_sender) = task.unwrap();
-        info!("req (main): {:?}", req);
+        let interval = req.time; // represents the interval between this request and the next request
 
         wp.send_req(req, rsp_sender);
+        std::thread::sleep(std::time::Duration::from_millis(interval));
     }
+    let t2 = precise_time_ns();
 
     wp.shutdown();
 }
