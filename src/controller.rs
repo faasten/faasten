@@ -120,6 +120,8 @@ impl Controller {
                     let mut stat = self.stat.lock().expect("stat lock");
                     stat.vm_mem_size.insert(id, vm.as_ref().unwrap().memory);
                     stat.boot_tsp.insert(id, vec![t1, t2]);
+                } else {
+                    self.free_mem.fetch_add(function_config.memory, Ordering::Relaxed);
                 }
                 return vm;
             }
