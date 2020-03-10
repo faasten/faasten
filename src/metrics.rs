@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap};
+use serde_json::json;
 
 #[derive(Clone, Debug)]
 pub struct Metrics {
@@ -27,5 +28,18 @@ impl Metrics {
             req_rsp_tsp: BTreeMap::new(),
         }
 
+    }
+
+    pub fn to_json(&self) -> serde_json::value::Value {
+        return json!({
+            "number of vm created": self.vm_mem_size.len(),
+            "vm memory sizes": self.vm_mem_size,
+            "number of requests completed": self.num_complete,
+            "number of dropped requests": self.num_drop,
+            "number of evictions": self.num_evict,
+            "boot timestamps": self.boot_tsp,
+            "request/response timestamps":self.req_rsp_tsp,
+            "eviction timestamps": self.evict_tsp,
+        });
     }
 }

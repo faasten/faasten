@@ -62,14 +62,6 @@ impl WorkerPool {
             }
         }
 
-        self.controller.stat.lock().expect("stat lock").end_tsp = time::precise_time_ns();
-        self.controller.dump_stat();
-
         self.controller.shutdown();
     }
-
-    pub fn dump_trace(&self) {
-        self.controller.dump_stat();
-    }
-    
 }
