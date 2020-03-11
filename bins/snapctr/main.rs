@@ -118,4 +118,5 @@ fn main() {
     let t2 = precise_time_ns();
 
     wp.shutdown();
+    println!("gateway latency {:?}", t2-t1);
 }

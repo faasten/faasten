@@ -6,57 +6,58 @@ use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
 use std::os::unix::io::FromRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{App, Arg};
 use snapfaas::vm;
 
 const READY :&[u8] = &[vm::VmStatus::ReadyToReceive as u8];
+
 fn main() {
     let cmd_arguments = App::new("firecracker")
         .version(crate_version!())
         .author(crate_authors!())
-        .about("Launch a microvm.")
+        .about("launch a microvm.")
         .arg(
             Arg::with_name("kernel")
                 .short("k")
                 .long("kernel")
-                .value_name("KERNEL")
+                .value_name("kernel")
                 .takes_value(true)
                 .required(true)
-                .help("Path the the kernel binary")
+                .help("path the the kernel binary")
         )
         .arg(
             Arg::with_name("kernel boot args")
                 .short("c")
                 .long("kernel_args")
-                .value_name("KERNEL_ARGS")
+                .value_name("kernel_args")
                 .takes_value(true)
                 .required(false)
                 .default_value("quiet console=none reboot=k panic=1 pci=off")
-                .help("Kernel boot args")
+                .help("kernel boot args")
         )
         .arg(
             Arg::with_name("rootfs")
-                .long("r")
+                .short("r")
                 .long("rootfs")
-                .value_name("ROOTFS")
+                .value_name("rootfs")
                 .takes_value(true)
                 .required(true)
-                .help("Path to the root file system")
+                .help("path to the root file system")
         )
         .arg(
             Arg::with_name("appfs")
                 .long("appfs")
-                .value_name("APPFS")
+                .value_name("appfs")
                 .takes_value(true)
                 .required(false)
-                .help("Path to the root file system")
+                .help("path to the root file system")
         )
         .arg(
             Arg::with_name("id")
                 .long("id")
-                .help("MicroVM unique identifier")
+                .help("microvm unique identifier")
                 .default_value("abcde1234")
                 .takes_value(true)
                 ,
@@ -65,10 +66,10 @@ fn main() {
             Arg::with_name("seccomp-level")
                 .long("seccomp-level")
                 .help(
-                    "Level of seccomp filtering.\n
-                            - Level 0: No filtering.\n
-                            - Level 1: Seccomp filtering by syscall number.\n
-                            - Level 2: Seccomp filtering by syscall number and argument values.\n
+                    "level of seccomp filtering.\n
+                            - level 0: no filtering.\n
+                            - level 1: seccomp filtering by syscall number.\n
+                            - level 2: seccomp filtering by syscall number and argument values.\n
                         ",
                 )
                 .takes_value(true)
@@ -80,7 +81,7 @@ fn main() {
                 .long("load_from")
                 .takes_value(true)
                 .required(false)
-                .help("if specified start VM from a snapshot under the given directory")
+                .help("if specified start vm from a snapshot under the given directory")
         )
         .arg(
             Arg::with_name("dump_dir")
@@ -107,9 +108,8 @@ fn main() {
         )
         .get_matches();
 
+    // make sure the input arguments are correct when the process is invoked
     let kernel = cmd_arguments.value_of("kernel").unwrap().to_string();
-    // let rootfs = [cmd_arguments.value_of("rootfs").unwrap()].iter().collect();
-    // let appfs = cmd_arguments.value_of("appfs").map(|s| [s].iter().collect());
     let rootfs = cmd_arguments.value_of("rootfs").unwrap().to_string();
     let appfs = cmd_arguments.value_of("appfs").unwrap().to_string();
     let kargs = cmd_arguments
@@ -118,15 +118,43 @@ fn main() {
         .to_string();
     let mem_size_mib = cmd_arguments
         .value_of("mem_size")
-        .map(|x| x.parse::<usize>().unwrap());
+        .map(|x| x.parse::<usize>().unwrap()).unwrap();
     let vcpu_count = cmd_arguments
         .value_of("vcpu_count")
-        .map(|x| x.parse::<u64>().unwrap());
+        .map(|x| x.parse::<u64>().unwrap()).unwrap();
     let load_dir = cmd_arguments.value_of("load_dir").map(PathBuf::from);
     let dump_dir = cmd_arguments.value_of("dump_dir").map(PathBuf::from);
 
     // It's safe to unwrap here because clap's been provided with a default value
     let instance_id = cmd_arguments.value_of("id").unwrap().to_string();
+
+    // output file for debugging
+    let file_name = format!("out/vm-{}.log", instance_id);
+    let output_file = File::create(file_name);
+    if let Err(e) = output_file {
+        panic!("Cannot create output file, {:?}", e);
+    }
+    let mut output_file = output_file.unwrap();
+    write!(&mut output_file, "vm-{:?}\n", instance_id);
+    write!(&mut output_file, "appfs: {:?}\n", appfs);
+    write!(&mut output_file, "rootfs: {:?}\n", rootfs);
+    write!(&mut output_file, "memory size: {:?}\n", mem_size_mib);
+    write!(&mut output_file, "vcpu count: {:?}\n", vcpu_count);
+    write!(&mut output_file, "load dir: {:?}\n", load_dir);
+    write!(&mut output_file, "dump_dir: {:?}\n", dump_dir);
+    output_file.flush();
+
+    // wait time in ms
+    let wait_time  = match appfs.as_ref() {
+        "lorempy2.ext4" => 20,
+        "loremjs.ext4" => 20,
+        "markdown-to-html.ext4" => 600,
+        "img-resize.ext4" => 1800,
+        "ocr-img.ext4" => 30000,
+        "sentiment-analysis.ext4" => 5000,
+        "autocomplete.ext4" => 100,
+        _ => 0,
+    };
 
     // It's safe to unwrap here because clap's been provided with a default value,
     // and allowed values are guaranteed to parse to u32.
@@ -137,23 +165,39 @@ fn main() {
         .unwrap();
 
     // notify snapfaas that the vm is ready
+    std::thread::sleep(std::time::Duration::from_millis(300));
     io::stdout().write_all(READY);
     io::stdout().flush();
     
+    let mut req_count = 0;
+    // continuously read from stdio
     loop {
         let mut req_header = vec![0;1];
         let mut stdin = io::stdin();
+        // does this block when there's nothing in stdin?
+        // first read in the number of bytes that I should read from stdin
         stdin.lock().read(&mut req_header);
         let size = req_header[0] as usize;
 
+        // actually read the request
         let mut req_buf = vec![0;size];
         stdin.lock().read_exact(&mut req_buf);
 
+        // sleep to simulate running
+        std::thread::sleep(std::time::Duration::from_millis(wait_time as u64));
+        write!(&mut output_file, "process time: {}\n", wait_time);
+
         //stdout.lock().write_fmt(format_args!("success"));
+        // first write the number bytes in the response to stdout
         io::stdout().write_all(&[size as u8]);
         io::stdout().flush();
+        // write the actual response
         io::stdout().write_all(&req_buf);
         io::stdout().flush();
+
+        req_count = req_count+1;
+        write!(&mut output_file, "Done: {}\n", req_count);
+        output_file.flush();
         //stdout.lock().write_fmt(format_args!("echo: {:?}", req_buf));
     }
 

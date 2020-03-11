@@ -8,7 +8,7 @@ sudo cp ./bins/snapctr/default-conf.yaml /etc/snapfaas
 sudo cp ./resources/vmlinux /etc/snapfaas
 sudo cp ./resources/example_function_configs.yaml /etc/snapfaas
 
-# initialize submodules
+# initialize submodules (for Firecracker)
 git submodule init
 git submodule update
 
