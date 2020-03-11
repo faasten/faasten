@@ -100,7 +100,6 @@ fn main() {
         .expect("Request file not specified");
     let gateway = gateway::FileGateway::listen(request_file_url).expect("Failed to create gateway");
 
-    controller.stat.lock().expect("stat lock").start_tsp = precise_time_ns();
     // start admitting and processing incoming requests
     let t1 = precise_time_ns();
     for task in gateway.incoming() {
