@@ -3,10 +3,10 @@ This script processes trace data from snapctr.
 Each trace file contains data in the format of a JSON string.
 The JSON string follows this format:
     {
-        "number of dropped requests": an_integer,
+        "number of requests dropped": an_integer,
         "number of evictions": an_integer,
         "number of requests completed": an_integer,
-        "number of vm created": an_integer,
+        "number of vms created": an_integer,
         "boot timestamps": {
             "an_integer_vm_id": [
                 start_timestamp,
