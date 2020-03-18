@@ -102,7 +102,10 @@ impl Iterator for FileRequestIter {
         match self.reader.read_line(&mut buf) {
             Ok(0) => None,
             Ok(_n) => match request::parse_json(buf) {
-                Ok(req) => Some(Ok((req, self.rsp_sender.clone()))),
+                Ok(req) => {
+                    std::thread::sleep(std::time::Duration::from_millis(req.time));
+                    Some(Ok((req, self.rsp_sender.clone())))
+                }
                 Err(e) => Some(Err(std::io::Error::from(e)))
             }
             Err(e) => Some(Err(e))

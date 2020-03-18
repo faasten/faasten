@@ -71,7 +71,9 @@ impl Controller {
         }
     }
 
-    /// Go through idle lists and shutdown all vms
+    /// Shutdown the controller
+    /// Things needed to do for shutdown:
+    /// 1. Go through idle lists and shutdown all vms
     pub fn shutdown(&self) {
         for key in self.idle.keys() {
             let vmlist = self.idle.get(key).unwrap();

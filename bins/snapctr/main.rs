@@ -88,10 +88,9 @@ fn main() {
             controller.set_total_mem(total_mem);
         }
     }
+    let controller = Arc::new(controller);
     //info!("{:?}", controller);
 
-    let controller = Arc::new(controller);
-    // prepare worker pool
     let wp = workerpool::WorkerPool::new(controller.clone());
 
     // start gateway
@@ -111,13 +110,12 @@ fn main() {
         }
 
         let (req, rsp_sender) = task.unwrap();
-        let interval = req.time; // represents the interval between this request and the next request
 
         wp.send_req(req, rsp_sender);
-        std::thread::sleep(std::time::Duration::from_millis(interval));
     }
     let t2 = precise_time_ns();
+    println!("gateway latency {:?}", t2-t1);
 
     wp.shutdown();
-    println!("gateway latency {:?}", t2-t1);
+    controller.shutdown();
 }

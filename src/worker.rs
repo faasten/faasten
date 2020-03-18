@@ -43,12 +43,13 @@ impl Worker {
                 let msg: Message = receiver.lock().unwrap().recv().unwrap();
                 info!("Thread {:?} task received: {:?}", id, msg);
                 match msg {
+                    // To shutdown, dump collected statistics and then terminate
                     Message::Shutdown => {
                         info!("Thread {:?} shutdown received", id);
 
                         let mut output_file = std::fs::File::create(format!("thread-{:?}.stat", id))
                                               .expect("output file failed to create");
-                        if let Err(e) = serde_json::to_writer_pretty(output_file, &stat.to_json()) {
+                        if let Err(_) = serde_json::to_writer_pretty(output_file, &stat.to_json()) {
                             panic!("failed to write measurement results as json");
                         }
                         return;

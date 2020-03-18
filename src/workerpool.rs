@@ -45,8 +45,11 @@ impl WorkerPool {
         self.req_sender.send(Message::Request(req, rsp_sender));
     }
 
+    /// shutdown the workerpool
+    /// This involves
+    /// 1. sending Shutdown message to each thread in the pool
+    /// 2. wait for all threads in the pool to terminate
     pub fn shutdown(self) {
-
         for _ in &self.pool {
             self.req_sender.send(Message::Shutdown);
         }
@@ -57,7 +60,5 @@ impl WorkerPool {
                 error!("worker thread {:?} panicked {:?}", id, e);
             }
         }
-
-        self.controller.shutdown();
     }
 }

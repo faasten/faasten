@@ -118,6 +118,7 @@ impl Vm {
         return Ok(String::from_utf8(rsp_buf).unwrap());
     }
 
+    /// shutdown this vm
     pub fn shutdown(&mut self) {
         // TODO: not sure if kill() waits for the child process to terminate
         // before returning. This is relevant for shutdown latency measurement.
