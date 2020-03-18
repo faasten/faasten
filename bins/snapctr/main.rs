@@ -80,6 +80,7 @@ fn main() {
         ctr_config.set_kernel_boot_args(kernel_boot_args);
     }
 
+    // create a controller object
     let mut controller = Controller::new(ctr_config).expect("Cannot create controller");
 
     if let Some(total_mem) = matches.value_of("total memory") {

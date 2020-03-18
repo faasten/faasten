@@ -15,11 +15,8 @@ use crate::request::Request;
 use crate::message::Message;
 use crate::controller::Controller;
 
-const DEFAULT_NUM_WORKERS: usize = 5;
-
 pub struct WorkerPool {
     pool: Vec<Worker>,
-    max_num_workers: usize,
     req_sender: Sender<Message>,
     controller: Arc<Controller>,
 }
@@ -39,7 +36,6 @@ impl WorkerPool {
 
         WorkerPool {
             pool: pool,
-            max_num_workers: DEFAULT_NUM_WORKERS,
             req_sender: tx,
             controller: controller,
         }

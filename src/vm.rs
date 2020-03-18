@@ -120,7 +120,12 @@ impl Vm {
 
     pub fn shutdown(&mut self) {
         // TODO: not sure if kill() waits for the child process to terminate
-        // before returning.
+        // before returning. This is relevant for shutdown latency measurement.
+        // TODO: std::process::Child.kill() is equivalent to sending a SIGKILL
+        // on unix platforms which means the child process won't be able to run
+        // its clean up process. Previously, we shutdown VMs through SIGTERM
+        // which does allow a shutdown process. We need to make sure using
+        // SIGKILL won't create any issues with vms.
         self.process.kill();
     }
 }

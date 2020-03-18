@@ -1,3 +1,6 @@
+//! Controller and function configuration
+//! In-memory data structures that represent controller configuration and
+//! function configurations
 use serde::Deserialize;
 use serde_yaml;
 use std::collections::BTreeMap;
