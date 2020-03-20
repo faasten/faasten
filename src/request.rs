@@ -8,8 +8,8 @@ pub struct Request {
     pub time: u64,
 }
 
-pub fn parse_json(json: String) -> Result<Request, serde_json::Error> {
-    serde_json::from_str(json.as_str())
+pub fn parse_json(json: &str) -> Result<Request, serde_json::Error> {
+    serde_json::from_str(json)
 }
 
 impl Request {

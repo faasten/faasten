@@ -103,7 +103,7 @@ fn main() {
     // start admitting and processing incoming requests
     let t1 = precise_time_ns();
     for task in gateway.incoming() {
-        // ignore invalid requests for now
+        // ignore invalid requests
         if task.is_err() {
             error!("Invalid task: {:?}", task);
             continue;
