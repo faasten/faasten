@@ -12,6 +12,14 @@ path = "bins/snapctr/main.rs"
 name = "firerunner"
 path = "bins/firerunner/main.rs"
 
+[[bin]]
+name = "client"
+path = "bins/client/main.rs"
+
+[[bin]]
+name = "server"
+path = "bins/server/main.rs"
+
 [lib]
 
 [dependencies]
