@@ -1,5 +1,5 @@
 use std::io::prelude::*;
-use std::io::{BufReader};
+use std::io::{BufReader, ErrorKind};
 use std::net::TcpStream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,6 +38,7 @@ fn main() {
         .get_matches();
 
     let mut stream = TcpStream::connect("localhost:28888").expect("failed to connect");
+    //stream.set_nonblocking(true).expect("cannot set stream to non-blocking");
 
     if let Some(p)  = matches.value_of("input_file") {
         let mut reader = std::fs::File::open(p).map(|f|
@@ -50,11 +51,9 @@ fn main() {
                 if s > 0 {
                     let req = request::parse_json(&buf).expect(&format!("cannot parse string: {}",buf));
                     std::thread::sleep(std::time::Duration::from_millis(req.time));
-                    println!("length: {:?}", buf.as_bytes().len());
-                    stream.write_all(&buf.as_bytes().len().to_be_bytes());
-                    stream.write_all(buf.as_bytes());
-                    println!("{:?}", buf);
-                    println!("{:?}",req);
+                    if let Err(e) = request::write_u8(buf.as_bytes(), &mut stream) {
+                        println!("Failed to send request: {:?}", e);
+                    }
                 } else {
                     break;
                 }
@@ -67,25 +66,19 @@ fn main() {
     }
 
     loop {
-        let mut buf = [0;4];
-        match stream.read_exact(&mut buf) {
-            Ok(()) =>  {
-                let size = u32::from_be_bytes(buf);
 
-                if size > 0 {
-                    let mut buf = vec![0; size as usize];
-                    match stream.read_exact(&mut buf) {
-                        Ok(())=> {
-                            println!("{:?}", String::from_utf8(buf.to_vec()).expect("not json string"))
-                        }
-                        Err(e) => {
-                            println!("Failed to read response: {:?}", e);
-                        }
-                    }
-                }
+        match request::read_u8(&mut stream) {
+            Ok(rsp) => {
+                println!("{:?}", String::from_utf8(rsp).expect("not json string"))
             }
             Err(e) => {
-                println!("Failed to read size: {:?}", e);
+                match e.kind() {
+                    Other => { continue
+                    }
+                    _ => {
+                        println!("Failed to read response: {:?}", e);
+                    }
+                }
             }
         }
     }
