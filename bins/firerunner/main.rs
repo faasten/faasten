@@ -63,20 +63,6 @@ fn main() {
                 ,
         )
         .arg(
-            Arg::with_name("seccomp-level")
-                .long("seccomp-level")
-                .help(
-                    "level of seccomp filtering.\n
-                            - level 0: no filtering.\n
-                            - level 1: seccomp filtering by syscall number.\n
-                            - level 2: seccomp filtering by syscall number and argument values.\n
-                        ",
-                )
-                .takes_value(true)
-                .default_value("0")
-                .possible_values(&["0", "1", "2"]),
-        )
-        .arg(
             Arg::with_name("load_dir")
                 .long("load_from")
                 .takes_value(true)
@@ -134,6 +120,7 @@ fn main() {
     if let Err(e) = output_file {
         panic!("Cannot create output file, {:?}", e);
     }
+
     let mut output_file = output_file.unwrap();
     write!(&mut output_file, "vm-{:?}\n", instance_id);
     write!(&mut output_file, "appfs: {:?}\n", appfs);
@@ -156,19 +143,12 @@ fn main() {
         _ => 0,
     };
 
-    // It's safe to unwrap here because clap's been provided with a default value,
-    // and allowed values are guaranteed to parse to u32.
-    let seccomp_level = cmd_arguments
-        .value_of("seccomp-level")
-        .unwrap()
-        .parse::<u32>()
-        .unwrap();
-
     // notify snapfaas that the vm is ready
     std::thread::sleep(std::time::Duration::from_millis(300));
     io::stdout().write_all(READY);
     io::stdout().flush();
     
+    println!("here");
     let mut req_count = 0;
     // continuously read from stdio
     loop {

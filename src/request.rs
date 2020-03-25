@@ -13,6 +13,13 @@ pub fn parse_json(json: &str) -> Result<Request, serde_json::Error> {
     serde_json::from_str(json)
 }
 
+/// Given a [u8], parse it to a Requst value
+pub fn parse_u8(buf: Vec<u8>) -> Result<Request, serde_json::Error> {
+    let json = String::from_utf8(buf).unwrap_or("not json string".to_string());
+    serde_json::from_str(&json)
+}
+
+
 /// Write a [u8] array to channel.
 /// Channel is anything that implements the std::io::Read trait. In practice,
 /// this includes TcpStream and stdin pipe for Firerunner processes.
@@ -22,10 +29,14 @@ pub fn parse_json(json: &str) -> Result<Request, serde_json::Error> {
 /// On success, `write_u8` returns Ok(()).
 /// If either one of the `write_all()` calls fails, `write_u8` returns
 /// the corresponding std::io::Error.
-pub fn write_u8<T: Write>(buf: &[u8], channel: &mut T) ->  std::io::Result<()> {
-    let size = buf.len();
-    channel.write_all(&size.to_be_bytes())?;
-    channel.write_all(buf)?;
+pub fn write_u8(buf: &[u8], channel: &mut std::net::TcpStream) ->  std::io::Result<()> {
+    let mut size = buf.len().to_be_bytes();
+    let mut data = buf.to_vec();
+    for i in (0..size.len()).rev() {
+        data.insert(0, size[i]);
+    }
+    //channel.write_all(&size.to_be_bytes())?;
+    channel.write_all(&data)?;
     return Ok(());
 }
 
@@ -40,23 +51,19 @@ pub fn write_u8<T: Write>(buf: &[u8], channel: &mut T) ->  std::io::Result<()> {
 /// If either one of the `read_exact()` calls fails, `read_u8` returns
 /// the corresponding std::io::Error.
 pub fn read_u8(channel: &mut std::net::TcpStream) -> std::io::Result<Vec<u8>>{
-    let mut buf = [0;4];
+    let mut buf = [0;8];
     channel.read_exact(&mut buf)?;
-    let size = u32::from_be_bytes(buf);
-
-    if size == 0 {
-        return read_u8(channel);
-    }
+    let size = u64::from_be_bytes(buf);
 
     if size > 0 {
-        channel.set_nonblocking(false).expect("cannot set stream to blocking");
+        //channel.set_nonblocking(false).expect("cannot set stream to blocking");
         let mut buf = vec![0; size as usize];
         channel.read_exact(&mut buf)?;
-        channel.set_nonblocking(true).expect("cannot set stream to non-blocking");
+        //channel.set_nonblocking(true).expect("cannot set stream to non-blocking");
         return Ok(buf);
     }
 
-    return Err(Error::new(ErrorKind::Other, "negative-sized payload"));
+    return Err(Error::new(ErrorKind::Other, "Empty payload"));
 }
 
 impl Request {

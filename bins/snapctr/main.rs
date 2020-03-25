@@ -93,29 +93,55 @@ fn main() {
 
     let wp = workerpool::WorkerPool::new(controller.clone());
 
-    // start gateway
-    // TODO:support an HTTP gateway in addition to file gateway
-    let request_file_url = matches
-        .value_of("requests file")
-        .expect("Request file not specified");
-    let gateway = gateway::FileGateway::listen(request_file_url).expect("Failed to create gateway");
+    // File Gateway
+    if let Some(request_file_url) = matches.value_of("requests file") {
+        let gateway = gateway::FileGateway::listen(request_file_url).expect("Failed to create file gateway");
+        // start admitting and processing incoming requests
+        let t1 = precise_time_ns();
+        for task in gateway.incoming() {
+            // ignore invalid requests
+            if task.is_err() {
+                error!("Invalid task: {:?}", task);
+                continue;
+            }
 
-    // start admitting and processing incoming requests
-    let t1 = precise_time_ns();
-    for task in gateway.incoming() {
-        // ignore invalid requests
-        if task.is_err() {
-            error!("Invalid task: {:?}", task);
-            continue;
+            let (req, rsp_sender) = task.unwrap();
+
+            wp.send_req(req, rsp_sender);
         }
+        let t2 = precise_time_ns();
+        println!("gateway latency {:?}", t2-t1);
 
-        let (req, rsp_sender) = task.unwrap();
-
-        wp.send_req(req, rsp_sender);
+        wp.shutdown();
+        controller.shutdown();
+        std::process::exit(0);
     }
-    let t2 = precise_time_ns();
-    println!("gateway latency {:?}", t2-t1);
 
-    wp.shutdown();
-    controller.shutdown();
+    if let Some(p) = matches.value_of("port number") {
+        let gateway = gateway::HTTPGateway::listen(p).expect("Failed to create HTTP gateway");
+        info!("Gateway started on port: {:?}", gateway.port);
+        let t1 = precise_time_ns();
+        for task in gateway {
+            // ignore invalid requests
+            if task.is_err() {
+                error!("Invalid task: {:?}", task);
+                continue;
+            }
+
+            let (req, rsp_sender) = task.unwrap();
+
+            //info!("request received: {:?}. From: {:?}", req, rsp_sender);
+            wp.send_req_tcp(req, rsp_sender);
+        }
+        let t2 = precise_time_ns();
+        println!("gateway latency {:?}", t2-t1);
+
+        wp.shutdown();
+        controller.shutdown();
+        std::process::exit(0);
+
+    }
+
+    panic!("no request file or port number specified");
+
 }

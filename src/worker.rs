@@ -18,6 +18,7 @@ use crate::message::Message;
 use crate::request::Request;
 use crate::vm::Vm;
 use crate::metrics::Metrics;
+use crate::request;
 
 const EVICTION_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -41,7 +42,7 @@ impl Worker {
             let mut stat: Metrics = Metrics::new();
             loop {
                 let msg: Message = receiver.lock().unwrap().recv().unwrap();
-                info!("Thread {:?} task received: {:?}", id, msg);
+                //info!("Thread {:?} task received: {:?}", id, msg);
                 match msg {
                     // To shutdown, dump collected statistics and then terminate
                     Message::Shutdown => {
@@ -54,14 +55,27 @@ impl Worker {
                         }
                         return;
                     }
-                    Message::Request(req, rsp_sender) => match Worker::process_req(req, &ctr,
-                        &mut stat) { Ok(rsp) => {
-                            info!("Thread {:?} finished processing", id);
+                    Message::Request(req, rsp_sender) => match Worker::process_req(req, &ctr, &mut stat) {
+                        Ok(rsp) => {
+                            //info!("Thread {:?} finished processing", id);
                             if let Err(e) = rsp_sender.send(Message::Response(rsp)) {
                                 error!("[thread: {:?}] response failed to send: {:?}", id, e);
                             }
                         }
-                        Err(err) => info!("Request failed: {:?}", err),
+                        Err(err) => (),//info!("Request failed: {:?}", err),
+                    },
+                    Message::Request_Tcp(req, mut rsp_sender) => match Worker::process_req(req, &ctr, &mut stat) {
+                        Ok(rsp) => {
+                            //info!("Thread {:?} finished processing", id);
+                            {
+                                let mut s = rsp_sender.lock().expect("lock poisoned");
+                                if let Err(e) = request::write_u8(rsp.as_bytes(), &mut s) {
+                                    error!("[thread: {:?}] response failed to send: {:?}", id, e);
+                                    println!("Failed to send request: {:?}", e);
+                                }
+                            }
+                        }
+                        Err(err) => (),//info!("Request failed: {:?}", err),
                     },
                     _ => {
                         error!("Invalid message to thread {:?}: {:?}", id, msg);

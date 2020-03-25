@@ -1,9 +1,11 @@
-use std::io::{BufReader};
+use std::io::{BufReader, ErrorKind};
 use std::fs::File;
 use std::io::BufRead;
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::sync::mpsc::{Sender, Receiver};
+use std::sync::{Mutex, Arc};
+use std::collections::{VecDeque};
 use std::thread;
 use std::thread::JoinHandle;
 
@@ -12,7 +14,7 @@ use log::{error, warn, info};
 use crate::message::Message;
 use crate::request;
 
-pub const DEFAULT_PORT: &str = "8888";
+pub const DEFAULT_PORT:u32 = 28888;
 
 /// A gateway listens on a endpoint and accepts requests
 /// For example a FileGateway "listens" to a file and accepts
@@ -116,7 +118,108 @@ impl Iterator for FileRequestIter {
 
 #[derive(Debug)]
 pub struct HTTPGateway {
-    port: u32,
-    listener: TcpListener,
+    pub port: u32,
+    listener: JoinHandle<()>,
+    pub streams: Arc<Mutex<VecDeque<Arc<Mutex<TcpStream>>>>>,
+}
+
+impl HTTPGateway {
+
+    pub fn listen(port: &str) -> std::io::Result<Self> {
+        let p: u32 = port.parse::<u32>().unwrap_or(DEFAULT_PORT);
+        let addr = format!("localhost:{}", port);
+
+        let streams: Arc<Mutex<VecDeque<Arc<Mutex<TcpStream>>>>> = Arc::new(Mutex::new(VecDeque::new()));
+        let builder = thread::Builder::new();
+
+        // create listener thread
+        // A listener thread listens on `addr` for incoming TCP connections.
+        let sc = streams.clone();
+        let listener_handle = builder.spawn(move || {
+            let listener = TcpListener::bind(addr).expect("listner failed to bind");
+            for stream in listener.incoming() {
+                if let Ok(stream) = stream {
+                    stream.set_nonblocking(true).expect("cannot set stream to non-blocking");
+                    {
+                        let mut streams = sc.lock().expect("can't lock stream list");
+                        streams.push_back(Arc::new(Mutex::new(stream)));
+                        println!("number of streams: {:?}", streams.len());
+                    }
+                }
+
+            }
+        })?;
+
+        Ok(HTTPGateway{
+            port: p,
+            listener: listener_handle,
+            streams: streams,
+        })
+
+    }
+}
+
+impl Iterator for HTTPGateway {
+    type Item = std::io::Result<(request::Request, Arc<Mutex<TcpStream>>)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+
+        loop {
+            // For each TcpStream in a shared VecDeque of TcpStream values,
+            // try to read a request from it.
+            // If there's no data in the stream, move on to the next one.
+            // If the stream returns EOF, close the stream and remove it
+            // from the VecDeque.
+            let s = self.streams.lock().expect("stream lock poisoned").pop_front();
+            match s {
+                // no connections
+                None => {
+                    continue; // next() will block waiting for connections
+                }
+                Some(mut s) => {
+                    let res = request::read_u8(&mut s.lock().expect("lock failed"));
+                    match res {
+                        // there's a request sitting in the stream
+                        Ok(buf) => {
+                            // If parse succeeds, return the Request value and a
+                            // clone of the TcpStream value.
+                            match request::parse_u8(buf) {
+                                Err(e) => {
+                                    error!("request parsing failed: {:?}", e);
+                                }
+                                Ok(req) => {
+                                    //let stream_clone = s.try_clone().expect("cannot clone stream");
+                                    let c = s.clone();
+                                    self.streams.lock().expect("stream lock poisoned").push_back(s);
+                                    return Some(Ok((req, c)));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            match e.kind() {
+                                // when client closed the connection, remove the
+                                // stream from stream list
+                                ErrorKind::UnexpectedEof => {
+                                    info!("connection {:?} closed by client", s);
+                                    continue
+                                }
+                                // no data in the stream atm.
+                                ErrorKind::WouldBlock => {
+                                }
+                                _ => {
+                                    // Some other error happened. Report and
+                                    // just try the next stream in the list
+                                    error!("Failed to read response: {:?}", e);
+                                }
+                            }
+                        }
+                    }
+
+                    self.streams.lock().expect("stream lock poisoned").push_back(s);
+                }
+            }
+        }
+    }
+
 }
 

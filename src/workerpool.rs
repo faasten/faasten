@@ -7,6 +7,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc::{Sender, Receiver, SendError};
+use std::net::{TcpStream};
 
 use log::{error, warn, info};
 
@@ -45,6 +46,10 @@ impl WorkerPool {
         self.req_sender.send(Message::Request(req, rsp_sender));
     }
 
+    pub fn send_req_tcp(&self, req: Request, rsp_sender: Arc<Mutex<TcpStream>>) {
+        self.req_sender.send(Message::Request_Tcp(req, rsp_sender));
+    }
+    
     /// shutdown the workerpool
     /// This involves
     /// 1. sending Shutdown message to each thread in the pool
