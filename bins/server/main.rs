@@ -22,11 +22,15 @@ fn main() {
     for _ in 0..num_reader {
         let streams = streams.clone();
         let h = std::thread::spawn(move || {
-            let mut pt = 0;
 
             loop {
 
-                let mut s = streams.lock().expect("stream lock poisoned").pop_front();
+                // For each TcpStream in a shared VecDeque of TcpStream values,
+                // try to read a request from it.
+                // If there's no data in the stream, move on to the next one.
+                // If the stream returns EOF, close the stream and remove it
+                // from the VecDeque.
+                let s = streams.lock().expect("stream lock poisoned").pop_front();
                 match s {
                     None => continue,
                     Some(mut s) => {
@@ -72,7 +76,7 @@ fn main() {
         println!("New connection:");
         println!("{:?}", stream);
         // ignore Err streams
-        if let Ok(mut stream) = stream {
+        if let Ok(stream) = stream {
             // read requests from the stream
             // TODO: what if the request is larger than allocated buffer?
             // Answer: at least when we use `stream.read()`, it will just read
