@@ -42,7 +42,7 @@ impl Worker {
             let mut stat: Metrics = Metrics::new();
             loop {
                 let msg: Message = receiver.lock().unwrap().recv().unwrap();
-                //info!("Thread {:?} task received: {:?}", id, msg);
+                info!("Thread {:?} task received: {:?}", id, msg);
                 match msg {
                     // To shutdown, dump collected statistics and then terminate
                     Message::Shutdown => {
@@ -57,16 +57,16 @@ impl Worker {
                     }
                     Message::Request(req, rsp_sender) => match Worker::process_req(req, &ctr, &mut stat) {
                         Ok(rsp) => {
-                            //info!("Thread {:?} finished processing", id);
+                            info!("Thread {:?} finished processing", id);
                             if let Err(e) = rsp_sender.send(Message::Response(rsp)) {
                                 error!("[thread: {:?}] response failed to send: {:?}", id, e);
                             }
                         }
-                        Err(err) => (),//info!("Request failed: {:?}", err),
+                        Err(err) => info!("Request failed: {:?}", err),
                     },
                     Message::Request_Tcp(req, mut rsp_sender) => match Worker::process_req(req, &ctr, &mut stat) {
                         Ok(rsp) => {
-                            //info!("Thread {:?} finished processing", id);
+                            info!("Thread {:?} finished processing", id);
                             {
                                 let mut s = rsp_sender.lock().expect("lock poisoned");
                                 if let Err(e) = request::write_u8(rsp.as_bytes(), &mut s) {
@@ -75,7 +75,7 @@ impl Worker {
                                 }
                             }
                         }
-                        Err(err) => (),//info!("Request failed: {:?}", err),
+                        Err(err) => info!("Request failed: {:?}", err),
                     },
                     _ => {
                         error!("Invalid message to thread {:?}: {:?}", id, msg);

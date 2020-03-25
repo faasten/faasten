@@ -35,9 +35,16 @@ fn main() {
                 .takes_value(true)
                 .help("requests file that client will read from")
         )
+        .arg(
+            Arg::with_name("server addr")
+                .short("s")
+                .long("server")
+                .takes_value(true)
+                .help("server IP:port")
+        )
         .get_matches();
 
-    let mut stream = TcpStream::connect("localhost:28888").expect("failed to connect");
+    let mut stream = TcpStream::connect(matches.value_of("server addr").expect("server address not specified")).expect("failed to connect");
     //stream.set_nonblocking(true).expect("cannot set stream to non-blocking");
 
     if let Some(p)  = matches.value_of("input_file") {

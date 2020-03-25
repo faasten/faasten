@@ -148,7 +148,6 @@ fn main() {
     io::stdout().write_all(READY);
     io::stdout().flush();
     
-    println!("here");
     let mut req_count = 0;
     // continuously read from stdio
     loop {
