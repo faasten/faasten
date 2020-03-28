@@ -144,6 +144,7 @@ fn main() {
                 None=> (),
                 Some(task) => {
                     // ignore invalid requests
+                    //info!("task received {:?}", task);
                     if task.is_err() {
                         error!("Invalid task: {:?}", task);
                         continue;
@@ -157,17 +158,15 @@ fn main() {
             }
 
             // check if received any signal
-            select! {
-                recv(sig_receiver) -> _ => {
-                    warn!("snapctr shutdown received");
+            if let Ok(_) = sig_receiver.try_recv() {
+                warn!("snapctr shutdown received");
 
-                    // dump main thread's stats
-                    let t2 = precise_time_ns();
+                // dump main thread's stats
+                let t2 = precise_time_ns();
 
-                    wp.shutdown();
-                    controller.shutdown();
-                    std::process::exit(0);
-                }
+                wp.shutdown();
+                controller.shutdown();
+                std::process::exit(0);
             }
         }
     }
