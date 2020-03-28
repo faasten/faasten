@@ -143,7 +143,7 @@ impl HTTPGateway {
                     {
                         let mut streams = sc.lock().expect("can't lock stream list");
                         streams.push_back(Arc::new(Mutex::new(stream)));
-                        println!("number of streams: {:?}", streams.len());
+                        info!("number of streams: {:?}", streams.len());
                     }
                 }
 
@@ -163,61 +163,59 @@ impl Iterator for HTTPGateway {
     type Item = std::io::Result<(request::Request, Arc<Mutex<TcpStream>>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-
-        loop {
-            // For each TcpStream in a shared VecDeque of TcpStream values,
-            // try to read a request from it.
-            // If there's no data in the stream, move on to the next one.
-            // If the stream returns EOF, close the stream and remove it
-            // from the VecDeque.
-            let s = self.streams.lock().expect("stream lock poisoned").pop_front();
-            match s {
-                // no connections
-                None => {
-                    return None;
-                    //continue; // next() will block waiting for connections
-                }
-                Some(mut s) => {
-                    let res = request::read_u8(&mut s.lock().expect("lock failed"));
-                    match res {
-                        // there's a request sitting in the stream
-                        Ok(buf) => {
-                            // If parse succeeds, return the Request value and a
-                            // clone of the TcpStream value.
-                            match request::parse_u8(buf) {
-                                Err(e) => {
-                                    error!("request parsing failed: {:?}", e);
-                                }
-                                Ok(req) => {
-                                    //let stream_clone = s.try_clone().expect("cannot clone stream");
-                                    let c = s.clone();
-                                    self.streams.lock().expect("stream lock poisoned").push_back(s);
-                                    return Some(Ok((req, c)));
-                                }
+        // For each TcpStream in a shared VecDeque of TcpStream values,
+        // try to read a request from it.
+        // If there's no data in the stream, move on to the next one.
+        // If the stream returns EOF, close the stream and remove it
+        // from the VecDeque.
+        let s = self.streams.lock().expect("stream lock poisoned").pop_front();
+        match s {
+            // no connections
+            None => {
+                return None;
+                //continue; // next() will block waiting for connections
+            }
+            Some(mut s) => {
+                let res = request::read_u8(&mut s.lock().expect("lock failed"));
+                match res {
+                    // there's a request sitting in the stream
+                    Ok(buf) => {
+                        // If parse succeeds, return the Request value and a
+                        // clone of the TcpStream value.
+                        match request::parse_u8(buf) {
+                            Err(e) => {
+                                error!("request parsing failed: {:?}", e);
                             }
-                        }
-                        Err(e) => {
-                            match e.kind() {
-                                // when client closed the connection, remove the
-                                // stream from stream list
-                                ErrorKind::UnexpectedEof => {
-                                    info!("connection {:?} closed by client", s);
-                                    continue
-                                }
-                                // no data in the stream atm.
-                                ErrorKind::WouldBlock => {
-                                }
-                                _ => {
-                                    // Some other error happened. Report and
-                                    // just try the next stream in the list
-                                    error!("Failed to read response: {:?}", e);
-                                }
+                            Ok(req) => {
+                                //let stream_clone = s.try_clone().expect("cannot clone stream");
+                                let c = s.clone();
+                                self.streams.lock().expect("stream lock poisoned").push_back(s);
+                                return Some(Ok((req, c)));
                             }
                         }
                     }
-
-                    self.streams.lock().expect("stream lock poisoned").push_back(s);
+                    Err(e) => {
+                        match e.kind() {
+                            // when client closed the connection, remove the
+                            // stream from stream list
+                            ErrorKind::UnexpectedEof => {
+                                info!("connection {:?} closed by client", s);
+                                return None;
+                            }
+                            // no data in the stream atm.
+                            ErrorKind::WouldBlock => {
+                            }
+                            _ => {
+                                // Some other error happened. Report and
+                                // just try the next stream in the list
+                                error!("Failed to read response: {:?}", e);
+                            }
+                        }
+                    }
                 }
+
+                self.streams.lock().expect("stream lock poisoned").push_back(s);
+                return None;
             }
         }
     }
