@@ -58,6 +58,7 @@ fn main() {
                 if s > 0 {
                     let req = request::parse_json(&buf).expect(&format!("cannot parse string: {}",buf));
                     std::thread::sleep(std::time::Duration::from_millis(req.time));
+                    println!("sending request: {:?}", buf);
                     if let Err(e) = request::write_u8(buf.as_bytes(), &mut stream) {
                         println!("Failed to send request: {:?}", e);
                     }
