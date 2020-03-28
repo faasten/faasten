@@ -42,7 +42,7 @@ impl Worker {
             let mut stat: Metrics = Metrics::new();
             loop {
                 let msg: Message = receiver.lock().unwrap().recv().unwrap();
-                info!("Thread {:?} task received: {:?}", id, msg);
+                //info!("Thread {:?} task received: {:?}", id, msg);
                 match msg {
                     // To shutdown, dump collected statistics and then terminate
                     Message::Shutdown => {
@@ -57,7 +57,7 @@ impl Worker {
                     }
                     Message::Request(req, rsp_sender) => match Worker::process_req(req, &ctr, &mut stat) {
                         Ok(rsp) => {
-                            info!("Thread {:?} finished processing", id);
+                            //info!("Thread {:?} finished processing", id);
                             if let Err(e) = rsp_sender.send(Message::Response(rsp)) {
                                 error!("[thread: {:?}] response failed to send: {:?}", id, e);
                             }
@@ -66,7 +66,7 @@ impl Worker {
                     },
                     Message::Request_Tcp(req, mut rsp_sender) => match Worker::process_req(req, &ctr, &mut stat) {
                         Ok(rsp) => {
-                            info!("Thread {:?} finished processing", id);
+                            //info!("Thread {:?} finished processing", id);
                             {
                                 let mut s = rsp_sender.lock().expect("lock poisoned");
                                 if let Err(e) = request::write_u8(rsp.as_bytes(), &mut s) {
@@ -133,7 +133,8 @@ impl Worker {
                 let start = Instant::now();
 
                 while freed < func_config.memory && start.elapsed() < EVICTION_TIMEOUT {
-                    if let Some(mut vm) = ctr.find_evict_candidate() {
+                    if let Some(mut vm) = ctr.find_evict_candidate(&function_name) {
+                        info!("evicting vm: {:?}", vm);
                         let t1 = precise_time_ns();
                         vm.shutdown();
                         let t2 = precise_time_ns();

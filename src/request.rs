@@ -19,7 +19,30 @@ pub fn parse_u8(buf: Vec<u8>) -> Result<Request, serde_json::Error> {
     serde_json::from_str(&json)
 }
 
+pub fn write_u8_vm(buf: &[u8], channel: &mut std::process::ChildStdin) ->  std::io::Result<()> {
+    let mut size = buf.len().to_be_bytes();
+    let mut data = buf.to_vec();
+    for i in (0..size.len()).rev() {
+        data.insert(0, size[i]);
+    }
+    //channel.write_all(&size.to_be_bytes())?;
+    channel.write_all(&data)?;
+    return Ok(());
+}
 
+pub fn read_u8_vm(channel: &mut std::process::ChildStdout) -> std::io::Result<Vec<u8>>{
+    let mut buf = [0;8];
+    channel.read_exact(&mut buf)?;
+    let size = u64::from_be_bytes(buf);
+
+    if size > 0 {
+        let mut buf = vec![0; size as usize];
+        channel.read_exact(&mut buf)?;
+        return Ok(buf);
+    }
+
+    return Err(Error::new(ErrorKind::Other, "Empty payload"));
+}
 /// Write a [u8] array to channel.
 /// Channel is anything that implements the std::io::Read trait. In practice,
 /// this includes TcpStream and stdin pipe for Firerunner processes.

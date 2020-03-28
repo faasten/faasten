@@ -6,6 +6,7 @@ use std::process::{Child, Command, Stdio};
 
 use crate::configs::FunctionConfig;
 use crate::request::Request;
+use crate::request;
 use cgroups::{cgroup_builder::CgroupBuilder, Cgroup};
 
 pub enum VmStatus{
@@ -27,7 +28,8 @@ pub struct VmAppConfig {
 pub struct Vm {
     pub id: usize,
     pub memory: usize, // MB
-    pub process: Child,
+    pub function_name: String,
+    process: Child,
     /*
     pub process: Pid,
     cgroup_name: PathBuf,
@@ -73,7 +75,7 @@ impl Vm {
         let mut vm_process = vm_process.unwrap();
 
         //let mut ready_msg = String::new();
-        let mut ready_msg = vec![0;2];
+        let mut ready_msg = vec![0;1];
         {
             let stdout = vm_process.stdout.as_mut().unwrap();
             //stdout.read_to_string(&mut ready_msg);
@@ -84,6 +86,7 @@ impl Vm {
             id: id,
             memory: function_config.memory,
             process: vm_process,
+            function_name: function_config.name.clone(),
         });
     }
 
@@ -92,29 +95,11 @@ impl Vm {
         let req_str = req.to_string().unwrap();
         let mut req_sender = self.process.stdin.as_mut().unwrap();
 
-        req_sender.write_all(&[req_str.len() as u8]);
-        self.process.stdin.as_mut().unwrap().flush();
+        let buf = req_str.as_bytes();
 
-        match self
-            .process
-            .stdin
-            .as_mut()
-            .unwrap()
-            .write_all(req_str.as_bytes())
-        {
-            Ok(_) => (),
-            Err(_) => return Err(String::from("Request failed to send")),
-        }
+        request::write_u8_vm(&buf, &mut req_sender);
 
-        self.process.stdin.as_mut().unwrap().flush();
-
-        let mut rsp_header = vec![0;1];
-        let stdout = self.process.stdout.as_mut().unwrap();
-        stdout.read(&mut rsp_header);
-        let size = rsp_header[0] as usize;
-        let mut rsp_buf = vec![0;size];
-        stdout.read_exact(&mut rsp_buf);
-
+        let rsp_buf = request::read_u8_vm(&mut self.process.stdout.as_mut().unwrap()).unwrap();
         return Ok(String::from_utf8(rsp_buf).unwrap());
     }
 

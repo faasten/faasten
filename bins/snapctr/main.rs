@@ -10,7 +10,7 @@
 //!   3. function store and their files' locations
 
 use clap::{App, Arg};
-use log::{error, info};
+use log::{error, warn, info};
 use simple_logger;
 use snapfaas::configs;
 use snapfaas::controller::Controller;
@@ -21,6 +21,8 @@ use snapfaas::workerpool;
 use std::sync::Arc;
 
 use time::precise_time_ns;
+use signal_hook::{iterator::Signals, SIGINT};
+use crossbeam_channel::{bounded, Receiver, select};
 
 fn main() {
     simple_logger::init().expect("simple_logger init failed");
@@ -92,7 +94,7 @@ fn main() {
     //info!("{:?}", controller);
 
     let wp = workerpool::WorkerPool::new(controller.clone());
-
+    
     // File Gateway
     if let Some(request_file_url) = matches.value_of("requests file") {
         let gateway = gateway::FileGateway::listen(request_file_url).expect("Failed to create file gateway");
@@ -117,29 +119,57 @@ fn main() {
         std::process::exit(0);
     }
 
+    // register signal handler
+    let (sig_sender, sig_receiver) = bounded(100);
+    let signals = Signals::new(&[SIGINT]).expect("cannot create signals");
+    std::thread::spawn(move || {
+        for sig in signals.forever() {
+            println!("Received signal {:?}", sig);
+            let _ = sig_sender.send(());
+        }
+    });
+
+    // TCP gateway
     if let Some(p) = matches.value_of("port number") {
-        let gateway = gateway::HTTPGateway::listen(p).expect("Failed to create HTTP gateway");
+        let mut gateway = gateway::HTTPGateway::listen(p).expect("Failed to create HTTP gateway");
         info!("Gateway started on port: {:?}", gateway.port);
+
         let t1 = precise_time_ns();
-        for task in gateway {
-            // ignore invalid requests
-            if task.is_err() {
-                error!("Invalid task: {:?}", task);
-                continue;
+
+        loop {
+
+            // read a request from TcpStreams and process it
+            let task = gateway.next();
+            match task {
+                None=> (),
+                Some(task) => {
+                    // ignore invalid requests
+                    if task.is_err() {
+                        error!("Invalid task: {:?}", task);
+                        continue;
+                    }
+
+                    let (req, rsp_sender) = task.unwrap();
+
+                    //info!("request received: {:?}. From: {:?}", req, rsp_sender);
+                    wp.send_req_tcp(req, rsp_sender);
+                }
             }
 
-            let (req, rsp_sender) = task.unwrap();
+            // check if received any signal
+            select! {
+                recv(sig_receiver) -> _ => {
+                    warn!("snapctr shutdown received");
 
-            //info!("request received: {:?}. From: {:?}", req, rsp_sender);
-            wp.send_req_tcp(req, rsp_sender);
+                    // dump main thread's stats
+                    let t2 = precise_time_ns();
+
+                    wp.shutdown();
+                    controller.shutdown();
+                    std::process::exit(0);
+                }
+            }
         }
-        let t2 = precise_time_ns();
-        println!("gateway latency {:?}", t2-t1);
-
-        wp.shutdown();
-        controller.shutdown();
-        std::process::exit(0);
-
     }
 
     panic!("no request file or port number specified");

@@ -174,7 +174,8 @@ impl Iterator for HTTPGateway {
             match s {
                 // no connections
                 None => {
-                    continue; // next() will block waiting for connections
+                    return None;
+                    //continue; // next() will block waiting for connections
                 }
                 Some(mut s) => {
                     let res = request::read_u8(&mut s.lock().expect("lock failed"));
