@@ -158,8 +158,11 @@ impl Controller {
 
     /// Go through all the idle lists and remove a VM from the first non-empty
     /// idle list that we encounter
-    pub fn find_evict_candidate(&self) -> Option<Vm> {
+    pub fn find_evict_candidate(&self, function_name: &str) -> Option<Vm> {
         for key in self.idle.keys() {
+            if key == function_name {
+                continue;
+            }
             if let Some(vm) = self.idle.get(key).expect("key doesn't exist").try_pop() {
                 return Some(vm);
             }

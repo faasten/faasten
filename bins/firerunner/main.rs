@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{App, Arg};
 use snapfaas::vm;
+use lipsum::{lipsum, lipsum_words};
 
 const READY :&[u8] = &[vm::VmStatus::ReadyToReceive as u8];
 
@@ -131,47 +132,61 @@ fn main() {
     write!(&mut output_file, "dump_dir: {:?}\n", dump_dir);
     output_file.flush();
 
+    std::thread::sleep(std::time::Duration::from_millis(400));
     // wait time in ms
     let wait_time  = match appfs.as_ref() {
-        "lorempy2.ext4" => 20,
+        "lorempy2.ext4" => 10,
         "loremjs.ext4" => 20,
         "markdown-to-html.ext4" => 600,
         "img-resize.ext4" => 1800,
         "ocr-img.ext4" => 30000,
-        "sentiment-analysis.ext4" => 5000,
+        "sentiment-analysis.ext4" => 100,
         "autocomplete.ext4" => 100,
         _ => 0,
     };
 
     // notify snapfaas that the vm is ready
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    std::thread::sleep(std::time::Duration::from_millis(350));
     io::stdout().write_all(READY);
     io::stdout().flush();
     
     let mut req_count = 0;
     // continuously read from stdio
     loop {
-        let mut req_header = vec![0;1];
+        let mut req_header = [0;8];
         let mut stdin = io::stdin();
         // does this block when there's nothing in stdin?
         // first read in the number of bytes that I should read from stdin
-        stdin.lock().read(&mut req_header);
-        let size = req_header[0] as usize;
+        stdin.lock().read_exact(&mut req_header);
+        let size = u64::from_be_bytes(req_header);
 
         // actually read the request
-        let mut req_buf = vec![0;size];
+        let mut req_buf = vec![0; size as usize];
         stdin.lock().read_exact(&mut req_buf);
 
         // sleep to simulate running
         std::thread::sleep(std::time::Duration::from_millis(wait_time as u64));
         write!(&mut output_file, "process time: {}\n", wait_time);
 
+        let rsp= match appfs.as_ref() {
+            "lorempy2.ext4" => lipsum_words(12),
+            "loremjs.ext4" => lipsum(12),
+            "sentiment-analysis.ext4" => "{\"subjectivity: 0.8\", \"polarity\":0.2}".to_string(),
+            _ => "done".to_string(),
+        };
+
+
+
         //stdout.lock().write_fmt(format_args!("success"));
         // first write the number bytes in the response to stdout
-        io::stdout().write_all(&[size as u8]);
-        io::stdout().flush();
-        // write the actual response
-        io::stdout().write_all(&req_buf);
+
+        let req_buf = rsp.as_bytes();
+        let mut size = req_buf.len().to_be_bytes();
+        let mut data = req_buf.to_vec();
+        for i in (0..size.len()).rev() {
+            data.insert(0, size[i]);
+        }
+        io::stdout().write_all(&data);
         io::stdout().flush();
 
         req_count = req_count+1;
