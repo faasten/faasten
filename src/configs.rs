@@ -71,6 +71,14 @@ impl ControllerConfig {
         self.kernel_boot_args= args.to_string();
     }
 
+    pub fn get_runtimefs_base(&self) -> String {
+        Url::parse(&self.runtimefs_dir).expect("invalid runtimefs dir from url").path().to_string()
+    }
+
+    pub fn get_appfs_base(&self) -> String {
+        Url::parse(&self.appfs_dir).expect("invalid runtimefs dir from url").path().to_string()
+    }
+
 }
 
 #[derive(Debug, Deserialize, Clone)]
