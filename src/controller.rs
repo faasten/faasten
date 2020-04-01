@@ -47,8 +47,10 @@ impl Controller {
             Ok(fd) => {
                 let apps: serde_yaml::Result<Vec<FunctionConfig>> = serde_yaml::from_reader(fd);
                 if let Ok(apps) = apps {
-                    for app in apps {
+                    for mut app in apps {
                         let name = app.name.clone();
+                        app.runtimefs = format!("{}{}",ctr_config.get_runtimefs_base(), app.runtimefs);
+                        app.appfs = format!("{}{}",ctr_config.get_appfs_base(), app.appfs);
                         function_configs.insert(name.clone(), app);
                         idle.insert(name.clone(), VmList::new());
                     }
