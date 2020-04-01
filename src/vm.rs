@@ -8,10 +8,11 @@ use crate::configs::FunctionConfig;
 use crate::request::Request;
 use crate::request;
 use cgroups::{cgroup_builder::CgroupBuilder, Cgroup};
+use log::{info, warn, error};
 
 pub enum VmStatus{
     NotReady,
-    ReadyToReceive = 1,
+    Ready = 65,
     Unresponsive,
     Crashed,
 }
@@ -53,7 +54,7 @@ impl Vm {
                 "--id",
                 &id.to_string(),
                 "--kernel",
-                "/ect/snapfaas/vmlinux",
+                "/etc/snapfaas/vmlinux",
                 "--kernel_args",
                 "quiet",
                 "--mem_size",
@@ -80,6 +81,7 @@ impl Vm {
             let stdout = vm_process.stdout.as_mut().unwrap();
             //stdout.read_to_string(&mut ready_msg);
             stdout.read(&mut ready_msg);
+            //info!("vm {:?} is ready", ready_msg);
         }
 
         return Some(Vm {
