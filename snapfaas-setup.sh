@@ -15,3 +15,6 @@ git submodule update
 # build snapfaas binaries
 cargo build --release 2>/dev/null
 cp ./target/release/firerunner /etc/snapfaas
+
+# grant the current user permission to /dev/kvm
+sudo setfacl -m u:${USER}:rw /dev/kvm
