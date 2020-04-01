@@ -47,17 +47,40 @@ fn main() {
     let mut stream = TcpStream::connect(matches.value_of("server addr").expect("server address not specified")).expect("failed to connect");
     //stream.set_nonblocking(true).expect("cannot set stream to non-blocking");
 
+    let mut sc = stream.try_clone().expect("Cannot clone TcpStream");
+    let receiver_thread = std::thread::spawn(move || {
+        loop {
+
+            match request::read_u8(&mut sc) {
+                Ok(rsp) => {
+                    println!("{:?}", String::from_utf8(rsp).expect("not json string"))
+                }
+                Err(e) => {
+                    match e.kind() {
+                        Other => { continue
+                        }
+                        _ => {
+                            println!("Failed to read response: {:?}", e);
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     if let Some(p)  = matches.value_of("input_file") {
         let mut reader = std::fs::File::open(p).map(|f|
             BufReader::new(f)).expect("Failed to open file");
 
+        let mut prev_time = 0;
         loop {
             // read line as String
             let mut buf = String::new();
             if let Ok(s) = reader.read_line(&mut buf) {
                 if s > 0 {
                     let req = request::parse_json(&buf).expect(&format!("cannot parse string: {}",buf));
-                    std::thread::sleep(std::time::Duration::from_millis(req.time));
+                    std::thread::sleep(std::time::Duration::from_millis(req.time-prev_time));
+                    prev_time = req.time;
                     println!("sending request: {:?}", buf);
                     if let Err(e) = request::write_u8(buf.as_bytes(), &mut stream) {
                         println!("Failed to send request: {:?}", e);
@@ -73,21 +96,5 @@ fn main() {
 
     }
 
-    loop {
-
-        match request::read_u8(&mut stream) {
-            Ok(rsp) => {
-                println!("{:?}", String::from_utf8(rsp).expect("not json string"))
-            }
-            Err(e) => {
-                match e.kind() {
-                    Other => { continue
-                    }
-                    _ => {
-                        println!("Failed to read response: {:?}", e);
-                    }
-                }
-            }
-        }
-    }
+    receiver_thread.join();
 }
