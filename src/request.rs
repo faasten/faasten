@@ -4,9 +4,10 @@ use serde_json::Value;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
+    pub time: u64,
+    pub user_id: u64,
     pub function: String,
     pub payload: Value,
-    pub time: u64,
 }
 
 pub fn parse_json(json: &str) -> Result<Request, serde_json::Error> {
@@ -91,8 +92,14 @@ pub fn read_u8(channel: &mut std::net::TcpStream) -> std::io::Result<Vec<u8>>{
 
 impl Request {
 
+    /// return a Request value as a JSON string
     pub fn to_string(&self) -> Result<String, serde_json::Error> {
-        return serde_json::to_string(&self.payload);
+        return serde_json::to_string(&self);
+    }
+
+    /// return payload as a JSON string
+    pub fn payload_as_string(&self) -> String {
+        return self.payload.to_string();
     }
 
 }

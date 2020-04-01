@@ -94,7 +94,7 @@ impl Vm {
 
     /// Send request to vm and wait for its response
     pub fn process_req(&mut self, req: Request) -> Result<String, String> {
-        let req_str = req.to_string().unwrap();
+        let req_str = req.payload_as_string();
         let mut req_sender = self.process.stdin.as_mut().unwrap();
 
         let buf = req_str.as_bytes();
