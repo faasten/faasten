@@ -1,3 +1,6 @@
-{"time": 15, "function":"lorempy2",	"payload" : "lorempy2-1"}
-{"time": 21, "function":"lorempy2",	"payload" : "lorempy2-2"}
-{"time": 21, "function":"sentiment-analysis",	"payload" : "sentiment-1"}
+{"time": 15, "user_id": 2, "function":"markdown-to-html",	"payload" : {"value": "md2html-1"}}
+{"time": 15, "user_id": 2, "function":"sentiment-analysis",	"payload" : {"value": "sa-1"}}
+{"time": 15, "user_id": 2, "function":"ocr-img",	"payload" : {"value": "ocr-img1"}}
+{"time": 15, "user_id": 2, "function":"lorempy2",	"payload" : {"value": "lorempy2-1"}}
+{"time": 15, "user_id": 2, "function":"loremjs",	"payload" : {"value": "loremjs-1"}}
+{"time": 15, "user_id": 2, "function":"autocomplete",	"payload" : {"value": "autocomplete-1"}}
