@@ -230,7 +230,7 @@ def process_single_trace(data):
 
 def json_to_vms(data):
     """
-    given a JSON object (a dict objet returned by json.load())output from
+    given a JSON object (a dict objet returned by json.load()) output from
     snapctr (format specified at the beginning of this file), create and return
     a dict of VM objects with the key being the VM's ID and the value being the
     VM object.
@@ -242,6 +242,9 @@ def json_to_vms(data):
     3. "request/response timestamps"
     4. "vm memory sizes"
     """
+    if data=={}:
+        return {}
+
     vms = {}
     vm_mem_sizes = data['vm memory sizes']
     boot_tsp = data['boot timestamps']
@@ -299,7 +302,6 @@ def merge_vms(v1, v2):
     return v1
 
 def merge_vm_dicts(d1, d2):
-
     """
     merge two dicts of VM objects. For example if both d1 and d2 has information
     about VM whose ID is i, then merge those information into one VM object.
@@ -315,10 +317,10 @@ def merge_vm_dicts(d1, d2):
 def check_vm(vm):
     return (vm.mem!=0) and vm.boot!=[] and vm.req_rsp!=[]
 
-def validate(vms,stat):
+def validate(vms, stat):
     """
-    make sure the data generated in the vm dict agrees with measured stat data
-    also, make sure the VM objects are valid (see check_vm for details)
+    Make sure the data generated in the vm dict agrees with measured stat data.
+    Also, make sure the VM objects are valid (see check_vm for details)
     """
     assert(len(vms) == stat[3])
     num_complete = 0
@@ -339,7 +341,9 @@ def validate(vms,stat):
 #    4. the number of vms created
 # The same as the return value of process_single_trace minus the list of VMs at
 # the end.
-num_workers = sys.argv[-1]
+num_workers = len(sys.argv)-1
+print("Number of worker threads in this controller: {}".format(num_workers))
+
 stat = np.array([0,0,0,0])
 vms = {}
 for i in range(1, len(sys.argv)):
@@ -350,7 +354,6 @@ for i in range(1, len(sys.argv)):
     s = np.array(s)
     stat, vms = stat + s, merge_vm_dicts(vms, v)
 
-
 # sort every vm's req_rsp
 for v in list(vms.values()):
     v.req_rsp.sort()
@@ -359,6 +362,17 @@ for v in list(vms.values()):
 validate(vms, stat)
 
 vms = list(vms.values())
+
+# print high level statistics
+print("***************************")
+print("# VMs created: {}".format(stat[3]))
+print("# VMs evicted: {}".format(stat[2]))
+print("# Requests completed: {}".format(stat[0]))
+print("# Requests dropped: {}".format(stat[1]))
+print("***************************")
+if len(vms) == 0:
+    print("Zero vms created. No more analysis left to do. Exiting...")
+    exit(0)
 
 # find the experiment start time as the boot start timestamp of the first VM
 # find the experiment end time as the complete timestamp of the last request
