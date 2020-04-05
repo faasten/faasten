@@ -80,8 +80,18 @@ impl Vm {
         {
             let stdout = vm_process.stdout.as_mut().unwrap();
             //stdout.read_to_string(&mut ready_msg);
-            stdout.read(&mut ready_msg);
-            //info!("vm {:?} is ready", ready_msg);
+            // If no ready message is received, kill the child process and
+            // return None.
+            // TODO: have a timeout here in case the firerunner process does
+            // not die but hangs
+            match stdout.read(&mut ready_msg) {
+                Ok(_) => (), //info!("vm {:?} is ready", ready_msg),
+                Err(e) => {
+                    error!("No ready message received from {:?}, with {:?}", vm_process, e);
+                    vm_process.kill();
+                    return None;
+                }
+            }
         }
 
         return Some(Vm {
@@ -101,8 +111,10 @@ impl Vm {
 
         request::write_u8_vm(&buf, &mut req_sender);
 
-        let rsp_buf = request::read_u8_vm(&mut self.process.stdout.as_mut().unwrap()).unwrap();
-        return Ok(String::from_utf8(rsp_buf).unwrap());
+        return match request::read_u8_vm(&mut self.process.stdout.as_mut().unwrap()) {
+            Ok(rsp_buf) => Ok(String::from_utf8(rsp_buf).unwrap()),
+            Err(e) => Err(String::from("failed to read from vm")),
+        }
     }
 
     /// shutdown this vm
