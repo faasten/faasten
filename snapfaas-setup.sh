@@ -9,12 +9,19 @@ sudo cp ./resources/vmlinux /etc/snapfaas
 sudo cp ./resources/example_function_configs.yaml /etc/snapfaas
 
 # initialize submodules (for Firecracker)
+echo "clone Firecracker repo..."
 git submodule init
 git submodule update
 
 # build snapfaas binaries
+echo "build snapfaas binaries..."
 cargo build --release 2>/dev/null
 cp ./target/release/firerunner /etc/snapfaas
 
 # grant the current user permission to /dev/kvm
+echo "grant current user ${USER} access to /dev/kvm"
 sudo setfacl -m u:${USER}:rw /dev/kvm
+
+# install necessary packages for data processing
+pip3 install --upgrade pip
+pip3 install pyyaml numpy matplotlib
