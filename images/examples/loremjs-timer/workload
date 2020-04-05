@@ -1,0 +1,10 @@
+const { loremIpsum } = require('lorem-ipsum');
+
+exports.handle = function(request, respond) {
+  setTimeout(function() {
+    respond({
+      request: request,
+      sentence: loremIpsum()
+    });
+  }, 500);
+}

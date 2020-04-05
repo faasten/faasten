@@ -1,0 +1,8 @@
+const { loremIpsum } = require('lorem-ipsum');
+
+exports.handle = function(request, respond) {
+  respond({
+    request: request,
+    sentence: loremIpsum()
+  });
+}
