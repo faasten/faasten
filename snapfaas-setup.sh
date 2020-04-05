@@ -25,3 +25,12 @@ sudo setfacl -m u:${USER}:rw /dev/kvm
 # install necessary packages for data processing
 pip3 install --upgrade pip
 pip3 install pyyaml numpy matplotlib
+
+# create /out directory
+mkdir out
+
+# configure permission to docker
+sudo groupadd docker
+sudo usermod -aG docker $USER
+sudo service docker start
+
