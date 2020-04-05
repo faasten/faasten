@@ -1,0 +1,8 @@
+- name: "markdown-to-html"
+  runtimefs: "python2.ext4"
+  appfs: "markdown-to-html.ext4"
+  vcpus: 1
+  memory: 256
+  concurrency_limit: 1000
+  runtime: "python2"
+  users: 6000

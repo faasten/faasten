@@ -1,0 +1,13 @@
+start_time: 0
+end_time: 60000
+num_users: 80
+functions:
+  - name: "markdown-to-html"
+    mu: 1500
+  - name: "ocr-img"
+    mu: 43000
+  - name: "sentiment-analysis"
+    mu: 3000
+  - name: "autocomplete"
+    mu: 500
+

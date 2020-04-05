@@ -1,0 +1,6 @@
+start_time: 0
+end_time: 60000
+num_users: 200
+functions:
+  - name: "markdown-to-html"
+    mu: 3000 # average inter-arrival time in ms. 1000/mu=arrival rate per sec

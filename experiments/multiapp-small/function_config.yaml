@@ -1,0 +1,50 @@
+- name: "markdown-to-html"
+  runtimefs: "python2.ext4"
+  appfs: "markdown-to-html.ext4"
+  vcpus: 1
+  memory: 256
+  concurrency_limit: 1000
+  runtime: "python2"
+  users: 6000
+  expected_running_time: 300
+
+- name: "ocr-img"
+  runtimefs: "nodejs.ext4"
+  appfs: "ocr-img.ext4"
+  vcpus: 1
+  memory: 256
+  concurrency_limit: 1000
+  runtime: "nodejs"
+  users: 6000
+  expected_running_time: 8600
+
+- name: "resize"
+  runtimefs: "nodejs.ext4"
+  appfs: "resize.ext4"
+  vcpus: 1
+  memory: 256
+  concurrency_limit: 1000
+  runtime: "nodejs"
+  users: 6000
+  expected_running_time: 1700
+
+- name: "sentiment-analysis"
+  runtimefs: "python2.ext4"
+  appfs: "sentiment-analysis.ext4"
+  vcpus: 1
+  memory: 256
+  concurrency_limit: 1000
+  runtime: "python2"
+  users: 6000
+  expected_running_time: 600
+
+- name: "autocomplete"
+  runtimefs: "nodejs.ext4"
+  appfs: "autocomplete.ext4"
+  vcpus: 1
+  memory: 256
+  concurrency_limit: 1000
+  runtime: "nodejs"
+  users: 6000
+  expected_running_time: 100
+
