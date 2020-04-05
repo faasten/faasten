@@ -1,10 +1,13 @@
 use std::io::prelude::*;
 use std::io::{BufReader, ErrorKind};
 use std::net::TcpStream;
+use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use clap::{App, Arg};
+use signal_hook::{iterator::Signals, SIGINT};
+use crossbeam_channel::{bounded, Receiver, select};
 
 use snapfaas::request;
 
@@ -47,17 +50,25 @@ fn main() {
     let mut stream = TcpStream::connect(matches.value_of("server addr").expect("server address not specified")).expect("failed to connect");
     //stream.set_nonblocking(true).expect("cannot set stream to non-blocking");
 
+    // create a response receiver thread that reads from the same TcpStream
+    let num_rsp: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
+    let num_req: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
     let mut sc = stream.try_clone().expect("Cannot clone TcpStream");
+    let num_rspc = num_rsp.clone();
+    let num_reqc = num_req.clone();
     let receiver_thread = std::thread::spawn(move || {
         loop {
 
             match request::read_u8(&mut sc) {
                 Ok(rsp) => {
-                    println!("{:?}", String::from_utf8(rsp).expect("not json string"))
+                    println!("{:?}", String::from_utf8(rsp).expect("not json string"));
+                    let mut num_rsp = num_rspc.lock().expect("lock poisoned");
+                    *num_rsp +=1;
                 }
                 Err(e) => {
                     match e.kind() {
-                        Other => { continue
+                        Other => {
+                            continue
                         }
                         _ => {
                             println!("Failed to read response: {:?}", e);
@@ -67,6 +78,21 @@ fn main() {
             }
         }
     });
+
+    // register signal handler                                            
+    let num_rspc = num_rsp.clone();
+    let signals = Signals::new(&[SIGINT]).expect("cannot create signals");
+    std::thread::spawn(move || {                                          
+	for sig in signals.forever() {                                    
+	    println!("Received signal {:?}", sig);                        
+            let num_req = num_reqc.lock().expect("num_req lock");
+            let num_rsp = num_rspc.lock().expect("num_rsp lock");
+	    println!("# Requests: {:?}", num_req);                        
+	    println!("# Responses: {:?}", num_rsp);                        
+            std::process::exit(0);
+	}                                                                 
+    });                                                                   
+
 
     if let Some(p)  = matches.value_of("input_file") {
         let mut reader = std::fs::File::open(p).map(|f|
@@ -84,6 +110,9 @@ fn main() {
                     println!("sending request: {:?}", buf);
                     if let Err(e) = request::write_u8(buf.as_bytes(), &mut stream) {
                         println!("Failed to send request: {:?}", e);
+                    } else {
+                        let mut num_req= num_req.lock().expect("lock poisoned");
+                        *num_req+=1;
                     }
                 } else {
                     break;
