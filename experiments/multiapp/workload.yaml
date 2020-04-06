@@ -8,6 +8,6 @@ functions:
     mu: 43000
   - name: "sentiment-analysis"
     mu: 3000
-  - name: "autocomplete"
-    mu: 500
+    #  - name: "autocomplete"
+    #mu: 500
 
