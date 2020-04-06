@@ -16,6 +16,7 @@ use crate::request::Request;
 use crate::message::Message;
 use crate::controller::Controller;
 
+#[derive(Debug)]
 pub struct WorkerPool {
     pool: Vec<Worker>,
     req_sender: Sender<Message>,
@@ -48,6 +49,10 @@ impl WorkerPool {
 
     pub fn send_req_tcp(&self, req: Request, rsp_sender: Arc<Mutex<TcpStream>>) {
         self.req_sender.send(Message::Request_Tcp(req, rsp_sender));
+    }
+
+    pub fn pool_size(&self) -> usize {
+        self.pool.len()
     }
     
     /// shutdown the workerpool

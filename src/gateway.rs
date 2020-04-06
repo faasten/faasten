@@ -22,10 +22,8 @@ pub const DEFAULT_PORT:u32 = 28888;
 /// A HTTPGateway listens on a TCP port and accepts requests from
 /// HTTP POST commands.
 pub trait Gateway {
-    type Iter: Iterator;
     fn listen(source: &str) -> std::io::Result<Self>
         where Self: std::marker::Sized;
-    fn incoming(self) -> Self::Iter;
 }
 
 #[derive(Debug)]
@@ -37,7 +35,6 @@ pub struct FileGateway {
 }
 
 impl Gateway for FileGateway {
-    type Iter = FileRequestIter;
 
     fn listen(source: &str) -> std::io::Result<Self>{
         match File::open(source) {
@@ -58,9 +55,6 @@ impl Gateway for FileGateway {
         }
     }
 
-    fn incoming(self) -> Self::Iter {
-        return FileRequestIter {reader: self.reader, rsp_sender: self.rsp_sender.clone()};
-    }
 }
 
 impl FileGateway {
@@ -87,6 +81,24 @@ impl FileGateway {
         self.rsp_serializer.join();
     }
 
+}
+
+impl Iterator for FileGateway {
+    type Item = std::io::Result<(request::Request, Sender<Message>)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut buf = String::new();
+        match self.reader.read_line(&mut buf) {
+            Ok(0) => None,
+            Ok(_n) => match request::parse_json(&buf) {
+                Ok(req) => {
+                    Some(Ok((req, self.rsp_sender.clone())))
+                }
+                Err(e) => Some(Err(std::io::Error::from(e)))
+            }
+            Err(e) => Some(Err(e))
+        }
+    }
 }
 
 #[derive(Debug)]

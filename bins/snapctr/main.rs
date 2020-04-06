@@ -11,7 +11,6 @@
 
 use clap::{App, Arg};
 use log::{error, warn, info};
-use simple_logger;
 use snapfaas::configs;
 use snapfaas::controller::Controller;
 use snapfaas::gateway;
@@ -91,33 +90,10 @@ fn main() {
         }
     }
     let controller = Arc::new(controller);
-    //info!("{:?}", controller);
+    info!("{:?}", controller);
 
     let wp = workerpool::WorkerPool::new(controller.clone());
-    
-    // File Gateway
-    if let Some(request_file_url) = matches.value_of("requests file") {
-        let gateway = gateway::FileGateway::listen(request_file_url).expect("Failed to create file gateway");
-        // start admitting and processing incoming requests
-        let t1 = precise_time_ns();
-        for task in gateway.incoming() {
-            // ignore invalid requests
-            if task.is_err() {
-                error!("Invalid task: {:?}", task);
-                continue;
-            }
-
-            let (req, rsp_sender) = task.unwrap();
-
-            wp.send_req(req, rsp_sender);
-        }
-        let t2 = precise_time_ns();
-        println!("gateway latency {:?}", t2-t1);
-
-        wp.shutdown();
-        controller.shutdown();
-        std::process::exit(0);
-    }
+    info!("# workers: {:?}", wp.pool_size());
 
     // register signal handler
     let (sig_sender, sig_receiver) = bounded(100);
@@ -128,6 +104,58 @@ fn main() {
             let _ = sig_sender.send(());
         }
     });
+
+   
+    // File Gateway
+    if let Some(request_file_url) = matches.value_of("requests file") {
+        let mut gateway = gateway::FileGateway::listen(request_file_url).expect("Failed to create file gateway");
+        // start admitting and processing incoming requests
+        let t1 = precise_time_ns();
+        let mut prev_ts = 0;
+        loop {
+            let t1 = precise_time_ns();
+            let task = gateway.next();
+            if task.is_none() {
+                break;
+            }
+            let t2 = precise_time_ns();
+            info!("file gateway latency (t2-t1): {}", t2 - t1);
+            let task = task.unwrap();
+            // ignore invalid requests
+            if task.is_err() {
+                error!("Invalid task: {:?}", task);
+                continue;
+            }
+
+            let (req, rsp_sender) = task.unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(req.time-prev_ts));
+            let t1 = precise_time_ns();
+            prev_ts = req.time;
+
+            wp.send_req(req, rsp_sender);
+
+            // check if received any signal
+            if let Ok(_) = sig_receiver.try_recv() {
+                warn!("snapctr shutdown received");
+
+                // dump main thread's stats
+                let t2 = precise_time_ns();
+
+                wp.shutdown();
+                controller.shutdown();
+                std::process::exit(0);
+            }
+            let t2 = precise_time_ns();
+            info!("schedule latency (t2-t1): {}", t2-t1);
+        }
+
+        let t2 = precise_time_ns();
+        println!("gateway latency {:?}", t2-t1);
+
+        wp.shutdown();
+        controller.shutdown();
+        std::process::exit(0);
+    }
 
     // TCP gateway
     if let Some(p) = matches.value_of("port number") {
