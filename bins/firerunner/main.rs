@@ -26,7 +26,6 @@ use sys_util::EventFd;
 
 use clap::{App, Arg};
 use snapfaas::vm;
-use lipsum::{lipsum, lipsum_words};
 use serde_json::Value;
 use time::precise_time_ns;
 
