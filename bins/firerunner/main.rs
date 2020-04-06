@@ -148,6 +148,7 @@ fn main() {
     // output file for debugging
     // Can assume that `./out/` exists because snapctr or snapctr-setup.sh
     // should have created the directory
+    /*
     let file_name = format!("out/vm-{}.log", instance_id);
     let mut output_file = File::create(file_name)
                           .expect("Cannot create output file. Make sure out/ is created in the current directory.");
@@ -159,6 +160,7 @@ fn main() {
     write!(&mut output_file, "load dir: {:?}\n", load_dir);
     write!(&mut output_file, "dump_dir: {:?}\n", dump_dir);
     //output_file.flush();
+    */
 
     // Create vmm thread
     let (request_receiver, request_sender) = nix::unistd::pipe().expect("Failed to create request pipe");
@@ -201,7 +203,7 @@ fn main() {
     event_fd.write(1).map_err(|_| ()).expect("Failed to signal");
     let action_ret = sync_receiver.wait().expect("set config");
     //println!("Set vm configuration: {:?}", action_ret);
-    write!(&mut output_file, "Set vm configuration: {:?}\n", action_ret);
+//    write!(&mut output_file, "Set vm configuration: {:?}\n", action_ret);
 
     let boot_config = BootSourceConfig {
 	kernel_image_path: kernel.to_str().expect("kernel path None").to_string(),
@@ -256,7 +258,7 @@ fn main() {
     event_fd.write(1).map_err(|_| ()).expect("Failed to signal");
     let action_ret = sync_receiver.wait().expect("set config");
     //println!("Get vm configuration: {:?}", action_ret);
-    write!(&mut output_file, "Get vm configuration: {:?}\n", action_ret);
+   // write!(&mut output_file, "Get vm configuration: {:?}\n", action_ret);
 
     /*
     let logger_config = LoggerConfig {
@@ -276,7 +278,7 @@ fn main() {
     */
 
     // launch vm
-    write!(&mut output_file, "Launching VM\n");
+//    write!(&mut output_file, "Launching VM\n");
 
     //let t1 = precise_time_ns();
     let (sync_sender, sync_receiver) = oneshot::channel();
@@ -285,20 +287,20 @@ fn main() {
     event_fd.write(1).map_err(|_| ()).expect("Failed to signal");
     let action_ret = sync_receiver.wait().expect("set config");
     //println!("Start vm: {:?}", action_ret);
-    write!(&mut output_file, "Start VM: {:?}\n", action_ret);
+//    write!(&mut output_file, "Start VM: {:?}\n", action_ret);
 
 
     // wait for ready notification from vm
     let data = &mut[0u8; 4usize];
     unsafe{ File::from_raw_fd(ready_receiver) }.read_exact(data).expect("Failed to receive ready signal");
-    write!(&mut output_file, "Started VM: {:?}\n", action_ret);
-    write!(&mut output_file, "VM with notifier id {:?} is ready\n", data);
-    output_file.flush();
+//    write!(&mut output_file, "Started VM: {:?}\n", action_ret);
+//    write!(&mut output_file, "VM with notifier id {:?} is ready\n", data);
+//    output_file.flush();
     //println!("VM with notifier id {} is ready", u32::from_le_bytes(*data));
 
     //let t2 = precise_time_ns();
     //write!(&mut output_file, "boot_time: {:?}\n", t2-t1);
-    output_file.flush();
+//    output_file.flush();
 
     // notify snapfaas that the vm is ready
     io::stdout().write_all(READY);
@@ -323,7 +325,7 @@ fn main() {
         stdin.lock().read_exact(&mut req_buf);
 
         let mut req = String::from_utf8(req_buf).expect("not json string");
-        write!(&mut output_file, "request: {:?}\n",req);
+//        write!(&mut output_file, "request: {:?}\n",req);
         req.push('\n');
 
         request_sender.write_all(req.as_bytes());
@@ -351,8 +353,8 @@ fn main() {
         io::stdout().flush();
 
         req_count = req_count+1;
-        write!(&mut output_file, "Done: {}\n", req_count);
-        output_file.flush();
+        //write!(&mut output_file, "Done: {}\n", req_count);
+        //output_file.flush();
         //stdout.lock().write_fmt(format_args!("echo: {:?}", req_buf));
     }
 
