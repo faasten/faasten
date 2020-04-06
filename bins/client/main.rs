@@ -102,8 +102,13 @@ fn main() {
         loop {
             // read line as String
             let mut buf = String::new();
-            if let Ok(s) = reader.read_line(&mut buf) {
-                if s > 0 {
+            match reader.read_line(&mut buf) {
+                Ok(0) => {
+                    // Ok(0) should indicate that we're at the end of the file
+                    println!("read_line() returned 0 bytes");
+                    break;
+                }
+                Ok(_n) => {
                     let req = request::parse_json(&buf).expect(&format!("cannot parse string: {}",buf));
                     std::thread::sleep(std::time::Duration::from_millis(req.time-prev_time));
                     prev_time = req.time;
@@ -114,16 +119,28 @@ fn main() {
                         let mut num_req= num_req.lock().expect("lock poisoned");
                         *num_req+=1;
                     }
-                } else {
-                    break;
                 }
-            } else {
-                break;
+                Err(e) => {
+                    println!("read_line() returned error: {:?}", e);
+                }
             }
         }
     } else {
 
     }
 
-    receiver_thread.join();
+    loop {
+        let cond = {
+            let num_req = num_req.lock().expect("num_req lock");
+            let num_rsp = num_rsp.lock().expect("num_rsp lock");
+            *num_rsp < *num_req 
+        };
+        if cond {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+        } else {
+	    println!("# Requests: {:?}", num_req);                        
+	    println!("# Responses: {:?}", num_rsp);                        
+            std::process::exit(0);
+        }
+    }
 }
