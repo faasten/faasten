@@ -364,12 +364,13 @@ validate(vms, stat)
 vms = list(vms.values())
 
 # print high level statistics
-print("***************************")
+print("************High-level Stats***************")
+
 print("# VMs created: {}".format(stat[3]))
 print("# VMs evicted: {}".format(stat[2]))
 print("# Requests completed: {}".format(stat[0]))
 print("# Requests dropped: {}".format(stat[1]))
-print("***************************")
+print()
 if len(vms) == 0:
     print("Zero vms created. No more analysis left to do. Exiting...")
     exit(0)
@@ -385,9 +386,14 @@ for vm in vms:
     if vm.req_rsp[-1][1]> end_time:
         end_time = vm.req_rsp[-1][1]
 
-print(start_time)
-print(end_time)
+print("************Experiment Results*************")
+print("Start time: {}".format(start_time))
+print("End time: {}".format(end_time))
+print("Experiment duration: {}ms".format((end_time-start_time)/NS2MS))
+print("Average throughput:\
+        {}#req/sec".format(stat[0]/((end_time-start_time)/(1000000*1000)) ))
 
+# Throughput Plot
 # calculate throughput utilization over the timespan of the experiment
 # We use a sliding window approach. Throughput is calculated as the number of
 # requests completed within a window over the length of the window (in secs)
@@ -419,7 +425,7 @@ plt.plot(x, throughput)
 plt.xlabel('time(s)')
 plt.ylabel('throughput(#req/sec)')
 plt.title('Throughput')
-plt.savefig('test.png')
+plt.savefig('throughput-over-time-{}gb.png'.format(int(num_workers*128/1024)))
 
 plt.show()
 
@@ -431,12 +437,9 @@ plt.show()
 #total_eviction_timeMB += vm.evict_time() * vm.mem
 #total_runtime += vm.runtime()
 #total_runtimeMB += vm.runtime() * vm.mem
-print(stat)
 #for v in vms.items():
 #    print(v[1])
 # average throughput
-print("Average throughput:\
-        {}#req/sec".format(stat[0]/((end_time-start_time)/(1000000*1000)) ))
 sys.exit();
 
 
