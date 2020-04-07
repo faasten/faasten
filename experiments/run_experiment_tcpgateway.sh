@@ -1,4 +1,4 @@
-for mem in 10
+for mem in {10..160..5}
 do
     echo "starting snapctr with $mem GB of memory"
     let "mem_mib = $mem*1024"
