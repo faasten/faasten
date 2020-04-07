@@ -1,3 +1,4 @@
+import sys, os
 """
 This script processes trace data from snapctr.
 Each trace file contains data in the format of a JSON string.
@@ -334,236 +335,240 @@ def validate(vms, stat):
     assert(num_evict==stat[2])
 
 
-# stat contains aggregate statistics data in the order of:
-#    1. the number of completed requests
-#    2. the number of dropped requests
-#    3. the number of evictions
-#    4. the number of vms created
-# The same as the return value of process_single_trace minus the list of VMs at
-# the end.
-num_workers = len(sys.argv)-1
-print("Number of worker threads in this controller: {}".format(num_workers))
+def process_experiment(experiment_dir):
+    """
+    Given an experiment (reprsented by a list of *.stat files output by snapctr),
+    process the experimental results
+    @param experiement_dir the directory where *.stat files reside
+    """
+    result={}
+    # stat contains aggregate statistics data in the order of:
+    #    1. the number of completed requests
+    #    2. the number of dropped requests
+    #    3. the number of evictions
+    #    4. the number of vms created
+    # The same as the return value of process_single_trace minus the list of VMs at
+    # the end.
+    stat_files = [d for d in os.listdir(experiment_dir) if d.endswith(".stat")]
+    num_workers = len(stat_files)
 
-stat = np.array([0,0,0,0])
-vms = {}
-for i in range(1, len(sys.argv)):
-    measurement_file = open(sys.argv[i], 'r')
-    data = json.load(measurement_file)
-    measurement_file.close()
-    *s, v = process_single_trace(data)
-    s = np.array(s)
-    stat, vms = stat + s, merge_vm_dicts(vms, v)
+    stat = np.array([0,0,0,0])
+    vms = {}
+    for f in stat_files:
+        measurement_file = open(os.path.join(experiment_dir, f), 'r')
+        data = json.load(measurement_file)
+        measurement_file.close()
+        *s, v = process_single_trace(data)
+        s = np.array(s)
+        stat, vms = stat + s, merge_vm_dicts(vms, v)
 
-# sort every vm's req_rsp
-for v in list(vms.values()):
-    v.req_rsp.sort()
+    # sort every vm's req_rsp
+    for v in list(vms.values()):
+        v.req_rsp.sort()
 
-# make sure the data makes sense
-validate(vms, stat)
+    # make sure the data makes sense
+    validate(vms, stat)
 
-vms = list(vms.values())
+    vms = list(vms.values())
 
-# print high level statistics
-print("************High-level Stats***************")
+    if len(vms) == 0:
+        print("Zero vms created. No more analysis left to do. Exiting...")
+        exit(0)
 
-print("# VMs created: {}".format(stat[3]))
-print("# VMs evicted: {}".format(stat[2]))
-print("# Requests completed: {}".format(stat[0]))
-print("# Requests dropped: {}".format(stat[1]))
-print()
-if len(vms) == 0:
-    print("Zero vms created. No more analysis left to do. Exiting...")
-    exit(0)
+    # find the experiment start time as the boot start timestamp of the first VM
+    # find the experiment end time as the complete timestamp of the last request
+    start_time = vms[0].boot[0][0]
+    end_time = vms[0].req_rsp[-1][1]
+    duration = (end_time-start_time)/NS2MS
 
-# find the experiment start time as the boot start timestamp of the first VM
-# find the experiment end time as the complete timestamp of the last request
-start_time = vms[0].boot[0][0]
-end_time = vms[0].req_rsp[-1][1]
-
-for vm in vms:
-    if vm.boot[0][0] < start_time:
-        start_time = vm.boot[0][0]
-    if vm.req_rsp[-1][1]> end_time:
-        end_time = vm.req_rsp[-1][1]
-
-print("************Experiment Results*************")
-print("Start time: {}".format(start_time))
-print("End time: {}".format(end_time))
-print("Experiment duration: {}ms".format((end_time-start_time)/NS2MS))
-print("Average throughput:\
-        {}#req/sec".format(stat[0]/((end_time-start_time)/(1000000*1000)) ))
-
-# Throughput Plot
-# calculate throughput utilization over the timespan of the experiment
-# We use a sliding window approach. Throughput is calculated as the number of
-# requests completed within a window over the length of the window (in secs)
-# to get #req/sec
-window_size = 6000*1000000 #ms * 1000000 = ns
-
-throughput = []
-wt = start_time + window_size / 2
-while wt < end_time:
-    window = (wt - window_size / 2, wt + window_size / 2)
-    completed = 0;
     for vm in vms:
-        for r in vm.req_rsp:
-            if r[1] >= window[0] and r[1]<=window[1]:
-                completed = completed +1
+        if vm.boot[0][0] < start_time:
+            start_time = vm.boot[0][0]
+        if vm.req_rsp[-1][1]> end_time:
+            end_time = vm.req_rsp[-1][1]
 
-    throughput.append(completed/(window_size/(1000*1000000))) # #req/sec
-
-    wt = wt + window_size
-
-throughput = np.array(throughput)
-
-# plot
-x = np.linspace(0, (end_time/(NS2MS*1000) - start_time/(NS2MS*1000) ), len(throughput)  )
-
-fig = plt.figure()
-fig.set_size_inches(8,5)
-plt.plot(x, throughput)
-plt.xlabel('time(s)')
-plt.ylabel('throughput(#req/sec)')
-plt.title('Throughput')
-plt.savefig('throughput-over-time-{}gb.png'.format(int(num_workers*128/1024)))
-
-plt.show()
-
-#total_idle_time = [vm.idle_time() for vm in vms]
-#total_idle_timeMB += vm.idle_time() * vm.mem
-#total_boot_time += vm.boot_time()
-#total_boot_timeMB += vm.boot_time() * vm.mem
-#total_eviction_time += vm.evict_time()
-#total_eviction_timeMB += vm.evict_time() * vm.mem
-#total_runtime += vm.runtime()
-#total_runtimeMB += vm.runtime() * vm.mem
-#for v in vms.items():
-#    print(v[1])
-# average throughput
-sys.exit();
+    result["num workers"]=num_workers
+    result["cluster memory"]=result["num workers"]*128
+    result["num vms created"]=stat[3]
+    result["num vms evicted"]=stat[2]
+    result["num requests completed"]=stat[0]
+    result["num requests dropped"]=stat[1]
+    result["start time"]=start_time
+    result["end time"]=end_time
+    result["experiment duration"]=duration # in ms
+    result["average throughput"]=result["num requests completed"]/(result["experiment duration"]/1000) # in req/sec
+    #total_idle_time = [vm.idle_time() for vm in vms]
+    #total_idle_timeMB += vm.idle_time() * vm.mem
+    #total_boot_time += vm.boot_time()
+    #total_boot_timeMB += vm.boot_time() * vm.mem
+    #total_eviction_time += vm.evict_time()
+    #total_eviction_timeMB += vm.evict_time() * vm.mem
+    #total_runtime += vm.runtime()
+    #total_runtimeMB += vm.runtime() * vm.mem
 
 
+    return (result, vms)
+
+def plot_throughput(start_time, end_time, window_size, vms, plot_name):
+    # Throughput Plot
+    # calculate throughput utilization over the timespan of the experiment
+    # We use a sliding window approach. Throughput is calculated as the number of
+    # requests completed within a window over the length of the window (in secs)
+    # to get #req/sec
+    window_size = window_size*1000000 #ms * 1000000 = ns
+
+    throughput = []
+    wt = start_time + window_size / 2
+    while wt < end_time:
+        window = (wt - window_size / 2, wt + window_size / 2)
+        completed = 0;
+        for vm in vms:
+            for r in vm.req_rsp:
+                if r[1] >= window[0] and r[1]<=window[1]:
+                    completed = completed +1
+
+        throughput.append(completed/(window_size/(1000*1000000))) # #req/sec
+
+        wt = wt + window_size
+
+    throughput = np.array(throughput)
+
+    # plot
+    x = np.linspace(0, (end_time/(NS2MS*1000) - start_time/(NS2MS*1000) ), len(throughput)  )
+
+    fig = plt.figure()
+    fig.set_size_inches(8,5)
+    plt.plot(x, throughput)
+    plt.xlabel('time(s)')
+    plt.ylabel('throughput(#req/sec)')
+    plt.title('Throughput')
+    plt.savefig(plot_name)
+
+    return
 
 
 
-# Old:
-start_time = data['start time']/NS2MS
-end_time = data['end time']/NS2MS
-num_vm = len(data['boot timestamps'])
-total_mem = data['total mem']
-resource_limit = int(total_mem/SMALLEST_VM) # the maximum number of 128MB VMs that the cluster can support
+    # Old:
+    start_time = data['start time']/NS2MS
+    end_time = data['end time']/NS2MS
+    num_vm = len(data['boot timestamps'])
+    total_mem = data['total mem']
+    resource_limit = int(total_mem/SMALLEST_VM) # the maximum number of 128MB VMs that the cluster can support
 
-#function_config_file = open(sys.argv[2], 'r')
-#config = yaml.load(function_config_file.read(), Loader=yaml.Loader)
-#function_config_file.close()
-# get mem size for each function
-#function_to_memsize = {}
-#for function in config:
-#    name = function['name']
-#    mem = function['memory']
-#    function_to_memsize[name] = mem
-#
-#print(function_to_memsize)
+    #function_config_file = open(sys.argv[2], 'r')
+    #config = yaml.load(function_config_file.read(), Loader=yaml.Loader)
+    #function_config_file.close()
+    # get mem size for each function
+    #function_to_memsize = {}
+    #for function in config:
+    #    name = function['name']
+    #    mem = function['memory']
+    #    function_to_memsize[name] = mem
+    #
+    #print(function_to_memsize)
 
-# scheduler latency
-schedule_latency = np.array(data['request schedule latency'])
-schedule_latency = schedule_latency / NS2MS
+    # scheduler latency
+    schedule_latency = np.array(data['request schedule latency'])
+    schedule_latency = schedule_latency / NS2MS
 
-# calculate high-level aggregate metrics
-vms = []
-all_req_res = []
-all_eviction_tsp = []
-all_boot_tsp = []
-for vm_id in range(3, 3+num_vm,1):
-    mem_size = data['vm mem sizes'][str(vm_id)]
-    boot_tsp = [l/NS2MS for l in data['boot timestamps'][str(vm_id)]]
-    req_res_tsp = [l/NS2MS for l in data['request/response timestamps'][str(vm_id)]]
-    all_req_res = all_req_res+req_res_tsp
-    all_boot_tsp = all_boot_tsp + boot_tsp
+    # calculate high-level aggregate metrics
+    vms = []
+    all_req_res = []
+    all_eviction_tsp = []
+    all_boot_tsp = []
+    for vm_id in range(3, 3+num_vm,1):
+        mem_size = data['vm mem sizes'][str(vm_id)]
+        boot_tsp = [l/NS2MS for l in data['boot timestamps'][str(vm_id)]]
+        req_res_tsp = [l/NS2MS for l in data['request/response timestamps'][str(vm_id)]]
+        all_req_res = all_req_res+req_res_tsp
+        all_boot_tsp = all_boot_tsp + boot_tsp
 
-    try:
-        evict_tsp = [l/NS2MS for l in data['eviction timestamps'][str(vm_id)]]
-        all_eviction_tsp = all_eviction_tsp + evict_tsp
-    except:
-        evict_tsp = []
+        try:
+            evict_tsp = [l/NS2MS for l in data['eviction timestamps'][str(vm_id)]]
+            all_eviction_tsp = all_eviction_tsp + evict_tsp
+        except:
+            evict_tsp = []
 
-    vm = VM(vm_id, boot_tsp, req_res_tsp, evict_tsp, mem_size)
-    vms.append(vm)
-
-
-total_idle_time = 0
-total_boot_time = 0
-total_eviction_time = 0
-total_runtime = 0
-total_runtimeMB = 0
-total_idle_timeMB = 0
-total_eviction_timeMB = 0
-total_boot_timeMB = 0
+        vm = VM(vm_id, boot_tsp, req_res_tsp, evict_tsp, mem_size)
+        vms.append(vm)
 
 
-#    print("vm {}, uptime: {}, runtime: {}, idle time: {}, boot time: {}, evict time: {}"\
-#            .format(vm.id,\
-#                vm.uptime()/1000000,\
-#                vm.runtime()/1000000,
-#                vm.idle_time()/1000000,\
-#                vm.boot_time()/1000000,\
-#                vm.evict_time()/1000000))
-
-total_time = total_runtime + total_idle_time + total_boot_time + total_eviction_time
-total_experiment_duration = (end_time - start_time)
-
-print("cluster size: {}MB".format(total_mem))
-print('cluster can support ' + str(resource_limit) + ' 128MB VMs')
-print("booted a total of " + str(num_vm) + " VMs")
-print('number of completed requests: {}'.format(data['number of completed requests']))
-print('number of dropped requests (resource exhaustion): {}'.format(data['drop requests (resource)']))
-print('number of dropped requests (concurrency limit): {}'.format(data['drop requests (concurrency)']))
-print('number of evictions: {}'.format(data['number of evictions']))
-print('cumulative throughput: {0:.2f}'.format(data['cumulative throughput']))
-print("experiment duration: {0:.2f}ms".format(total_experiment_duration))
-print("total time (spent by all VMs): {0:.2f}ms".format(total_time))
-print("total runtime time: {0:.2f}ms".format(total_runtime))
-print("total idle time: {0:.2f}ms".format(total_idle_time))
-print("total boot time: {0:.2f}ms".format(total_boot_time))
-print("total eviction time: {0:.2f}ms".format(total_eviction_time))
-#print("total runtimeMB (ms-MB): {}ms-MB".format(int(total_runtimeMB)))
-print("type 1 utilization: {0:.2f}%".format(100*total_runtimeMB/(total_experiment_duration*total_mem)))
-print("type 2 utilization: {0:.2f}%".format(100*total_runtimeMB/(total_runtimeMB + total_eviction_timeMB + total_boot_timeMB)))
-
-print("average scheduling latency: {0:.2f}ms".format(np.mean(schedule_latency)))
+    total_idle_time = 0
+    total_boot_time = 0
+    total_eviction_time = 0
+    total_runtime = 0
+    total_runtimeMB = 0
+    total_idle_timeMB = 0
+    total_eviction_timeMB = 0
+    total_boot_timeMB = 0
 
 
-# calculate utilization over the timespan of the experiment
-utilization1 = []
-utilization2 = []
-runtimemb_all = []
-window_size = 6000 #ms
+    #    print("vm {}, uptime: {}, runtime: {}, idle time: {}, boot time: {}, evict time: {}"\
+    #            .format(vm.id,\
+    #                vm.uptime()/1000000,\
+    #                vm.runtime()/1000000,
+    #                vm.idle_time()/1000000,\
+    #                vm.boot_time()/1000000,\
+    #                vm.evict_time()/1000000))
 
-wt = start_time + window_size / 2
-while wt < end_time:
-    window = (wt - window_size / 2, wt + window_size / 2)
-    running = 0
-    runtimemb = 0
-    for vm in vms:
-        runtimemb = runtimemb + vm.runtime_in_window(window) * vm.resource
+    total_time = total_runtime + total_idle_time + total_boot_time + total_eviction_time
+    total_experiment_duration = (end_time - start_time)
 
-    utilization1.append(runtimemb/(window_size*total_mem))
+    print("cluster size: {}MB".format(total_mem))
+    print('cluster can support ' + str(resource_limit) + ' 128MB VMs')
+    print("booted a total of " + str(num_vm) + " VMs")
+    print('number of completed requests: {}'.format(data['number of completed requests']))
+    print('number of dropped requests (resource exhaustion): {}'.format(data['drop requests (resource)']))
+    print('number of dropped requests (concurrency limit): {}'.format(data['drop requests (concurrency)']))
+    print('number of evictions: {}'.format(data['number of evictions']))
+    print('cumulative throughput: {0:.2f}'.format(data['cumulative throughput']))
+    print("experiment duration: {0:.2f}ms".format(total_experiment_duration))
+    print("total time (spent by all VMs): {0:.2f}ms".format(total_time))
+    print("total runtime time: {0:.2f}ms".format(total_runtime))
+    print("total idle time: {0:.2f}ms".format(total_idle_time))
+    print("total boot time: {0:.2f}ms".format(total_boot_time))
+    print("total eviction time: {0:.2f}ms".format(total_eviction_time))
+    #print("total runtimeMB (ms-MB): {}ms-MB".format(int(total_runtimeMB)))
+    print("type 1 utilization: {0:.2f}%".format(100*total_runtimeMB/(total_experiment_duration*total_mem)))
+    print("type 2 utilization: {0:.2f}%".format(100*total_runtimeMB/(total_runtimeMB + total_eviction_timeMB + total_boot_timeMB)))
 
-    wt = wt + window_size
+    print("average scheduling latency: {0:.2f}ms".format(np.mean(schedule_latency)))
 
-utilization1 = np.array(utilization1) * 100
 
-# plot
-x = np.linspace(0, (end_time - start_time ), len(utilization1)  )
+    # calculate utilization over the timespan of the experiment
+    utilization1 = []
+    utilization2 = []
+    runtimemb_all = []
+    window_size = 6000 #ms
 
-fig = plt.figure()
-fig.set_size_inches(8,5)
-plt.plot(x, utilization1)
-plt.xlabel('time(ms)')
-plt.ylabel('Utilization (%)')
-plt.title('Utilization')
-plt.legend()
-plt.savefig('test.png')
+    wt = start_time + window_size / 2
+    while wt < end_time:
+        window = (wt - window_size / 2, wt + window_size / 2)
+        running = 0
+        runtimemb = 0
+        for vm in vms:
+            runtimemb = runtimemb + vm.runtime_in_window(window) * vm.resource
 
-plt.show()
+        utilization1.append(runtimemb/(window_size*total_mem))
 
+        wt = wt + window_size
+
+    utilization1 = np.array(utilization1) * 100
+
+    # plot
+    x = np.linspace(0, (end_time - start_time ), len(utilization1)  )
+
+    fig = plt.figure()
+    fig.set_size_inches(8,5)
+    plt.plot(x, utilization1)
+    plt.xlabel('time(ms)')
+    plt.ylabel('Utilization (%)')
+    plt.title('Utilization')
+    plt.legend()
+    plt.savefig('test.png')
+
+    plt.show()
+
+if __name__ == '__main__':
+    stat, vms = process_experiment(sys.argv[1])
+    print(stat)
