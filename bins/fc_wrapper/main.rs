@@ -8,6 +8,7 @@ use snapfaas::vm;
 use snapfaas::vm::Vm;
 use snapfaas::request;
 use snapfaas::configs::FunctionConfig;
+use std::io::BufRead;
 
 use clap::{App, Arg};
 use serde_json;
@@ -119,23 +120,40 @@ fn main() {
 
     println!("Vm creation succeeded");
 
-    // create a Request value
-    let req = request::Request {
-        time: 0,
-        user_id: 0,
-        function: "app".to_string(),
-        payload: serde_json::value::Value::String("data".to_string()),
-    };
-
-    // Send the request to vm and wait for a response
-    match vm.process_req(req) {
-        Ok(rsp) => {
-            println!("Request succeeded: {:?}", rsp);
-        }
-        Err(e) => {
-            println!("Request failed due to: {:?}", e);
+    // create a vector of Request values from stdin
+    let mut requests: Vec<request::Request> = Vec::new();
+    let stdin = std::io::stdin();
+    for line in std::io::BufReader::new(stdin).lines().map(|l| l.unwrap()) {
+        match request::parse_json(&line) {
+            Ok(j) => {
+                requests.push(j);
+            }
+            Err(e) => {
+                println!("invalid requests: {:?}", e);
+                std::process::exit(1);
+            }
         }
     }
+
+    let num_req = requests.len();
+    let mut num_rsp = 0;
+
+    // Send the request to vm and wait for a response
+    for req in requests {
+        match vm.process_req(req) {
+            Ok(rsp) => {
+                println!("Request succeeded: {:?}", rsp);
+                num_rsp+=1;
+            }
+            Err(e) => {
+                println!("Request failed due to: {:?}", e);
+            }
+        }
+    }
+
+    println!("***********************************************");
+    println!("Total requests: {}, Total resposnes: {}", num_req, num_rsp);
+    println!("***********************************************");
 
     // Shutdown the vm and exit
     println!("Shutting down vm...");
