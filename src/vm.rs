@@ -1,5 +1,6 @@
 use nix::unistd::Pid;
 use std::fs::File;
+use std::io;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -8,8 +9,9 @@ use crate::configs::FunctionConfig;
 use crate::request::Request;
 use crate::request;
 use cgroups::{cgroup_builder::CgroupBuilder, Cgroup};
-use log::{info, warn, error};
+use log::{info, trace, warn, error};
 
+#[derive(Debug)]
 pub enum VmStatus{
     NotReady,
     Ready = 65,
@@ -44,19 +46,26 @@ pub struct Vm {
     */
 }
 
+#[derive(Debug)]
+pub enum Error {
+    ProcessSpawn(std::io::Error),
+    ReadySignal(std::io::Error),
+    VmWrite(std::io::Error),
+    VmRead(std::io::Error),
+    NotString(std::string::FromUtf8Error),
+}
+
 impl Vm {
     /// Launch a vm instance and return a Vm value
     /// When this function returns, the VM has finished booting and is ready
     /// to accept requests.
-    pub fn new(id: usize, function_config: &FunctionConfig) -> Option<Vm> {
+    pub fn new(id: &str, function_config: &FunctionConfig) -> Result<Vm, Error> {
         let mut vm_process = Command::new("target/release/firerunner")
             .args(&[
                 "--id",
-                &id.to_string(),
+                id,
                 "--kernel",
                 "/etc/snapfaas/vmlinux",
-                "--kernel_args",
-                "quiet",
                 "--mem_size",
                 &function_config.memory.to_string(),
                 "--vcpu_count",
@@ -65,15 +74,13 @@ impl Vm {
                 &function_config.runtimefs,
                 "--appfs",
                 &function_config.appfs,
+                "--load_from",
+                &function_config.load_dir.as_ref().map_or("", |ld| &ld),
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .spawn();
-
-        if vm_process.is_err() {
-            return None;
-        }
-        let mut vm_process = vm_process.unwrap();
+            .spawn()
+            .map_err(|e| Error::ProcessSpawn(e))?;
 
         //let mut ready_msg = String::new();
         let mut ready_msg = vec![0;1];
@@ -85,35 +92,50 @@ impl Vm {
             // TODO: have a timeout here in case the firerunner process does
             // not die but hangs
             match stdout.read(&mut ready_msg) {
-                Ok(_) => (), //info!("vm {:?} is ready", ready_msg),
+                Ok(_) => {
+                    // check that the ready_msg is the number 42
+                    let magic_number = ready_msg[0] as u32;
+                    if magic_number != 42 {
+                        return Err(Error::ReadySignal(io::Error::new(io::ErrorKind::InvalidData, magic_number.to_string())));
+                    }
+                },
                 Err(e) => {
-                    error!("No ready message received from {:?}, with {:?}", vm_process, e);
                     vm_process.kill();
-                    return None;
+                    return Err(Error::ReadySignal(e));
                 }
             }
         }
 
-        return Some(Vm {
-            id: id,
+        return Ok(Vm {
+            id: id.parse::<usize>().expect("vm id not int"),
+            function_name: function_config.name.clone(),
             memory: function_config.memory,
             process: vm_process,
-            function_name: function_config.name.clone(),
         });
     }
 
     /// Send request to vm and wait for its response
-    pub fn process_req(&mut self, req: Request) -> Result<String, String> {
+    pub fn process_req(&mut self, req: Request) -> Result<String, Error> {
         let req_str = req.payload_as_string();
         let mut req_sender = self.process.stdin.as_mut().unwrap();
 
         let buf = req_str.as_bytes();
 
-        request::write_u8_vm(&buf, &mut req_sender);
+        request::write_u8_vm(&buf, &mut req_sender).map_err(|e| {
+            Error::VmWrite(e)
+        })?;
 
-        return match request::read_u8_vm(&mut self.process.stdout.as_mut().unwrap()) {
-            Ok(rsp_buf) => Ok(String::from_utf8(rsp_buf).unwrap()),
-            Err(e) => Err(String::from("failed to read from vm")),
+        // This is a blocking call
+        // TODO: add a timeout for this read (maybe ~15 minutes)
+        match request::read_u8_vm(&mut self.process.stdout.as_mut().unwrap()) {
+            Ok(rsp_buf) => {
+                String::from_utf8(rsp_buf).map_err(|e| {
+                    Error::NotString(e)
+                })
+            }
+            Err(e) => {
+                Err(Error::VmRead(e))
+            }
         }
     }
 

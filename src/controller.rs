@@ -1,3 +1,4 @@
+use std::result::Result;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,8 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use url::Url;
 
-use log::info;
-use log::error;
+use log::{error, trace, info};
 use serde_yaml;
 use serde_json::json;
 use time::precise_time_ns;
@@ -37,6 +37,17 @@ pub struct Controller {
     pub free_mem: AtomicUsize,
 }
 
+#[derive(Debug)]
+pub enum Error {
+    LowMemory(usize),
+    StartVm(vm::Error),
+    VmReqProcess(vm::Error),
+    NoEvictCandidate,
+    InsufficientEvict,
+    NoIdleVm,
+    FunctionNotExist,
+}
+
 impl Controller {
     /// create and return a Controller value
     /// The Controller value encapsulates the idle lists and function configs
@@ -51,6 +62,7 @@ impl Controller {
                         let name = app.name.clone();
                         app.runtimefs = format!("{}{}",ctr_config.get_runtimefs_base(), app.runtimefs);
                         app.appfs = format!("{}{}",ctr_config.get_appfs_base(), app.appfs);
+                        app.load_dir= app.load_dir.map(|s| format!("{}{}",ctr_config.get_snapshot_base(), s));
                         function_configs.insert(name.clone(), app);
                         idle.insert(name.clone(), VmList::new());
                     }
@@ -88,11 +100,11 @@ impl Controller {
     }
 
     /// Try to find an idle vm from the function's idle list
-    pub fn get_idle_vm(&self, function_name: &str) -> Option<Vm> {
-        if let Some(idle) = self.idle.get(function_name) {
-            return idle.pop();
+    pub fn get_idle_vm(&self, function_name: &str) -> Result<Vm, Error> {
+        if let Some(idle_list) = self.idle.get(function_name) {
+            return idle_list.pop().ok_or(Error::NoIdleVm);
         }
-        return None;
+        return Err(Error::FunctionNotExist);
     }
 
     /// Push the vm onto its function's idle list
@@ -103,11 +115,13 @@ impl Controller {
     /// Try to allocate and launch a new vm for a function
     /// allocate() first checks if there's enough free resources by looking at `free_mem`. If there
     /// is, it proactively "reserve" requisite memory by decrementing `free_mem`.
+    ///
     /// Allocation can fail under 2 conditions:
-    /// 1. when there's not enough resources on the machine.
-    /// 2. launching the vm process failed (i.e., Vm::new() failed and returned None
-    /// On failure, this function increments `free_mem` and returns None.
-    pub fn allocate(&self, function_config: &FunctionConfig) -> Option<Vm> {
+    /// 1. when there's not enough resources on the machine
+    ///    (Err(Error::LowMemory))
+    /// 2. launching the vm process failed (i.e., Vm::new())
+    ///    (Err(Error::StartVm(vm::Error)))
+    pub fn allocate(&self, function_config: &FunctionConfig) -> Result<Vm, Error> {
         match self.free_mem.fetch_update(
             |x| match x >= function_config.memory {
                 true => Some(x - function_config.memory),
@@ -118,15 +132,18 @@ impl Controller {
         ) {
             Ok(_) => {
                 let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
-                info!("Allocating new VM. ID: {:?}, App: {:?}", id, function_config.name);
-                let vm = Vm::new(id, function_config);
-                if vm.is_none() {
+                trace!("Allocating new VM. ID: {:?}, App: {:?}", id, function_config.name);
+
+                return Vm::new(&id.to_string(), function_config)
+                       .map_err(|e| {
+                    // Make sure to "unreserve" the resource by incrementing
+                    // `Controller::free_mem`
                     self.free_mem.fetch_add(function_config.memory, Ordering::Relaxed);
-                }
-                return vm;
+                    Error::StartVm(e)
+                });
             }
-            Err(_) => {
-                return None;
+            Err(free_mem) => {
+                return Err(Error::LowMemory(free_mem));
             }
         }
     }
@@ -160,21 +177,21 @@ impl Controller {
 
     /// Go through all the idle lists and remove a VM from the first non-empty
     /// idle list that we encounter
-    pub fn find_evict_candidate(&self, function_name: &str) -> Option<Vm> {
+    pub fn find_evict_candidate(&self, function_name: &str) -> Result<Vm, Error> {
         for key in self.idle.keys() {
             if key == function_name {
                 continue;
             }
             if let Some(vm) = self.idle.get(key).expect("key doesn't exist").try_pop() {
-                return Some(vm);
+                return Ok(vm);
             }
         }
-        return None;
+        return Err(Error::InsufficientEvict);
     }
 
-    pub fn evict_and_allocate(&self, mem: usize, function_config: &FunctionConfig) -> Option<Vm> {
+    pub fn evict_and_allocate(&self, mem: usize, function_config: &FunctionConfig) -> Result<Vm, Error> {
         if !self.evict(mem) {
-            return None;
+            return Err(Error::InsufficientEvict);
         }
         return self.allocate(function_config);
     }

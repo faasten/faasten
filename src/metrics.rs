@@ -8,6 +8,9 @@ pub struct Metrics {
     pub num_drop: u32,  // number of dropped requests
     pub num_complete: u32,  // number of requests completed
     pub num_evict: u32, // number of evictions
+    pub num_vm_startfail: u32, // number of vms that failed to start either due to process spawn or no ready signal
+    pub num_req_writefail: u32, // number of reqs that failed to write to a vm
+    pub num_rsp_readfail: u32, // number of rsq that failed to read from a vm 
     pub vm_mem_size: BTreeMap<usize, usize>,
     pub boot_tsp: BTreeMap<usize, Vec<u64>>, // key is vm_id, value is boot timestamp
     pub evict_tsp: BTreeMap<usize, Vec<u64>>,
@@ -22,6 +25,9 @@ impl Metrics {
             num_drop: 0,
             num_complete: 0,
             num_evict: 0,
+            num_vm_startfail: 0,
+            num_req_writefail: 0,
+            num_rsp_readfail: 0,
             vm_mem_size: BTreeMap::new(),
             boot_tsp: BTreeMap::new(),
             evict_tsp: BTreeMap::new(),

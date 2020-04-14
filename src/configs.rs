@@ -18,6 +18,7 @@ pub struct ControllerConfig {
     pub kernel_boot_args: String,
     pub runtimefs_dir: String,
     pub appfs_dir: String,
+    pub snapshot_dir: String,
     pub function_config: String,
 }
 
@@ -60,6 +61,7 @@ impl ControllerConfig {
             runtimefs_dir: "".to_string(),
             appfs_dir: "".to_string(),
             function_config: "".to_string(),
+            snapshot_dir: "".to_string(),
         };
     }
 
@@ -79,6 +81,10 @@ impl ControllerConfig {
         Url::parse(&self.appfs_dir).expect("invalid runtimefs dir from url").path().to_string()
     }
 
+    pub fn get_snapshot_base(&self) -> String {
+        Url::parse(&self.snapshot_dir).expect("invalid snapshot dir from url").path().to_string()
+    }
+
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -88,7 +94,7 @@ pub struct FunctionConfig {
     pub appfs: String,
     pub vcpus: u64,
     pub memory: usize,
-    pub concurrency_limit: usize,
-    pub load_dir: String,
+    pub concurrency_limit: usize, // not in use
+    pub load_dir: Option<String>,
 }
 
