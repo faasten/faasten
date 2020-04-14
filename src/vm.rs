@@ -60,7 +60,25 @@ impl Vm {
     /// When this function returns, the VM has finished booting and is ready
     /// to accept requests.
     pub fn new(id: &str, function_config: &FunctionConfig) -> Result<Vm, Error> {
-        let mut vm_process = Command::new("target/release/firerunner")
+        let mut cmd = Command::new("target/release/firerunner");
+        let mut cmd = if function_config.load_dir.is_none() {
+            cmd
+            .args(&[
+                "--id",
+                id,
+                "--kernel",
+                "/etc/snapfaas/vmlinux",
+                "--mem_size",
+                &function_config.memory.to_string(),
+                "--vcpu_count",
+                &function_config.vcpus.to_string(),
+                "--rootfs",
+                &function_config.runtimefs,
+                "--appfs",
+                &function_config.appfs,
+            ])
+        } else {
+            cmd
             .args(&[
                 "--id",
                 id,
@@ -75,9 +93,11 @@ impl Vm {
                 "--appfs",
                 &function_config.appfs,
                 "--load_from",
-                &function_config.load_dir.as_ref().map_or("", |ld| &ld),
+                &function_config.load_dir.as_ref().unwrap(),
             ])
-            .stdin(Stdio::piped())
+
+        };
+        let mut vm_process: Child = cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
             .map_err(|e| Error::ProcessSpawn(e))?;
@@ -86,7 +106,6 @@ impl Vm {
         let mut ready_msg = vec![0;1];
         {
             let stdout = vm_process.stdout.as_mut().unwrap();
-            //stdout.read_to_string(&mut ready_msg);
             // If no ready message is received, kill the child process and
             // return None.
             // TODO: have a timeout here in case the firerunner process does
@@ -95,7 +114,8 @@ impl Vm {
                 Ok(_) => {
                     // check that the ready_msg is the number 42
                     let magic_number = ready_msg[0] as u32;
-                    if magic_number != 42 {
+                    if magic_number != VmStatus::Ready as u32 {
+                        vm_process.kill();
                         return Err(Error::ReadySignal(io::Error::new(io::ErrorKind::InvalidData, magic_number.to_string())));
                     }
                 },

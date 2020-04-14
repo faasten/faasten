@@ -20,6 +20,10 @@ path = "bins/client/main.rs"
 name = "server"
 path = "bins/server/main.rs"
 
+[[bin]]
+name = "fc_wrapper"
+path = "bins/fc_wrapper/main.rs"
+
 [lib]
 
 [dependencies]

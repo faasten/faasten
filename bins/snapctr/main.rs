@@ -10,7 +10,7 @@
 //!   3. function store and their files' locations
 
 use clap::{App, Arg};
-use log::{error, warn, info};
+use log::{error, warn, info, trace};
 use snapfaas::configs;
 use snapfaas::controller::Controller;
 use snapfaas::gateway;
@@ -35,7 +35,7 @@ fn main() {
                 .short("c")
                 .long("config")
                 .takes_value(true)
-                .help("Controller config YAML file"),
+                .help("Path to controller config YAML file"),
         )
         .arg(
             Arg::with_name("kernel")
@@ -90,22 +90,22 @@ fn main() {
         }
     }
     let controller = Arc::new(controller);
-    info!("{:?}", controller);
+    trace!("{:?}", controller);
 
     let wp = workerpool::WorkerPool::new(controller.clone());
-    info!("# workers: {:?}", wp.pool_size());
+    trace!("# workers: {:?}", wp.pool_size());
 
     // register signal handler
     let (sig_sender, sig_receiver) = bounded(100);
     let signals = Signals::new(&[SIGINT]).expect("cannot create signals");
     std::thread::spawn(move || {
         for sig in signals.forever() {
-            println!("Received signal {:?}", sig);
+            warn!("Received signal {:?}", sig);
             let _ = sig_sender.send(());
         }
     });
 
-   
+
     // File Gateway
     if let Some(request_file_url) = matches.value_of("requests file") {
         let mut gateway = gateway::FileGateway::listen(request_file_url).expect("Failed to create file gateway");
@@ -165,22 +165,20 @@ fn main() {
         let t1 = precise_time_ns();
 
         loop {
-
             // read a request from TcpStreams and process it
             let task = gateway.next();
             match task {
                 None=> (),
                 Some(task) => {
                     // ignore invalid requests
-                    //info!("task received {:?}", task);
                     if task.is_err() {
-                        error!("Invalid task: {:?}", task);
+                        warn!("Invalid task: {:?}", task);
                         continue;
                     }
 
                     let (req, rsp_sender) = task.unwrap();
 
-                    //info!("request received: {:?}. From: {:?}", req, rsp_sender);
+                    trace!("Gateway received request: {:?}. From: {:?}", req, rsp_sender);
                     wp.send_req_tcp(req, rsp_sender);
                 }
             }
