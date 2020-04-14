@@ -138,7 +138,7 @@ fn main() {
     let num_req = requests.len();
     let mut num_rsp = 0;
 
-    // Send the request to vm and wait for a response
+    // Synchronously send the request to vm and wait for a response
     for req in requests {
         match vm.process_req(req) {
             Ok(rsp) => {
