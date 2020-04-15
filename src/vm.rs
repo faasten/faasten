@@ -15,6 +15,10 @@ use log::{info, trace, warn, error};
 pub enum VmStatus{
     NotReady,
     Ready = 65,
+    KernelNotExist,
+    RootfsNotExist,
+    AppfsNotExist,
+    LoadDirNotExist,
     Unresponsive,
     Crashed,
 }
@@ -52,6 +56,10 @@ pub enum Error {
     ReadySignal(std::io::Error),
     VmWrite(std::io::Error),
     VmRead(std::io::Error),
+    KernelNotExist,
+    RootfsNotExist,
+    AppfsNotExist,
+    LoadDirNotExist,
     NotString(std::string::FromUtf8Error),
 }
 
@@ -113,10 +121,18 @@ impl Vm {
             match stdout.read(&mut ready_msg) {
                 Ok(_) => {
                     // check that the ready_msg is the number 42
-                    let magic_number = ready_msg[0] as u32;
-                    if magic_number != VmStatus::Ready as u32 {
+                    let code = ready_msg[0] as u32;
+                    if code != VmStatus::Ready as u32 {
                         vm_process.kill();
-                        return Err(Error::ReadySignal(io::Error::new(io::ErrorKind::InvalidData, magic_number.to_string())));
+                        let err = match code {
+                            // TODO: need a better way to convert int to enum
+                            66 =>Error::KernelNotExist,
+                            67 =>Error::RootfsNotExist,
+                            68 =>Error::AppfsNotExist,
+                            69 =>Error::LoadDirNotExist,
+                            _ => Error::ReadySignal(io::Error::new(io::ErrorKind::InvalidData, code.to_string())),
+                        };
+                        return Err(err);
                     }
                 },
                 Err(e) => {
