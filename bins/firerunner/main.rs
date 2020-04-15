@@ -8,21 +8,12 @@ use std::io::{Read, Write};
 use std::os::unix::io::FromRawFd;
 use std::path::{Path, PathBuf};
 
-use std::rc::Rc;
-use std::sync::{Arc, RwLock};
-use std::sync::mpsc::{channel, Sender};
-use std::thread::JoinHandle;
 
-use futures::Future;
-use futures::sync::oneshot;
-use vmm::{VmmAction, VmmActionError, VmmData};
-use vmm::vmm_config::instance_info::{InstanceInfo, InstanceState};
 use vmm::vmm_config::boot_source::BootSourceConfig;
 use vmm::vmm_config::drive::BlockDeviceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::logger::{LoggerConfig, LoggerLevel};
-use sys_util::EventFd;
 
 use clap::{App, Arg};
 use serde_json::Value;
@@ -171,22 +162,6 @@ fn main() {
         std::process::exit(1);
     }
 
-
-    // output file for debugging
-    /*
-    let file_name = format!("out/vm-{}.log", instance_id);
-    let mut output_file = File::create(file_name)
-                          .expect("Cannot create output file. Make sure out/ is created in the current directory.");
-    write!(&mut output_file, "id: {:?}\n", instance_id);
-    write!(&mut output_file, "memory size: {:?}\n", mem_size_mib);
-    write!(&mut output_file, "vcpu count: {:?}\n", vcpu_count);
-    write!(&mut output_file, "rootfs: {:?}\n", rootfs);
-    write!(&mut output_file, "appfs: {:?}\n", appfs);
-    write!(&mut output_file, "load dir: {:?}\n", load_dir);
-    write!(&mut output_file, "dump_dir: {:?}\n", dump_dir);
-    //output_file.flush();
-    */
-
     // Create vmm thread
     let (mut vmm, mut vm) = match VmmWrapper::new(instance_id, load_dir, dump_dir) {
         Ok((vmm, vm)) => (vmm, vm),
@@ -199,6 +174,10 @@ fn main() {
     };
 
     // Configure vm through vmm thread
+    // If any of the configuration actions fail, just exits the process with
+    // exit code 1. When exit happens before sending the Ready Signal, whoever
+    // is listening on the stdout of this process for a ready signal will
+    // receive 0.
     let machine_config = VmConfig{
 	vcpu_count: Some(vcpu_count as u8),
 	mem_size_mib: Some(mem_size_mib),
@@ -212,7 +191,6 @@ fn main() {
             std::process::exit(1);
         }
     };
-    // write!(&mut output_file, "Set vm configuration: {:?}\n", action_ret);
 
     let boot_config = BootSourceConfig {
 	kernel_image_path: kernel.to_str().expect("kernel path None").to_string(),
@@ -302,7 +280,6 @@ fn main() {
     io::stdout().flush().expect("stdout");
     //eprintln!("VM with notifier id {} is ready", u32::from_le_bytes(ret));
 
-    // request and response process loop
     let mut req_count = 0;
 
     loop {
@@ -311,7 +288,7 @@ fn main() {
         // payload as a big-endian number
         let mut req_header = [0;8];
         let stdin = io::stdin();
-        // TODO: Make sure this read blocks when there's nothing in stdin
+        // XXX: This read blocks when there's nothing in stdin
         stdin.lock().read_exact(&mut req_header).expect("stdin");
         let size = u64::from_be_bytes(req_header);
 
@@ -353,6 +330,7 @@ fn main() {
         req_count = req_count+1;
     }
 
-    // TODO: shutdown vm
+    vmm.shutdown_instance();
+    vmm.join_vmm();
     std::process::exit(0);
 }

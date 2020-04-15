@@ -155,6 +155,10 @@ impl VmmWrapper {
         self.request_vmm_action(action, sync_receiver)
     }
 
+    pub fn join_vmm(self) {
+        self.vmm_thread_handle.join();
+    }
+
 }
 
 impl VmChannel {
