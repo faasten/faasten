@@ -1,7 +1,7 @@
 /// Wrapper for Firecracker vmm and vm
 use nix::{Error};
 use std::path::{PathBuf};
-use std::sync::{Arc, RwLock, mpsc::Sender, mpsc::channel};
+use std::sync::{Arc, RwLock, mpsc, mpsc::Sender, mpsc::channel};
 use std::rc::Rc;
 use std::fs::File;
 use std::thread::JoinHandle;
@@ -10,7 +10,7 @@ use std::io::{self, Read, Write};
 
 use futures::Future;
 use futures::sync::oneshot;
-use vmm::{VmmAction, VmmActionError, VmmData};
+use vmm::{VmmAction, VmmActionError, VmmData, VmmRequestOutcome};
 use vmm::vmm_config::instance_info::{InstanceInfo, InstanceState};
 use vmm::vmm_config::boot_source::BootSourceConfig;
 use vmm::vmm_config::drive::BlockDeviceConfig;
@@ -26,15 +26,20 @@ pub struct VmmWrapper {
     shared_info: Arc<RwLock<InstanceInfo>>,
 }
 
+#[derive(Debug)]
 pub struct VmChannel {
     request_sender: File,
     response_receiver: File,
     status_receiver: File,
 }
 
+#[derive(Debug)]
 pub enum VmmError {
     PipeCreate(nix::Error),
     EventFd(io::Error),
+    ActionError(VmmActionError),
+    ActionSender(mpsc::SendError<Box<VmmAction>>),
+    SyncChannel(oneshot::Canceled),
 }
 
 impl VmmWrapper {
@@ -87,4 +92,94 @@ impl VmmWrapper {
         return Ok((vmm_wrapper, vm_wrapper));
     }
 
+    pub fn send_vmm_action(&mut self, action: VmmAction) -> Result<(), VmmError> {
+        self.vmm_action_sender.send(Box::new(action)).map_err(|e| VmmError::ActionSender(e))?;
+        self.event_fd.write(1).map_err(|e| VmmError::EventFd(e))?;
+        return Ok(());
+    }
+
+    pub fn recv_vmm_action_ret(&self, receiver: oneshot::Receiver<VmmRequestOutcome>)
+        -> Result<VmmData, VmmError> {
+        let ret = receiver.wait().map_err(|e| VmmError::SyncChannel(e))?;
+        return ret.map_err(|e| VmmError::ActionError(e));
+    }
+
+    pub fn request_vmm_action(&mut self,
+                              action: VmmAction,
+                              ret_receiver: oneshot::Receiver<VmmRequestOutcome>)
+        -> Result<VmmData, VmmError> {
+        self.send_vmm_action(action)?;
+        self.recv_vmm_action_ret(ret_receiver)
+    }
+
+    pub fn set_configuration(&mut self, machine_config: VmConfig) -> Result<VmmData, VmmError> {
+        let (sync_sender, sync_receiver) = oneshot::channel();
+        let action = VmmAction::SetVmConfiguration(machine_config, sync_sender);
+        self.request_vmm_action(action, sync_receiver)
+    }
+
+    pub fn get_configuration(&mut self) -> Result<VmmData, VmmError> {
+        let (sync_sender, sync_receiver) = oneshot::channel();
+        let action = VmmAction::GetVmConfiguration(sync_sender);
+        self.request_vmm_action(action, sync_receiver)
+    }
+
+    pub fn set_boot_source(&mut self, config: BootSourceConfig) -> Result<VmmData, VmmError> {
+        let (sync_sender, sync_receiver) = oneshot::channel();
+        let action = VmmAction::ConfigureBootSource(config, sync_sender);
+        self.request_vmm_action(action, sync_receiver)
+    }
+
+    pub fn insert_block_device(&mut self, config: BlockDeviceConfig) -> Result<VmmData, VmmError> {
+        let (sync_sender, sync_receiver) = oneshot::channel();
+        let action = VmmAction::InsertBlockDevice(config, sync_sender);
+        self.request_vmm_action(action, sync_receiver)
+    }
+
+    pub fn add_vsock(&mut self, config: VsockDeviceConfig) -> Result<VmmData, VmmError> {
+        let (sync_sender, sync_receiver) = oneshot::channel();
+        let action = VmmAction::InsertVsockDevice(config, sync_sender);
+        self.request_vmm_action(action, sync_receiver)
+    }
+
+
+    pub fn start_instance(&mut self) -> Result<VmmData, VmmError> {
+        let (sync_sender, sync_receiver) = oneshot::channel();
+        let action = VmmAction::StartMicroVm(sync_sender);
+        self.request_vmm_action(action, sync_receiver)
+    }
+
+    pub fn shutdown_instance(&mut self) -> Result<VmmData, VmmError> {
+        let (sync_sender, sync_receiver) = oneshot::channel();
+        let action = VmmAction::SendCtrlAltDel(sync_sender);
+        self.request_vmm_action(action, sync_receiver)
+    }
+
+}
+
+impl VmChannel {
+    /// TODO: Add a timeout to this read
+    /// Read ready signal from the vm
+    pub fn recv_status(&mut self) -> Result<[u8;4], std::io::Error> {
+        let data = &mut[0u8; 4];
+        self.status_receiver.read_exact(data)?;
+        return Ok(*data);
+    }
+
+    /// Send a request to vm
+    pub fn send_request_u8(&mut self, req: &[u8]) -> Result<(), std::io::Error> {
+        self.request_sender.write_all(req)
+    }
+
+    pub fn recv_response_string(&mut self) -> Result<String, std::io::Error> {
+        let mut lens = [0; 4];
+        self.response_receiver.read_exact(&mut lens)?;
+        let len = u32::from_be_bytes(lens);
+
+        let mut response = vec![0; len as usize];
+        self.response_receiver.read_exact(response.as_mut_slice())?;
+
+        return String::from_utf8(response)
+                 .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData,"Not UTF8"));
+    }
 }

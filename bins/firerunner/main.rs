@@ -29,9 +29,10 @@ use serde_json::Value;
 use time::precise_time_ns;
 
 use snapfaas::vm;
-use snapfaas::firecracker_wrapper;
+use snapfaas::firecracker_wrapper::{self, VmmWrapper, VmChannel};
 
 const READY :&[u8] = &[vm::VmStatus::Ready as u8];
+const VM_RESPONSE_ERROR: &str = "VmResposneError";
 
 
 fn main() {
@@ -116,7 +117,7 @@ fn main() {
         .get_matches();
 
     // process command line arguments
-    let instance_id = cmd_arguments.value_of("id").unwrap().to_string();
+    let instance_id = cmd_arguments.value_of("id").expect("id doesn't exist").to_string();
     let kernel = cmd_arguments
                 .value_of("kernel")
                 .map(PathBuf::from)
@@ -143,6 +144,7 @@ fn main() {
     let appfs = cmd_arguments.value_of("appfs").map(PathBuf::from);
     let load_dir: Option<PathBuf> = cmd_arguments.value_of("load_dir").map(PathBuf::from);
     let dump_dir: Option<PathBuf> = cmd_arguments.value_of("dump_dir").map(PathBuf::from);
+    let dump = dump_dir.is_some();
 
     // Make sure kernel, rootfs, appfs, load_dir, dump_dir exist
     if !&kernel.exists() {
@@ -185,32 +187,15 @@ fn main() {
     */
 
     // Create vmm thread
-    let (request_receiver, request_sender) = nix::unistd::pipe().expect("Failed to create request pipe");
-    let (response_receiver, response_sender) = nix::unistd::pipe().expect("Failed to create response pipe");
-    let (ready_receiver, ready_sender) = nix::unistd::pipe().expect("Could not create ready notifier pipe");
-    // mpsc channel for Box<VmmAction> with the vmm thread
-    let (vmm_action_sender, vmm_action_receiver) = channel();
-    let shared_info = Arc::new(RwLock::new(InstanceInfo {
-			state: InstanceState::Uninitialized,
-			id: instance_id.clone(),
-			vmm_version: "0.1".to_string(),
-			load_dir: load_dir,
-			dump_dir: dump_dir,
-			}));
-
-    let event_fd = Rc::new(EventFd::new().expect("Cannot create EventFd"));
-
-    let thread_handle =
-	vmm::start_vmm_thread(shared_info.clone(),
-			      event_fd.try_clone().expect("Couldn't clone event_fd"),
-                              vmm_action_receiver,
-                              0, //seccomp::SECCOMP_LEVEL_NONE,
-	                      Some(unsafe { File::from_raw_fd(response_sender) }),
-	                      Some(unsafe { File::from_raw_fd(request_receiver) }),
-                              Some(unsafe { File::from_raw_fd(ready_sender) }),
-                              instance_id.parse::<u32>().unwrap() //TODO: remove notifier ID completely. Just pass in a dummy value for now
-                              );
-
+    let (mut vmm, mut vm) = match VmmWrapper::new(instance_id, load_dir, dump_dir) {
+        Ok((vmm, vm)) => (vmm, vm),
+        Err(e) => {
+            io::stdout().write_all(&[vm::VmStatus::VmmFailedToStart as u8]).expect("stdout");
+            io::stdout().flush().expect("stdout");
+            eprintln!("Vmm failed to start due to: {:?}", e);
+            std::process::exit(1);
+        }
+    };
 
     // Configure vm through vmm thread
     let machine_config = VmConfig{
@@ -219,26 +204,27 @@ fn main() {
 	..Default::default()
     };
 
-    let (sync_sender, sync_receiver) = oneshot::channel();
-    let action = VmmAction::SetVmConfiguration(machine_config, sync_sender);
-    vmm_action_sender.send(Box::new(action)).map_err(|_| ()).expect("Failed to send SetVmConfiguration");
-    event_fd.write(1).map_err(|_| ()).expect("Failed to signal");
-    let action_ret = sync_receiver.wait().expect("set config");
-    //println!("Set vm configuration: {:?}", action_ret);
-//    write!(&mut output_file, "Set vm configuration: {:?}\n", action_ret);
+    let ret = match vmm.set_configuration(machine_config) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Vmm failed to set configuration due to: {:?}", e);
+            std::process::exit(1);
+        }
+    };
+    // write!(&mut output_file, "Set vm configuration: {:?}\n", action_ret);
 
     let boot_config = BootSourceConfig {
 	kernel_image_path: kernel.to_str().expect("kernel path None").to_string(),
 	boot_args: Some(kargs),
     };
 
-    let (sync_sender, sync_receiver) = oneshot::channel();
-    let action = VmmAction::ConfigureBootSource(boot_config, sync_sender);
-    vmm_action_sender.send(Box::new(action)).map_err(|_| ()).expect("Failed to send SetVmConfiguration");
-    event_fd.write(1).map_err(|_| ()).expect("Failed to signal");
-    let action_ret = sync_receiver.wait().expect("set config");
-    //println!("Set boot source: {:?}", action_ret);
-
+    let ret = match vmm.set_boot_source(boot_config) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Vmm failed to set boot source due to: {:?}", e);
+            std::process::exit(1);
+        }
+    };
 
     let block_config = BlockDeviceConfig {
 	drive_id: String::from("rootfs"),
@@ -249,12 +235,13 @@ fn main() {
 	rate_limiter: None,
     };
 
-    let (sync_sender, sync_receiver) = oneshot::channel();
-    let action = VmmAction::InsertBlockDevice(block_config, sync_sender);
-    vmm_action_sender.send(Box::new(action)).map_err(|_| ()).expect("Failed to send SetVmConfiguration");
-    event_fd.write(1).map_err(|_| ()).expect("Failed to signal");
-    let action_ret = sync_receiver.wait().expect("rootfs");
-    //println!("Insert rootfs: {:?}", action_ret);
+    let ret = match vmm.insert_block_device(block_config) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Vmm failed to insert rootfs due to: {:?}", e);
+            std::process::exit(1);
+        }
+    };
 
     if let Some(appfs) = appfs {
 	let block_config = BlockDeviceConfig {
@@ -265,216 +252,100 @@ fn main() {
 	    partuuid: None,
 	    rate_limiter: None,
 	};
-        let (sync_sender, sync_receiver) = oneshot::channel();
-        let action = VmmAction::InsertBlockDevice(block_config, sync_sender);
-        vmm_action_sender.send(Box::new(action)).map_err(|_| ()).expect("Failed to send SetVmConfiguration");
-        event_fd.write(1).map_err(|_| ()).expect("Failed to signal");
-        let action_ret = sync_receiver.wait().expect("rootfs");
-        //println!("Insert appfs: {:?}", action_ret);
+
+        let ret = match vmm.insert_block_device(block_config) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Vmm failed to insert appfs due to: {:?}", e);
+                std::process::exit(1);
+            }
+        };
     }
 
  
-    let (sync_sender, sync_receiver) = oneshot::channel();
-    let action = VmmAction::GetVmConfiguration(sync_sender);
-    vmm_action_sender.send(Box::new(action)).map_err(|_| ()).expect("Couldn't send");
-    event_fd.write(1).map_err(|_| ()).expect("Failed to signal");
-    let action_ret = sync_receiver.wait().expect("set config");
-    //println!("Get vm configuration: {:?}", action_ret);
-   // write!(&mut output_file, "Get vm configuration: {:?}\n", action_ret);
-
-    /*
-    let logger_config = LoggerConfig {
-        log_fifo: "vm-boot-log.log".to_string(),
-        metrics_fifo: "vm-metrics.log".to_string(),
-        level: LoggerLevel::Debug,
-        show_level: true,
-        show_log_origin: true,
-        options: Value::String("LogDirtyPages".to_string()),
+    let ret = match vmm.get_configuration() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Vmm failed to get configuration due to: {:?}", e);
+            std::process::exit(1);
+        }
     };
-    let (sync_sender, sync_receiver) = oneshot::channel();
-    let action = VmmAction::ConfigureLogger(logger_config, sync_sender);
-    vmm_action_sender.send(Box::new(action)).map_err(|_| ()).expect("Couldn't send");
-    event_fd.write(1).map_err(|_| ()).expect("Failed to signal");
-    let action_ret = sync_receiver.wait().expect("set config");
-    println!("logger config: {:?}", action_ret);
-    */
 
-    // launch vm
-//    write!(&mut output_file, "Launching VM\n");
+    //TODO: Optionally add a logger
 
-    //let t1 = precise_time_ns();
-    let (sync_sender, sync_receiver) = oneshot::channel();
-    let action = VmmAction::StartMicroVm(sync_sender);
-    vmm_action_sender.send(Box::new(action)).map_err(|_| ()).expect("Couldn't send");
-    event_fd.write(1).map_err(|_| ()).expect("Failed to signal");
-    let action_ret = sync_receiver.wait().expect("set config");
-    //println!("Start vm: {:?}", action_ret);
-//    write!(&mut output_file, "Start VM: {:?}\n", action_ret);
+
+    // Launch vm
+    let ret = match vmm.start_instance() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Vmm failed to get configuration due to: {:?}", e);
+            std::process::exit(1);
+        }
+    };
+
 
 
     // wait for ready notification from vm
-    let data = &mut[0u8; 4usize];
-    unsafe{ File::from_raw_fd(ready_receiver) }.read_exact(data).expect("Failed to receive ready signal");
-//    write!(&mut output_file, "Started VM: {:?}\n", action_ret);
-//    write!(&mut output_file, "VM with notifier id {:?} is ready\n", data);
-//    output_file.flush();
-    //println!("VM with notifier id {} is ready", u32::from_le_bytes(*data));
-
-    //let t2 = precise_time_ns();
-    //write!(&mut output_file, "boot_time: {:?}\n", t2-t1);
-//    output_file.flush();
+    let ret = match vm.recv_status() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Failed to receive ready signal due to: {:?}", e);
+            io::stdout().write_all(&[vm::VmStatus::NoReadySignal as u8]).expect("stdout");
+            io::stdout().flush().expect("stdout");
+            std::process::exit(1);
+        }
+    };
 
     // notify snapfaas that the vm is ready
-    io::stdout().write_all(READY);
-    io::stdout().flush();
-    //println!("VM with notifier id {} is ready", u32::from_le_bytes(*data));
+    io::stdout().write_all(READY).expect("stdout");
+    io::stdout().flush().expect("stdout");
+    //eprintln!("VM with notifier id {} is ready", u32::from_le_bytes(ret));
 
     // request and response process loop
-    let mut request_sender = unsafe { File::from_raw_fd(request_sender) };
-    let mut response_receiver = unsafe { File::from_raw_fd(response_receiver) };
     let mut req_count = 0;
-    // continuously read from stdio
+
     loop {
+        // Read a request from stdin
+        // First read the 8 bytes ([u8;8]) that encodes the number of bytes in
+        // payload as a big-endian number
         let mut req_header = [0;8];
-        let mut stdin = io::stdin();
-        // does this block when there's nothing in stdin?
-        // first read in the number of bytes that I should read from stdin
-        stdin.lock().read_exact(&mut req_header);
+        let stdin = io::stdin();
+        // TODO: Make sure this read blocks when there's nothing in stdin
+        stdin.lock().read_exact(&mut req_header).expect("stdin");
         let size = u64::from_be_bytes(req_header);
 
-        // actually read the request
         let mut req_buf = vec![0; size as usize];
-        stdin.lock().read_exact(&mut req_buf);
+        stdin.lock().read_exact(&mut req_buf).expect("stdin");
 
         let mut req = String::from_utf8(req_buf).expect("not json string");
-//        write!(&mut output_file, "request: {:?}\n",req);
         req.push('\n');
 
-        request_sender.write_all(req.as_bytes());
+        // Send request to vm as [u8]
+        vm.send_request_u8(req.as_bytes());
 
-        let mut lens = [0; 4];
-        response_receiver.read_exact(&mut lens).expect("Failed to read response size");
-        let len = u32::from_be_bytes(lens);
-        let mut response = vec![0; len as usize];
-        response_receiver.read_exact(response.as_mut_slice()).expect("Failed to read response");
-        let rsp =  String::from_utf8(response).unwrap();
-
-
-        //let rsp= lipsum_words(12);
-
-        //stdout.lock().write_fmt(format_args!("success"));
-        // first write the number bytes in the response to stdout
-
-        let req_buf = rsp.as_bytes();
-        let mut size = req_buf.len().to_be_bytes();
-        let mut data = req_buf.to_vec();
-        for i in (0..size.len()).rev() {
-            data.insert(0, size[i]);
-        }
-        io::stdout().write_all(&data);
-        io::stdout().flush();
-
-        req_count = req_count+1;
-        //write!(&mut output_file, "Done: {}\n", req_count);
-        //output_file.flush();
-        //stdout.lock().write_fmt(format_args!("echo: {:?}", req_buf));
-    }
-
-    // shutdown vm
-    let (sync_sender, sync_receiver) = oneshot::channel();
-    let action = VmmAction::SendCtrlAltDel(sync_sender);
-    vmm_action_sender.send(Box::new(action)).map_err(|_| ()).expect("Couldn't send");
-    event_fd.write(1).map_err(|_| ()).expect("Failed to signal");
-    let action_ret = sync_receiver.wait().expect("set config");
-    println!("Shutdown vm: {:?}", action_ret);
-
-
-    std::process::exit(0);
-
-    /*
-    
-    let mut req_count = 0;
-    // continuously read from stdio
-    loop {
-        let mut req_header = [0;8];
-        let mut stdin = io::stdin();
-        // does this block when there's nothing in stdin?
-        // first read in the number of bytes that I should read from stdin
-        stdin.lock().read_exact(&mut req_header);
-        let size = u64::from_be_bytes(req_header);
-
-        // actually read the request
-        let mut req_buf = vec![0; size as usize];
-        stdin.lock().read_exact(&mut req_buf);
-
-        // sleep to simulate running
-        std::thread::sleep(std::time::Duration::from_millis(wait_time as u64));
-        write!(&mut output_file, "process time: {}\n", wait_time);
-
-        let rsp= match appfs.as_ref() {
-            "lorempy2.ext4" => lipsum_words(12),
-            "loremjs.ext4" => lipsum(12),
-            "sentiment-analysis.ext4" => "{\"subjectivity: 0.8\", \"polarity\":0.2}".to_string(),
-            _ => "done".to_string(),
+        // Wait and receive response from vm
+        let rsp = match vm.recv_response_string() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to receive response from vm due to: {:?}", e);
+                VM_RESPONSE_ERROR.to_string()
+            }
         };
 
-
-
-        //stdout.lock().write_fmt(format_args!("success"));
         // first write the number bytes in the response to stdout
+        let rsp_buf = rsp.as_bytes();
+        let size = rsp_buf.len().to_be_bytes();
 
-        let req_buf = rsp.as_bytes();
-        let mut size = req_buf.len().to_be_bytes();
-        let mut data = req_buf.to_vec();
+        let mut data = rsp_buf.to_vec();
         for i in (0..size.len()).rev() {
             data.insert(0, size[i]);
         }
-        io::stdout().write_all(&data);
-        io::stdout().flush();
+        io::stdout().write_all(&data).expect("stdout");
+        io::stdout().flush().expect("stdout");
 
         req_count = req_count+1;
-        write!(&mut output_file, "Done: {}\n", req_count);
-        output_file.flush();
-        //stdout.lock().write_fmt(format_args!("echo: {:?}", req_buf));
     }
-    */
 
-    /*
-    let (checker, notifier) = nix::unistd::pipe().expect("Could not create a pipe");
-
-    let mut app = VmAppConfig {
-        kernel,
-        instance_id,
-        rootfs,
-        appfs,
-        cmd_line,
-        seccomp_level,
-        vsock_cid: 42,
-        notifier: unsafe{ File::from_raw_fd(notifier) },
-        cpu_share: 1024,
-        vcpu_count: vcpu_count.unwrap_or(1),
-        mem_size_mib,
-        load_dir,
-        dump_dir,
-    }.run(true, None);
-
-    // We need to wait for the ready signal from Firecracker
-    let data = &mut[0u8; 4usize];
-    unsafe{ File::from_raw_fd(checker) }.read_exact(data).expect("Failed to receive ready signal");
-    println!("VM with notifier id {} is ready", u32::from_le_bytes(*data));
-
-    let stdin = std::io::stdin();
-
-    for mut line in stdin.lock().lines().map(|l| l.unwrap()) {
-        line.push('\n');
-        app.connection.write_all(line.as_bytes()).expect("Failed to write to request pipe");
-        let mut lens = [0; 4];
-        app.connection.read_exact(&mut lens).expect("Failed to read response size");
-        let len = u32::from_be_bytes(lens);
-        let mut response = vec![0; len as usize];
-        app.connection.read_exact(response.as_mut_slice()).expect("Failed to read response");
-        println!("{}", String::from_utf8(response).unwrap());
-    }
-    app.kill();
-    */
+    // TODO: shutdown vm
+    std::process::exit(0);
 }

@@ -13,14 +13,28 @@ use log::{info, trace, warn, error};
 
 #[derive(Debug)]
 pub enum VmStatus{
-    NotReady,
     Ready = 65,
     KernelNotExist,
     RootfsNotExist,
     AppfsNotExist,
     LoadDirNotExist,
+    VmmFailedToStart,
+    NoReadySignal,
     Unresponsive,
     Crashed,
+}
+
+#[derive(Debug)]
+pub enum Error {
+    ProcessSpawn(std::io::Error),
+    ReadySignal(std::io::Error),
+    VmWrite(std::io::Error),
+    VmRead(std::io::Error),
+    KernelNotExist,
+    RootfsNotExist,
+    AppfsNotExist,
+    LoadDirNotExist,
+    NotString(std::string::FromUtf8Error),
 }
 
 #[derive(Debug)]
@@ -50,18 +64,7 @@ pub struct Vm {
     */
 }
 
-#[derive(Debug)]
-pub enum Error {
-    ProcessSpawn(std::io::Error),
-    ReadySignal(std::io::Error),
-    VmWrite(std::io::Error),
-    VmRead(std::io::Error),
-    KernelNotExist,
-    RootfsNotExist,
-    AppfsNotExist,
-    LoadDirNotExist,
-    NotString(std::string::FromUtf8Error),
-}
+
 
 impl Vm {
     /// Launch a vm instance and return a Vm value
