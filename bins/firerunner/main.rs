@@ -25,9 +25,11 @@ use vmm::vmm_config::logger::{LoggerConfig, LoggerLevel};
 use sys_util::EventFd;
 
 use clap::{App, Arg};
-use snapfaas::vm;
 use serde_json::Value;
 use time::precise_time_ns;
+
+use snapfaas::vm;
+use snapfaas::firecracker_wrapper;
 
 const READY :&[u8] = &[vm::VmStatus::Ready as u8];
 
@@ -114,7 +116,6 @@ fn main() {
         .get_matches();
 
     // process command line arguments
-    // required arguments:
     let instance_id = cmd_arguments.value_of("id").unwrap().to_string();
     let kernel = cmd_arguments
                 .value_of("kernel")
@@ -140,13 +141,35 @@ fn main() {
 
     // optional arguments:
     let appfs = cmd_arguments.value_of("appfs").map(PathBuf::from);
-    let load_dir = cmd_arguments.value_of("load_dir").map(PathBuf::from);
-    let dump_dir = cmd_arguments.value_of("dump_dir").map(PathBuf::from);
+    let load_dir: Option<PathBuf> = cmd_arguments.value_of("load_dir").map(PathBuf::from);
+    let dump_dir: Option<PathBuf> = cmd_arguments.value_of("dump_dir").map(PathBuf::from);
+
+    // Make sure kernel, rootfs, appfs, load_dir, dump_dir exist
+    if !&kernel.exists() {
+        io::stdout().write_all(&[vm::VmStatus::KernelNotExist as u8]).expect("stdout");
+        io::stdout().flush().expect("stdout");
+        std::process::exit(1);
+    }
+    if !&rootfs.exists() {
+        io::stdout().write_all(&[vm::VmStatus::RootfsNotExist as u8]).expect("stdout");
+        io::stdout().flush().expect("stdout");
+        std::process::exit(1);
+    }
+
+    if appfs.is_some() && !appfs.as_ref().unwrap().exists(){
+        io::stdout().write_all(&[vm::VmStatus::AppfsNotExist as u8]).expect("stdout");
+        io::stdout().flush().expect("stdout");
+        std::process::exit(1);
+    }
+
+    if load_dir.is_some() && !load_dir.as_ref().unwrap().exists(){
+        io::stdout().write_all(&[vm::VmStatus::LoadDirNotExist as u8]).expect("stdout");
+        io::stdout().flush().expect("stdout");
+        std::process::exit(1);
+    }
 
 
     // output file for debugging
-    // Can assume that `./out/` exists because snapctr or snapctr-setup.sh
-    // should have created the directory
     /*
     let file_name = format!("out/vm-{}.log", instance_id);
     let mut output_file = File::create(file_name)
@@ -165,8 +188,8 @@ fn main() {
     let (request_receiver, request_sender) = nix::unistd::pipe().expect("Failed to create request pipe");
     let (response_receiver, response_sender) = nix::unistd::pipe().expect("Failed to create response pipe");
     let (ready_receiver, ready_sender) = nix::unistd::pipe().expect("Could not create ready notifier pipe");
-    let (vmm_action_sender, vmm_action_receiver) = channel(); // mpsc channel for Box<VmmAction> with the vmm thread (receiver)
-
+    // mpsc channel for Box<VmmAction> with the vmm thread
+    let (vmm_action_sender, vmm_action_receiver) = channel();
     let shared_info = Arc::new(RwLock::new(InstanceInfo {
 			state: InstanceState::Uninitialized,
 			id: instance_id.clone(),
@@ -368,24 +391,7 @@ fn main() {
 
     std::process::exit(0);
 
-    // wait time in ms
     /*
-    let wait_time  = match appfs.as_ref() {
-        "lorempy2.ext4" => 10,
-        "loremjs.ext4" => 20,
-        "markdown-to-html.ext4" => 600,
-        "img-resize.ext4" => 1800,
-        "ocr-img.ext4" => 30000,
-        "sentiment-analysis.ext4" => 100,
-        "autocomplete.ext4" => 100,
-        _ => 0,
-    };
-    *
-
-    // notify snapfaas that the vm is ready
-    std::thread::sleep(std::time::Duration::from_millis(350));
-    io::stdout().write_all(READY);
-    io::stdout().flush();
     
     let mut req_count = 0;
     // continuously read from stdio
