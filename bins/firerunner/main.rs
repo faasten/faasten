@@ -33,6 +33,7 @@ use snapfaas::firecracker_wrapper::{self, VmmWrapper, VmChannel};
 
 const READY :&[u8] = &[vm::VmStatus::Ready as u8];
 const VM_RESPONSE_ERROR: &str = "VmResposneError";
+const VM_REQUEST_ERROR: &str = "VmRequestError";
 
 
 fn main() {
@@ -321,14 +322,20 @@ fn main() {
         req.push('\n');
 
         // Send request to vm as [u8]
-        vm.send_request_u8(req.as_bytes());
-
-        // Wait and receive response from vm
-        let rsp = match vm.recv_response_string() {
-            Ok(s) => s,
+        let rsp = match vm.send_request_u8(req.as_bytes()) {
+            Ok(()) => {
+                // Wait and receive response from vm
+                match vm.recv_response_string() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Failed to receive response from vm due to: {:?}", e);
+                        VM_RESPONSE_ERROR.to_string()
+                    }
+                }
+            }
             Err(e) => {
-                eprintln!("Failed to receive response from vm due to: {:?}", e);
-                VM_RESPONSE_ERROR.to_string()
+                eprintln!("Failed to send request to vm due to: {:?}", e);
+                VM_REQUEST_ERROR.to_string()
             }
         };
 
