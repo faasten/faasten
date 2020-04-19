@@ -250,8 +250,10 @@ fn main() {
         }
     };
 
-    //TODO: Optionally add a logger
+    eprintln!("Ready to start vm....");
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
+    //TODO: Optionally add a logger
 
     // Launch vm
     let ret = match vmm.start_instance() {
@@ -261,9 +263,9 @@ fn main() {
             std::process::exit(1);
         }
     };
-
-
-
+    eprintln!("{:?}", ret);
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    
     // wait for ready notification from vm
     let ret = match vm.recv_status() {
         Ok(d) => d,
@@ -274,6 +276,7 @@ fn main() {
             std::process::exit(1);
         }
     };
+    eprintln!("ready: {:?}", ret);
 
     // notify snapfaas that the vm is ready
     io::stdout().write_all(READY).expect("stdout");

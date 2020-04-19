@@ -133,7 +133,10 @@ impl Vm {
                             67 =>Error::RootfsNotExist,
                             68 =>Error::AppfsNotExist,
                             69 =>Error::LoadDirNotExist,
-                            _ => Error::ReadySignal(io::Error::new(io::ErrorKind::InvalidData, code.to_string())),
+                            _ => {
+                                println!("VM process exit?: {:?}", vm_process.wait());
+                                Error::ReadySignal(io::Error::new(io::ErrorKind::InvalidData, code.to_string()))
+                            }
                         };
                         return Err(err);
                     }
