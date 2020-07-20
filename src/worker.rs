@@ -2,13 +2,13 @@
 //! Each worker runs in its own thread and is modeled as the following state
 //! machine:
 use std::result::Result;
-use std::sync::mpsc::{Receiver, SendError, Sender};
+use std::sync::mpsc::{Receiver};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{Ordering};
 
 use log::{error, warn, info, trace};
 use time::precise_time_ns;
@@ -21,8 +21,10 @@ use crate::vm;
 use crate::vm::Vm;
 use crate::metrics::Metrics;
 use crate::request;
+use crate::vsock::VsockStream;
 
 const EVICTION_TIMEOUT: Duration = Duration::from_secs(2);
+const MACPREFIX: &str = "FF:FF:FF:FF";
 
 #[derive(Debug)]
 pub struct Worker {
@@ -38,7 +40,13 @@ pub enum State {
 }
 
 impl Worker {
-    pub fn new(receiver: Arc<Mutex<Receiver<Message>>>, ctr: Arc<Controller>) -> Worker {
+    pub fn new(
+        receiver: Arc<Mutex<Receiver<Message>>>,
+        ctr: Arc<Controller>,
+        vsock_stream_receiver: Receiver<VsockStream>,
+        cid: u32,
+    ) -> Worker {
+        let network = format!("tap{}/{}:{:02X}:{:02X}", (cid-100), MACPREFIX, ((cid-100)&0xff00)>>8, (cid-100) & 0xff);
         let handle = thread::spawn(move || {
             let id = thread::current().id();
             let mut stat: Metrics = Metrics::new();
@@ -51,7 +59,7 @@ impl Worker {
                     Message::Shutdown => {
                         warn!("[Worker {:?}] shutdown received", id);
 
-                        let mut output_file = std::fs::File::create(format!("out/thread-{:?}.stat", id))
+                        let output_file = std::fs::File::create(format!("out/thread-{:?}.stat", id))
                                               .expect("output file failed to create");
                         if let Err(e) = serde_json::to_writer_pretty(output_file, &stat.to_json()) {
                             error!("failed to write measurement results as json: {:?}", e);
@@ -60,7 +68,7 @@ impl Worker {
                     }
                     Message::Request(req, rsp_sender) => {
                         let function_name = req.function.clone();
-                        let ret = Worker::acquire_vm(&function_name, &ctr, &mut stat)
+                        let ret = Worker::acquire_vm(&function_name, &ctr, &mut stat, &vsock_stream_receiver, cid, &network)
                                   .and_then(|vm| {
                                         Worker::process_req(req, vm, &mut stat)
                                   });
@@ -88,10 +96,10 @@ impl Worker {
                                 controller::Error::VmReqProcess(vme) => {
                                     error!("[Worker {:?}] Vm failed to process request due to: {:?}", id, vme);
                                     match vme {
-                                        vm::Error::VmRead(e) => {
+                                        vm::Error::VmRead(_) => {
                                             stat.num_rsp_readfail+=1;
                                         }
-                                        vm::Error::VmWrite(e) => {
+                                        vm::Error::VmWrite(_) => {
                                             stat.num_req_writefail+=1;
                                         }
                                         _ => ()
@@ -103,9 +111,9 @@ impl Worker {
                             }
                         }
                     }
-                    Message::Request_Tcp(req, mut rsp_sender) => {
+                    Message::Request_Tcp(req, rsp_sender) => {
                         let function_name = req.function.clone();
-                        let ret = Worker::acquire_vm(&function_name, &ctr, &mut stat)
+                        let ret = Worker::acquire_vm(&function_name, &ctr, &mut stat, &vsock_stream_receiver, cid, &network)
                                   .and_then(|vm| {
                                         Worker::process_req(req, vm, &mut stat)
                                   });
@@ -137,10 +145,10 @@ impl Worker {
                                     controller::Error::VmReqProcess(vme) => {
                                         error!("[Worker {:?}] Vm failed to process request due to: {:?}", id, vme);
                                         match vme {
-                                            vm::Error::VmRead(e) => {
+                                            vm::Error::VmRead(_) => {
                                                 stat.num_rsp_readfail+=1;
                                             }
-                                            vm::Error::VmWrite(e) => {
+                                            vm::Error::VmWrite(_) => {
                                                 stat.num_req_writefail+=1;
                                             }
                                             _ => ()
@@ -192,8 +200,14 @@ impl Worker {
     /// function's idle list, and then allocate a new Vm.
     /// After processing the request, the worker will push its Vm into the idle
     /// list of its function.
-    pub fn acquire_vm(function_name: &str, ctr: &Arc<Controller>, stat: &mut Metrics)
-        -> Result<Vm, controller::Error> {
+    pub fn acquire_vm(
+        function_name: &str,
+        ctr: &Arc<Controller>,
+        stat: &mut Metrics,
+        vsock_stream_receiver: &Receiver<VsockStream>,
+        cid: u32,
+        network: &str,
+    )-> Result<Vm, controller::Error> {
         let thread_id = thread::current().id();
         let func_config = ctr.get_function_config(function_name).ok_or(controller::Error::FunctionNotExist)?;
 
@@ -213,7 +227,7 @@ impl Worker {
                    // No Idle vm for this function. Try to allocatea new vm.
                     controller::Error::NoIdleVm => {
                         let t1 = precise_time_ns();
-                        let ret = ctr.allocate(func_config);
+                        let ret = ctr.allocate(func_config, vsock_stream_receiver, cid, network);
                         let t2 = precise_time_ns();
 
                         if let Ok(vm) = ret.as_ref() {
@@ -260,7 +274,7 @@ impl Worker {
                         // freed and used it for their requests.
                         if freed >= func_config.memory {
                             let t1 = precise_time_ns();
-                            let ret = ctr.allocate(func_config);
+                            let ret = ctr.allocate(func_config, vsock_stream_receiver, cid, network);
                             let t2 = precise_time_ns();
                             if let Ok(vm) = ret.as_ref() {
                                 let id = vm.id;

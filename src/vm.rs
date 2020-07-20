@@ -1,15 +1,14 @@
-use nix::unistd::Pid;
-use std::fs::File;
-use std::io;
-use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{RecvTimeoutError, Receiver};
+use std::time::Duration;
 
 use crate::configs::FunctionConfig;
 use crate::request::Request;
 use crate::request;
-use cgroups::{cgroup_builder::CgroupBuilder, Cgroup};
-use log::{info, trace, warn, error};
+use crate::vsock::VsockStream;
+//use cgroups::{cgroup_builder::CgroupBuilder, Cgroup};
+use log::{error};
 
 #[derive(Debug)]
 pub enum VmStatus{
@@ -18,6 +17,7 @@ pub enum VmStatus{
     RootfsNotExist,
     AppfsNotExist,
     LoadDirNotExist,
+    DumpDirNotExist,
     VmmFailedToStart,
     NoReadySignal,
     Unresponsive,
@@ -27,7 +27,7 @@ pub enum VmStatus{
 #[derive(Debug)]
 pub enum Error {
     ProcessSpawn(std::io::Error),
-    ReadySignal(std::io::Error),
+    VmTimeout(RecvTimeoutError),
     VmWrite(std::io::Error),
     VmRead(std::io::Error),
     KernelNotExist,
@@ -50,6 +50,7 @@ pub struct Vm {
     pub id: usize,
     pub memory: usize, // MB
     pub function_name: String,
+    vsock_stream: VsockStream,
     process: Child,
     /*
     pub process: Pid,
@@ -70,85 +71,75 @@ impl Vm {
     /// Launch a vm instance and return a Vm value
     /// When this function returns, the VM has finished booting and is ready
     /// to accept requests.
-    pub fn new(id: &str, function_config: &FunctionConfig) -> Result<Vm, Error> {
+    pub fn new(
+        id: &str,
+        function_config: &FunctionConfig,
+        vsock_stream_receiver: &Receiver<VsockStream>,
+        cid: u32,
+        network: &str,
+    ) -> Result<Vm, Error> {
         let mut cmd = Command::new("target/release/firerunner");
-        let mut cmd = if function_config.load_dir.is_none() {
-            cmd
-            .args(&[
+        let mem_str = function_config.memory.to_string();
+        let vcpu_str = function_config.vcpus.to_string();
+        let cid_str = cid.to_string();
+        let mut args = vec![
                 "--id",
                 id,
                 "--kernel",
-                "/etc/snapfaas/vmlinux",
+                &function_config.kernel,
                 "--mem_size",
-                &function_config.memory.to_string(),
+                &mem_str,
                 "--vcpu_count",
-                &function_config.vcpus.to_string(),
+                &vcpu_str,
                 "--rootfs",
                 &function_config.runtimefs,
                 "--appfs",
                 &function_config.appfs,
-            ])
-        } else {
-            cmd
-            .args(&[
-                "--id",
-                id,
-                "--kernel",
-                "/etc/snapfaas/vmlinux",
-                "--mem_size",
-                &function_config.memory.to_string(),
-                "--vcpu_count",
-                &function_config.vcpus.to_string(),
-                "--rootfs",
-                &function_config.runtimefs,
-                "--appfs",
-                &function_config.appfs,
-                "--load_from",
-                &function_config.load_dir.as_ref().unwrap(),
-            ])
+                "--cid",
+                &cid_str,
+        ];
+        if let Some(load_dir) = function_config.load_dir.as_ref() {
+            args.extend_from_slice(&["--load_from", &load_dir]);
+        }
+        if let Some(dump_dir) = function_config.dump_dir.as_ref() {
+            args.extend_from_slice(&["--dump_to", &dump_dir]);
+        }
+        if function_config.hugepage {
+            args.push("--hugepage");
+        }
+        if function_config.copy_base {
+            args.push("--copy_base");
+        }
+        if function_config.copy_diff {
+            args.push("--copy_diff");
+        }
 
-        };
-        let mut vm_process: Child = cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
+        // network config should be of the format <TAP-Name>/<MAC Address>
+        let v: Vec<&str> = network.split('/').collect();
+        args.extend_from_slice(&["--tap_name", v[0]]);
+        args.extend_from_slice(&["--mac", v[1]]);
+
+        let cmd = cmd.args(args);
+        let mut vm_process: Child = cmd.stdin(Stdio::null())
             .spawn()
             .map_err(|e| Error::ProcessSpawn(e))?;
 
-        //let mut ready_msg = String::new();
-        let mut ready_msg = vec![0;1];
-        {
-            let stdout = vm_process.stdout.as_mut().unwrap();
-            // If no ready message is received, kill the child process and
-            // return None.
-            // TODO: have a timeout here in case the firerunner process does
-            // not die but hangs
-            match stdout.read(&mut ready_msg) {
-                Ok(_) => {
-                    // check that the ready_msg is the number 42
-                    let code = ready_msg[0] as u32;
-                    if code != VmStatus::Ready as u32 {
-                        vm_process.kill();
-                        let err = match code {
-                            // TODO: need a better way to convert int to enum
-                            66 =>Error::KernelNotExist,
-                            67 =>Error::RootfsNotExist,
-                            68 =>Error::AppfsNotExist,
-                            69 =>Error::LoadDirNotExist,
-                            _ => Error::ReadySignal(io::Error::new(io::ErrorKind::InvalidData, code.to_string())),
-                        };
-                        return Err(err);
-                    }
-                },
-                Err(e) => {
-                    vm_process.kill();
-                    return Err(Error::ReadySignal(e));
+        // It should take much less than 1 sec for the guest to connect to the host.
+        let vsock_stream = match vsock_stream_receiver.recv_timeout(Duration::from_secs(1)) {
+            Ok(conn) => conn,
+            Err(e) => {
+                if let Err(e) = vm_process.kill() {
+                    error!("failed to kill child process: {:?}", e);
                 }
-            }
-        }
+                return Err(Error::VmTimeout(e));
+            },
+        };
 
         return Ok(Vm {
             id: id.parse::<usize>().expect("vm id not int"),
             function_name: function_config.name.clone(),
             memory: function_config.memory,
+            vsock_stream,
             process: vm_process,
         });
     }
@@ -156,17 +147,16 @@ impl Vm {
     /// Send request to vm and wait for its response
     pub fn process_req(&mut self, req: Request) -> Result<String, Error> {
         let req_str = req.payload_as_string();
-        let mut req_sender = self.process.stdin.as_mut().unwrap();
 
         let buf = req_str.as_bytes();
 
-        request::write_u8_vm(&buf, &mut req_sender).map_err(|e| {
+        request::write_u8_vm(&buf, &mut self.vsock_stream).map_err(|e| {
             Error::VmWrite(e)
         })?;
 
         // This is a blocking call
         // TODO: add a timeout for this read (maybe ~15 minutes)
-        match request::read_u8_vm(&mut self.process.stdout.as_mut().unwrap()) {
+        match request::read_u8_vm(&mut self.vsock_stream) {
             Ok(rsp_buf) => {
                 String::from_utf8(rsp_buf).map_err(|e| {
                     Error::NotString(e)
@@ -187,6 +177,7 @@ impl Vm {
         // its clean up process. Previously, we shutdown VMs through SIGTERM
         // which does allow a shutdown process. We need to make sure using
         // SIGKILL won't create any issues with vms.
-        self.process.kill();
+        self.vsock_stream.close().expect("Failed to close vsock stream");
+        self.process.kill().expect("VM already exited");
     }
 }

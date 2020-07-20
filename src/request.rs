@@ -20,24 +20,20 @@ pub fn parse_u8(buf: Vec<u8>) -> Result<Request, serde_json::Error> {
     serde_json::from_str(&json)
 }
 
-pub fn write_u8_vm(buf: &[u8], channel: &mut std::process::ChildStdin) ->  std::io::Result<()> {
-    let mut size = buf.len().to_be_bytes();
-    let mut data = buf.to_vec();
-    for i in (0..size.len()).rev() {
-        data.insert(0, size[i]);
-    }
-    //channel.write_all(&size.to_be_bytes())?;
-    channel.write_all(&data)?;
+pub fn write_u8_vm(buf: &[u8], channel: &mut dyn Write) ->  std::io::Result<()> {
+    let size = (buf.len() as u32).to_be_bytes();
+    channel.write_all(&size)?;
+    channel.write_all(buf)?;
     return Ok(());
 }
 
-pub fn read_u8_vm(channel: &mut std::process::ChildStdout) -> std::io::Result<Vec<u8>>{
-    let mut buf = [0;8];
+pub fn read_u8_vm(channel: &mut dyn Read) -> std::io::Result<Vec<u8>>{
+    let mut buf = [0;4];
     channel.read_exact(&mut buf)?;
-    let size = u64::from_be_bytes(buf);
+    let size = u32::from_be_bytes(buf);
 
     if size > 0 {
-        let mut buf = vec![0; size as usize];
+        let mut buf = vec![0u8; size as usize];
         channel.read_exact(&mut buf)?;
         return Ok(buf);
     }

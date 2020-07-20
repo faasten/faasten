@@ -14,8 +14,10 @@ use vmm::{VmmAction, VmmActionError, VmmData, VmmRequestOutcome};
 use vmm::vmm_config::instance_info::{InstanceInfo, InstanceState};
 use vmm::vmm_config::boot_source::BootSourceConfig;
 use vmm::vmm_config::drive::BlockDeviceConfig;
+use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 use vmm::vmm_config::machine_config::VmConfig;
+use vmm::SnapFaaSConfig;
 use vmm::vmm_config::logger::{LoggerConfig, LoggerLevel};
 use sys_util::EventFd;
 
@@ -23,15 +25,14 @@ pub struct VmmWrapper {
     vmm_thread_handle: JoinHandle<()>,
     vmm_action_sender: Sender<Box<VmmAction>>,
     event_fd: Rc<EventFd>,
-    shared_info: Arc<RwLock<InstanceInfo>>,
 }
 
-#[derive(Debug)]
-pub struct VmChannel {
-    request_sender: File,
-    response_receiver: File,
-    status_receiver: File,
-}
+//#[derive(Debug)]
+//pub struct VmChannel {
+//    request_sender: File,
+//    response_receiver: File,
+//    status_receiver: File,
+//}
 
 #[derive(Debug)]
 pub enum VmmError {
@@ -43,13 +44,12 @@ pub enum VmmError {
 }
 
 impl VmmWrapper {
-    pub fn new(id: String, load_dir:Option<PathBuf>, dump_dir:Option<PathBuf>)
-        -> Result<(VmmWrapper, VmChannel), VmmError> {
+    pub fn new(id: String, config: SnapFaaSConfig) -> Result<VmmWrapper, VmmError> {
 
         // unix pipes for communicating with the vm
-        let (request_receiver, request_sender) = nix::unistd::pipe().map_err(|e| VmmError::PipeCreate(e))?;
-        let (response_receiver, response_sender) = nix::unistd::pipe().map_err(|e| VmmError::PipeCreate(e))?;
-        let (status_receiver, status_sender) = nix::unistd::pipe().map_err(|e| VmmError::PipeCreate(e))?;
+        //let (request_receiver, request_sender) = nix::unistd::pipe().map_err(|e| VmmError::PipeCreate(e))?;
+        //let (response_receiver, response_sender) = nix::unistd::pipe().map_err(|e| VmmError::PipeCreate(e))?;
+        //let (status_receiver, status_sender) = nix::unistd::pipe().map_err(|e| VmmError::PipeCreate(e))?;
         // mpsc channel for Box<VmmAction> with the vmm thread
         let (vmm_action_sender, vmm_action_receiver) = channel();
 
@@ -57,9 +57,9 @@ impl VmmWrapper {
                             state: InstanceState::Uninitialized,
                             id: id.clone(),
                             vmm_version: "0.1".to_string(),
-                            load_dir: load_dir,
-                            dump_dir: dump_dir,
-                            }));
+                            start_monotime_us: 0,
+                            start_cputime_us: 0,
+        }));
 
         let event_fd = EventFd::new().map_err(|e| VmmError::EventFd(e))?;
         let event_fd = Rc::new(event_fd);
@@ -70,26 +70,22 @@ impl VmmWrapper {
                                   event_fd_clone,
                                   vmm_action_receiver,
                                   0, //seccomp::SECCOMP_LEVEL_NONE,
-                                  Some(unsafe { File::from_raw_fd(response_sender) }),
-                                  Some(unsafe { File::from_raw_fd(request_receiver) }),
-                                  Some(unsafe { File::from_raw_fd(status_sender) }),
-                                  id.parse::<u32>().unwrap() //TODO: remove notifier ID completely. Just pass in a dummy value for now
+                                  config,
                                   );
         
         let vmm_wrapper = VmmWrapper {
             vmm_thread_handle: thread_handle,
             vmm_action_sender: vmm_action_sender,
             event_fd: event_fd,
-            shared_info: shared_info,
         };
         
-        let vm_wrapper = VmChannel {
-            request_sender: unsafe { File::from_raw_fd(request_sender) },
-            response_receiver: unsafe { File::from_raw_fd(response_receiver) },
-            status_receiver: unsafe { File::from_raw_fd(status_receiver) },
-        };
+        //let vm_wrapper = VmChannel {
+        //    request_sender: unsafe { File::from_raw_fd(request_sender) },
+        //    response_receiver: unsafe { File::from_raw_fd(response_receiver) },
+        //    status_receiver: unsafe { File::from_raw_fd(status_receiver) },
+        //};
 
-        return Ok((vmm_wrapper, vm_wrapper));
+        return Ok(vmm_wrapper);
     }
 
     pub fn send_vmm_action(&mut self, action: VmmAction) -> Result<(), VmmError> {
@@ -136,6 +132,12 @@ impl VmmWrapper {
         self.request_vmm_action(action, sync_receiver)
     }
 
+    pub fn insert_network_device(&mut self, config: NetworkInterfaceConfig) -> Result<VmmData, VmmError> {
+        let (sync_sender, sync_receiver) = oneshot::channel();
+        let action = VmmAction::InsertNetworkDevice(config, sync_sender);
+        self.request_vmm_action(action, sync_receiver)
+    }
+
     pub fn add_vsock(&mut self, config: VsockDeviceConfig) -> Result<VmmData, VmmError> {
         let (sync_sender, sync_receiver) = oneshot::channel();
         let action = VmmAction::InsertVsockDevice(config, sync_sender);
@@ -161,29 +163,29 @@ impl VmmWrapper {
 
 }
 
-impl VmChannel {
-    /// TODO: Add a timeout to this read
-    /// Read ready signal from the vm
-    pub fn recv_status(&mut self) -> Result<[u8;4], std::io::Error> {
-        let data = &mut[0u8; 4];
-        self.status_receiver.read_exact(data)?;
-        return Ok(*data);
-    }
-
-    /// Send a request to vm
-    pub fn send_request_u8(&mut self, req: &[u8]) -> Result<(), std::io::Error> {
-        self.request_sender.write_all(req)
-    }
-
-    pub fn recv_response_string(&mut self) -> Result<String, std::io::Error> {
-        let mut lens = [0; 4];
-        self.response_receiver.read_exact(&mut lens)?;
-        let len = u32::from_be_bytes(lens);
-
-        let mut response = vec![0; len as usize];
-        self.response_receiver.read_exact(response.as_mut_slice())?;
-
-        return String::from_utf8(response)
-                 .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData,"Not UTF8"));
-    }
-}
+//impl VmChannel {
+//    /// TODO: Add a timeout to this read
+//    /// Read ready signal from the vm
+//    pub fn recv_status(&mut self) -> Result<[u8;4], std::io::Error> {
+//        let data = &mut[0u8; 4];
+//        self.status_receiver.read_exact(data)?;
+//        return Ok(*data);
+//    }
+//
+//    /// Send a request to vm
+//    pub fn send_request_u8(&mut self, req: &[u8]) -> Result<(), std::io::Error> {
+//        self.request_sender.write_all(req)
+//    }
+//
+//    pub fn recv_response_string(&mut self) -> Result<String, std::io::Error> {
+//        let mut lens = [0; 4];
+//        self.response_receiver.read_exact(&mut lens)?;
+//        let len = u32::from_be_bytes(lens);
+//
+//        let mut response = vec![0; len as usize];
+//        self.response_receiver.read_exact(response.as_mut_slice())?;
+//
+//        return String::from_utf8(response)
+//                 .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData,"Not UTF8"));
+//    }
+//}

@@ -1,22 +1,17 @@
 use std::result::Result;
 use std::collections::{BTreeMap, HashMap};
-use std::fs::File;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::thread;
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
-use url::Url;
+use std::sync::Mutex;
 
-use log::{error, trace, info};
+use log::{error, trace};
 use serde_yaml;
-use serde_json::json;
-use time::precise_time_ns;
 
+use crate::*;
 use crate::configs::{ControllerConfig, FunctionConfig};
 use crate::vm::Vm;
-use crate::*;
-use crate::metrics::Metrics;
+use crate::vsock::VsockStream;
 
 
 const EVICTION_TIMEOUT: Duration = Duration::from_secs(2);
@@ -88,6 +83,7 @@ impl Controller {
     /// Shutdown the controller
     /// Things needed to do for shutdown:
     /// 1. Go through idle lists and shutdown all vms
+    /// 2. close the vsock listner
     pub fn shutdown(&self) {
         for key in self.idle.keys() {
             let vmlist = self.idle.get(key).unwrap();
@@ -95,7 +91,7 @@ impl Controller {
                 for vm in l.iter_mut() {
                     vm.shutdown();
                 }
-            });
+            }).expect("poisoned lock");
         }
     }
 
@@ -121,7 +117,13 @@ impl Controller {
     ///    (Err(Error::LowMemory))
     /// 2. launching the vm process failed (i.e., Vm::new())
     ///    (Err(Error::StartVm(vm::Error)))
-    pub fn allocate(&self, function_config: &FunctionConfig) -> Result<Vm, Error> {
+    pub fn allocate(
+        &self,
+        function_config: &FunctionConfig,
+        vsock_stream_receiver: &Receiver<VsockStream>,
+        cid: u32,
+        network: &str,
+    ) -> Result<Vm, Error> {
         match self.free_mem.fetch_update(
             |x| match x >= function_config.memory {
                 true => Some(x - function_config.memory),
@@ -134,7 +136,7 @@ impl Controller {
                 let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
                 trace!("Allocating new VM. ID: {:?}, App: {:?}", id, function_config.name);
 
-                return Vm::new(&id.to_string(), function_config)
+                return Vm::new(&id.to_string(), function_config, vsock_stream_receiver, cid, network)
                        .map_err(|e| {
                     // Make sure to "unreserve" the resource by incrementing
                     // `Controller::free_mem`
@@ -189,12 +191,12 @@ impl Controller {
         return Err(Error::InsufficientEvict);
     }
 
-    pub fn evict_and_allocate(&self, mem: usize, function_config: &FunctionConfig) -> Result<Vm, Error> {
-        if !self.evict(mem) {
-            return Err(Error::InsufficientEvict);
-        }
-        return self.allocate(function_config);
-    }
+    //pub fn evict_and_allocate(&self, mem: usize, function_config: &FunctionConfig) -> Result<Vm, Error> {
+    //    if !self.evict(mem) {
+    //        return Err(Error::InsufficientEvict);
+    //    }
+    //    return self.allocate(function_config);
+    //}
 
     pub fn get_function_config(&self, function_name: &str) -> Option<&FunctionConfig> {
         self.function_configs.get(function_name)

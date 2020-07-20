@@ -11,6 +11,7 @@ use log::{error, warn, info};
 use crate::*;
 
 const DEFAULT_CONTROLLER_CONFIG_URL: &str = "file://localhost/etc/snapfaas/default-conf.yaml";
+pub const KERNEL_PATH: &str = "/etc/kernel/vmlinux";
 
 #[derive(Deserialize, Debug)]
 pub struct ControllerConfig {
@@ -90,11 +91,34 @@ impl ControllerConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct FunctionConfig {
     pub name: String,
+    pub kernel: String,
     pub runtimefs: String,
     pub appfs: String,
     pub vcpus: u64,
     pub memory: usize,
     pub concurrency_limit: usize, // not in use
     pub load_dir: Option<String>,
+    pub dump_dir: Option<String>,
+    pub hugepage: bool,
+    pub copy_base: bool,
+    pub copy_diff: bool,
 }
 
+impl Default for FunctionConfig {
+    fn default() -> Self {
+        FunctionConfig {
+            name: String::new(),
+            kernel: KERNEL_PATH.to_string(),
+            runtimefs: String::new(),
+            appfs: String::new(),
+            vcpus: 1,
+            memory: 128,
+            concurrency_limit: 1, // not in use
+            load_dir: None,
+            dump_dir: None,
+            hugepage: false,
+            copy_base: false,
+            copy_diff: true,
+        }
+    }
+}

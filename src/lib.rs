@@ -9,6 +9,7 @@ pub mod controller;
 pub mod vm;
 pub mod metrics;
 pub mod firecracker_wrapper;
+pub mod vsock;
 
 use std::string::String;
 use std::fs::File;
