@@ -45,7 +45,7 @@ impl WorkerPool {
             vsock_stream_senders.insert(cid, sender);
         }
 
-        let mut vsock_listener = VsockListener::bind(VMADDR_CID_ANY, 1234)
+        let mut vsock_listener = VsockListener::bind(VMADDR_CID_ANY, VSOCKPORT)
                 .expect("VsockListener::bind");
         let vsock_closer = vsock_listener.closer();
         let vsock_thread_handle = std::thread::spawn(move || {

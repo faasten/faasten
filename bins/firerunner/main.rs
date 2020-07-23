@@ -38,7 +38,7 @@ fn main() {
                 .help("path the the kernel binary")
         )
         .arg(
-            Arg::with_name("kernel boot args")
+            Arg::with_name("kernel_args")
                 .short("c")
                 .long("kernel_args")
                 .value_name("kernel_args")
@@ -172,7 +172,7 @@ fn main() {
                 .expect("path to rootfs not specified");
 
     let kargs = cmd_arguments
-                .value_of("kernel boot args")
+                .value_of("kernel_args")
                 .expect("kernel boot argument not specified")
                 .to_string();
     let mem_size_mib = cmd_arguments
@@ -242,7 +242,7 @@ fn main() {
         serde_json::from_reader(reader).expect("Bad snapshot.json")
     });
 
-    let load_snapshot = load_dir.is_some();
+    let from_snapshot = load_dir.is_some();
     let config = SnapFaaSConfig {
         parsed_json,
         memory_to_load: None,
@@ -280,7 +280,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    if load_snapshot {
+    if !from_snapshot {
         let boot_config = BootSourceConfig {
             kernel_image_path: kernel.to_str().expect("kernel path None").to_string(),
             boot_args: Some(kargs),

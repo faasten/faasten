@@ -3,6 +3,8 @@ use std::io::{self, Read, Write};
 
 pub const VMADDR_CID_ANY: u32 = libc::VMADDR_CID_ANY;
 pub const VMADDR_CID_HOST: u32 = libc::VMADDR_CID_HOST;
+/// port that vsock listener listens on
+pub const VSOCKPORT: u32 = 1234;
 
 #[derive(Debug)]
 pub struct VsockAddr {

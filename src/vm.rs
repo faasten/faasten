@@ -76,7 +76,7 @@ impl Vm {
         function_config: &FunctionConfig,
         vsock_stream_receiver: &Receiver<VsockStream>,
         cid: u32,
-        network: &str,
+        network: Option<&str>,
     ) -> Result<Vm, Error> {
         let mut cmd = Command::new("target/release/firerunner");
         let mem_str = function_config.memory.to_string();
@@ -104,6 +104,9 @@ impl Vm {
         if let Some(dump_dir) = function_config.dump_dir.as_ref() {
             args.extend_from_slice(&["--dump_to", &dump_dir]);
         }
+        if let Some(cmdline) = function_config.cmdline.as_ref() {
+            args.extend_from_slice(&["--kernel_args", &cmdline]);
+        }
         if function_config.hugepage {
             args.push("--hugepage");
         }
@@ -115,9 +118,11 @@ impl Vm {
         }
 
         // network config should be of the format <TAP-Name>/<MAC Address>
-        let v: Vec<&str> = network.split('/').collect();
-        args.extend_from_slice(&["--tap_name", v[0]]);
-        args.extend_from_slice(&["--mac", v[1]]);
+        if let Some(network) = network {
+            let v: Vec<&str> = network.split('/').collect();
+            args.extend_from_slice(&["--tap_name", v[0]]);
+            args.extend_from_slice(&["--mac", v[1]]);
+        }
 
         let cmd = cmd.args(args);
         let mut vm_process: Child = cmd.stdin(Stdio::null())

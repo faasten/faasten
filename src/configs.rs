@@ -102,6 +102,7 @@ pub struct FunctionConfig {
     pub hugepage: bool,
     pub copy_base: bool,
     pub copy_diff: bool,
+    pub cmdline: Option<String>,
 }
 
 impl Default for FunctionConfig {
@@ -119,6 +120,7 @@ impl Default for FunctionConfig {
             hugepage: false,
             copy_base: false,
             copy_diff: true,
+            cmdline: None,
         }
     }
 }

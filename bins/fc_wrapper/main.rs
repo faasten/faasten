@@ -4,14 +4,13 @@ extern crate clap;
 /// It reads a request from stdin, launches a VM based on cmdline inputs, sends
 /// the request to VM, waits for VM's response and finally prints the response
 /// to stdout, kills the VM and exits.
-use snapfaas::vm;
 use snapfaas::vm::Vm;
 use snapfaas::request;
 use snapfaas::configs::FunctionConfig;
 use std::io::BufRead;
+use snapfaas::vsock::{VsockListener, VMADDR_CID_HOST, VSOCKPORT};
 
 use clap::{App, Arg};
-use serde_json;
 
 fn main() {
     let cmd_arguments = App::new("fireruner wrapper")
@@ -28,7 +27,7 @@ fn main() {
                 .help("path the the kernel binary")
         )
         .arg(
-            Arg::with_name("kernel boot args")
+            Arg::with_name("kernel_args")
                 .short("c")
                 .long("kernel_args")
                 .value_name("kernel_args")
@@ -92,6 +91,46 @@ fn main() {
                  .required(true)
                  .help("Number of vcpus (default is 1)")
         )
+        .arg(
+            Arg::with_name("copy_base_memory")
+                 .long("copy_base")
+                 .value_name("COPYBASE")
+                 .takes_value(false)
+                 .required(false)
+                 .help("Restore base snapshot memory by copying")
+        )
+        .arg(
+            Arg::with_name("hugepage")
+                 .long("hugepage")
+                 .value_name("HUGEPAGE")
+                 .takes_value(false)
+                 .required(false)
+                 .help("Use huge pages to back virtual machine memory")
+        )
+        .arg(
+            Arg::with_name("diff_dirs")
+                 .long("diff_dirs")
+                 .value_name("DIFFDIRS")
+                 .takes_value(true)
+                 .required(false)
+                 .help("Comma-separated list of diff snapshots")
+        )
+        .arg(
+            Arg::with_name("copy_diff_memory")
+                 .long("copy_diff")
+                 .value_name("COPYDIFF")
+                 .takes_value(false)
+                 .required(false)
+                 .help("If a diff snapshot is provided, restore its memory by copying")
+        )
+        .arg(
+            Arg::with_name("network")
+                .long("network")
+                .value_name("NETWORK")
+                .takes_value(true)
+                .required(false)
+                .help("newtork device of format TAP_NAME/MAC_ADDRESS")
+        )
         .get_matches();
 
     // Create a FunctionConfig value based on cmdline inputs
@@ -105,12 +144,25 @@ fn main() {
                             .parse::<usize>().expect("mem_size not int"),
         concurrency_limit: 1,
         load_dir: cmd_arguments.value_of("load_dir").map(|s| s.to_string()),
-        };
+        dump_dir: cmd_arguments.value_of("dump_dir").map(|s| s.to_string()),
+        copy_base: cmd_arguments.is_present("copy_base_memory"),
+        copy_diff: cmd_arguments.is_present("copy_diff_memory"),
+        hugepage: false,
+        kernel: cmd_arguments.value_of("kernel").expect("kernel").to_string(),
+        cmdline: Some(cmd_arguments.value_of("kernel_args").expect("kernel_args").to_string()),
+    };
     let id: &str = cmd_arguments.value_of("id").expect("id");
     println!("id: {}, function config: {:?}", id, vm_app_config);
 
+    let mut listener = VsockListener::bind(VMADDR_CID_HOST, VSOCKPORT).expect("bind");
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let listener_thread = std::thread::spawn(move || {
+        let (conn, _) = listener.accept().expect("accept");
+        sender.send(conn).expect("failed to send vsock stream");
+        listener.closer().close();
+    });
     // Launch a vm based on the FunctionConfig value
-    let mut vm = match Vm::new(id, &vm_app_config) {
+    let mut vm = match Vm::new(id, &vm_app_config, &receiver, 124, cmd_arguments.value_of("network")) {
         Ok(vm) => vm,
         Err(e) => {
             println!("Vm creation failed due to: {:?}", e);
@@ -157,5 +209,6 @@ fn main() {
 
     // Shutdown the vm and exit
     println!("Shutting down vm...");
+    listener_thread.join().expect("join");
     vm.shutdown();
 }

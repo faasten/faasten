@@ -136,7 +136,7 @@ impl Controller {
                 let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
                 trace!("Allocating new VM. ID: {:?}, App: {:?}", id, function_config.name);
 
-                return Vm::new(&id.to_string(), function_config, vsock_stream_receiver, cid, network)
+                return Vm::new(&id.to_string(), function_config, vsock_stream_receiver, cid, Some(network))
                        .map_err(|e| {
                     // Make sure to "unreserve" the resource by incrementing
                     // `Controller::free_mem`
