@@ -35,25 +35,29 @@ fn main() {
                 .short("c")
                 .long("config")
                 .takes_value(true)
+                .required(true)
                 .help("Path to controller config YAML file"),
         )
-        .arg(
-            Arg::with_name("kernel")
-                .long("kernel")
-                .takes_value(true)
-                .help("URL to the kernel binary"),
-        )
-        .arg(
-            Arg::with_name("kernel boot args")
-                .long("kernel_args")
-                .takes_value(true)
-                .default_value("quiet console=none reboot=k panic=1 pci=off")
-                .help("Default kernel boot argument"),
-        )
+        //.arg(
+        //    Arg::with_name("kernel")
+        //        .long("kernel")
+        //        .takes_value(true)
+        //        .required(false)
+        //        .help("URL to the kernel binary"),
+        //)
+        //.arg(
+        //    Arg::with_name("kernel boot args")
+        //        .long("kernel_args")
+        //        .takes_value(true)
+        //        .required(true)
+        //        .default_value(vmm::DEFAULT_KERNEL_CMDLINE) // see ../firecracker/vmm/src/lib.rs
+        //        .help("Default kernel boot argument"),
+        //)
         .arg(
             Arg::with_name("requests file")
                 .long("requests_file")
                 .takes_value(true)
+                .required(false)
                 .help("File containing JSON-lines of requests"),
         )
         .arg(
@@ -61,25 +65,32 @@ fn main() {
                 .long("port")
                 .short("p")
                 .takes_value(true)
+                .required(false)
                 .help("Port on which SnapFaaS accepts requests"),
         )
         .arg(Arg::with_name("total memory")
-            .long("mem")
-            .takes_value(true)
-            .help("Total memory available for all Vms")
+                .long("mem")
+                .takes_value(true)
+                .required(true)
+                .help("Total memory available for all Vms")
         )
         .get_matches();
+
+    // Fail ASAP
+    if matches.value_of("requests file").is_none() && matches.value_of("port number").is_none() {
+        panic!("no request file or port number specified");
+    }
 
     // populate the in-memory config struct
     let mut ctr_config = configs::ControllerConfig::new(matches.value_of("config"));
 
-    if let Some(kernel_url) = matches.value_of("kernel") {
-        ctr_config.set_kernel_path(kernel_url);
-    }
+    //if let Some(kernel_url) = matches.value_of("kernel") {
+    //    ctr_config.set_kernel_path(kernel_url);
+    //}
 
-    if let Some(kernel_boot_args) = matches.value_of("kernel boot args") {
-        ctr_config.set_kernel_boot_args(kernel_boot_args);
-    }
+    //if let Some(kernel_boot_args) = matches.value_of("kernel boot args") {
+    //    ctr_config.set_kernel_boot_args(kernel_boot_args);
+    //}
 
     // create a controller object
     let mut controller = Controller::new(ctr_config).expect("Cannot create controller");
@@ -142,7 +153,6 @@ fn main() {
                 let t2 = precise_time_ns();
 
                 wp.shutdown();
-                controller.shutdown();
                 std::process::exit(0);
             }
             let t2 = precise_time_ns();
@@ -153,7 +163,6 @@ fn main() {
         println!("gateway latency {:?}", t2-t1);
 
         wp.shutdown();
-        controller.shutdown();
         std::process::exit(0);
     }
 
@@ -191,12 +200,8 @@ fn main() {
                 let t2 = precise_time_ns();
 
                 wp.shutdown();
-                controller.shutdown();
                 std::process::exit(0);
             }
         }
     }
-
-    panic!("no request file or port number specified");
-
 }

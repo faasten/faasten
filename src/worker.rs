@@ -9,6 +9,7 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use std::sync::atomic::{Ordering};
+use std::os::unix::net::UnixListener;
 
 use log::{error, warn, info, trace};
 use time::precise_time_ns;
@@ -21,7 +22,7 @@ use crate::vm;
 use crate::vm::Vm;
 use crate::metrics::Metrics;
 use crate::request;
-use crate::vsock::VsockStream;
+//use crate::vsock::VsockStream;
 
 const EVICTION_TIMEOUT: Duration = Duration::from_secs(2);
 const MACPREFIX: &str = "FF:FF:FF:FF";
@@ -29,6 +30,7 @@ const MACPREFIX: &str = "FF:FF:FF:FF";
 #[derive(Debug)]
 pub struct Worker {
     pub thread: JoinHandle<()>,
+    vm_listener: UnixListener,
 }
 
 #[derive(Debug)]
@@ -43,9 +45,17 @@ impl Worker {
     pub fn new(
         receiver: Arc<Mutex<Receiver<Message>>>,
         ctr: Arc<Controller>,
-        vsock_stream_receiver: Receiver<VsockStream>,
         cid: u32,
     ) -> Worker {
+        let vm_listener = match UnixListener::bind(format!("worker-{}.sock_1234", cid)) {
+            Ok(listener) => listener,
+            Err(e) => panic!("Failed to bind to unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
+        };
+        let vm_listener_dup = match vm_listener.try_clone() {
+            Ok(listener) => listener,
+            Err(e) => panic!("Failed to clone unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
+        };
+
         let network = format!("tap{}/{}:{:02X}:{:02X}", (cid-100), MACPREFIX, ((cid-100)&0xff00)>>8, (cid-100) & 0xff);
         let handle = thread::spawn(move || {
             let id = thread::current().id();
@@ -64,11 +74,24 @@ impl Worker {
                         if let Err(e) = serde_json::to_writer_pretty(output_file, &stat.to_json()) {
                             error!("failed to write measurement results as json: {:?}", e);
                         }
+                        // unlink unix listeners
+                        unsafe {
+                            let paths = vec![
+                                format!("worker-{}.sock_1234", cid),
+                                format!("worker-{}.sock", cid)
+                            ];
+                            for path in paths {
+                                if libc::unlink(path.as_ptr() as *const libc::c_char) < 0 {
+                                    error!("failed to unlink unix socket at {}: {:?}",
+                                        path, std::io::Error::last_os_error());
+                                }
+                            }
+                        }
                         return;
                     }
                     Message::Request(req, rsp_sender) => {
                         let function_name = req.function.clone();
-                        let ret = Worker::acquire_vm(&function_name, &ctr, &mut stat, &vsock_stream_receiver, cid, &network)
+                        let ret = Worker::acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid, &network)
                                   .and_then(|vm| {
                                         Worker::process_req(req, vm, &mut stat)
                                   });
@@ -113,7 +136,7 @@ impl Worker {
                     }
                     Message::Request_Tcp(req, rsp_sender) => {
                         let function_name = req.function.clone();
-                        let ret = Worker::acquire_vm(&function_name, &ctr, &mut stat, &vsock_stream_receiver, cid, &network)
+                        let ret = Worker::acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid, &network)
                                   .and_then(|vm| {
                                         Worker::process_req(req, vm, &mut stat)
                                   });
@@ -177,7 +200,7 @@ impl Worker {
             }
         });
 
-        Worker { thread: handle }
+        Worker { thread: handle, vm_listener }
     }
 
     pub fn process_req(req: Request, mut vm: Vm, stat: &mut Metrics) -> Result<String, controller::Error> {
@@ -204,7 +227,7 @@ impl Worker {
         function_name: &str,
         ctr: &Arc<Controller>,
         stat: &mut Metrics,
-        vsock_stream_receiver: &Receiver<VsockStream>,
+        vm_listener: &UnixListener,
         cid: u32,
         network: &str,
     )-> Result<Vm, controller::Error> {
@@ -227,7 +250,7 @@ impl Worker {
                    // No Idle vm for this function. Try to allocatea new vm.
                     controller::Error::NoIdleVm => {
                         let t1 = precise_time_ns();
-                        let ret = ctr.allocate(func_config, vsock_stream_receiver, cid, network);
+                        let ret = ctr.allocate(func_config, vm_listener, cid, network);
                         let t2 = precise_time_ns();
 
                         if let Ok(vm) = ret.as_ref() {
@@ -274,7 +297,7 @@ impl Worker {
                         // freed and used it for their requests.
                         if freed >= func_config.memory {
                             let t1 = precise_time_ns();
-                            let ret = ctr.allocate(func_config, vsock_stream_receiver, cid, network);
+                            let ret = ctr.allocate(func_config, vm_listener, cid, network);
                             let t2 = precise_time_ns();
                             if let Ok(vm) = ret.as_ref() {
                                 let id = vm.id;
@@ -292,6 +315,6 @@ impl Worker {
                 }
             });
 
-            return vm;
-        }
+        return vm;
+    }
 }

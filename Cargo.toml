@@ -37,7 +37,7 @@ serde_json = "*"
 shellexpand = "1.0.0"
 nix = "0.16.0"
 cgroups = "0.1.0"
-vmm = { path = "firecracker/vmm", features = ["vsock"] }
+vmm = { path = "firecracker/vmm", features = ["vsock"]}
 fc_util = { path = "firecracker/fc_util" }
 sys_util = { path = "firecracker/sys_util" }
 net_util = { path = "firecracker/net_util" }

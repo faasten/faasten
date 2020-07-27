@@ -6,14 +6,12 @@
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::mpsc::{Sender, Receiver, SendError};
+use std::sync::mpsc::Sender;
 use std::net::{TcpStream};
-use std::collections::HashMap;
-use std::thread::JoinHandle;
 
-use log::{error, warn, info};
+use log::error;
 
-use crate::vsock::*;
+//use crate::vsock::*;
 use crate::worker::Worker;
 use crate::request::Request;
 use crate::message::Message;
@@ -24,8 +22,6 @@ pub struct WorkerPool {
     pool: Vec<Worker>,
     req_sender: Sender<Message>,
     controller: Arc<Controller>,
-    vsock_closer: VsockCloser,
-    vsock_thread_handle: JoinHandle<()>,
 }
 
 impl WorkerPool {
@@ -36,36 +32,19 @@ impl WorkerPool {
 
         let pool_size = controller.total_mem/128;
         let mut pool = Vec::with_capacity(pool_size);
-        let mut vsock_stream_senders = HashMap::with_capacity(pool_size);
+        //let mut vsock_stream_senders = HashMap::with_capacity(pool_size);
 
         for i in 0..pool_size {
-            let (sender, receiver) = mpsc::channel();
+            //let (sender, receiver) = mpsc::channel();
             let cid = i as u32 + 100;
-            pool.push(Worker::new(rx.clone(), controller.clone(), receiver, cid));
-            vsock_stream_senders.insert(cid, sender);
+            pool.push(Worker::new(rx.clone(), controller.clone(), cid));
+            //vsock_stream_senders.insert(cid, sender);
         }
-
-        let mut vsock_listener = VsockListener::bind(VMADDR_CID_ANY, VSOCKPORT)
-                .expect("VsockListener::bind");
-        let vsock_closer = vsock_listener.closer();
-        let vsock_thread_handle = std::thread::spawn(move || {
-            loop {
-                match vsock_listener.accept() {
-                    Ok((vsock_stream, vsock_addr)) =>
-                        vsock_stream_senders.get(&vsock_addr.cid).expect("unknown cid")
-                            .send(vsock_stream).expect("failed to send vsock connection"),
-                    Err(_) =>
-                        break,
-                }
-            }
-        });
 
         WorkerPool {
             pool: pool,
             req_sender: tx,
             controller: controller,
-            vsock_closer,
-            vsock_thread_handle,
         }
     }
 
@@ -89,14 +68,11 @@ impl WorkerPool {
     /// 1. sending Shutdown message to each thread in the pool
     /// 2. wait for all threads in the pool to terminate
     pub fn shutdown(self) {
-        self.vsock_closer.close().expect("failed to close vsock listener");
+        self.controller.shutdown();
         for _ in &self.pool {
             self.req_sender.send(Message::Shutdown).expect("failed to shutdown workers");
         }
 
-        if let Err(e) = self.vsock_thread_handle.join() {
-            error!("failed to join vsock listener thread");
-        }
         for w in self.pool {
             let id = w.thread.thread().id();
             if let Err(e) = w.thread.join() {

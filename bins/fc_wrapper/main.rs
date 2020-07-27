@@ -1,5 +1,6 @@
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
+extern crate libc;
 /// This binary is used to launch a single instance of firerunner
 /// It reads a request from stdin, launches a VM based on cmdline inputs, sends
 /// the request to VM, waits for VM's response and finally prints the response
@@ -8,9 +9,32 @@ use snapfaas::vm::Vm;
 use snapfaas::request;
 use snapfaas::configs::FunctionConfig;
 use std::io::BufRead;
-use snapfaas::vsock::{VsockListener, VMADDR_CID_HOST, VSOCKPORT};
+use std::os::unix::net::UnixListener;
+use std::time::Instant;
 
 use clap::{App, Arg};
+
+const CID: u32 = 124;
+const LISTENER_PORT: u32 = 1234;
+
+fn unlink_unix_sockets() {
+    unsafe {
+        let path = format!("worker-{}.sock", CID);
+        if libc::unlink(path.as_ptr() as *const libc::c_char) < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("Failed to unlink {}: {:?}", path, err);
+            }
+        }
+        let path = format!("worker-{}.sock_{}", CID, LISTENER_PORT);
+        if libc::unlink(path.as_ptr() as *const libc::c_char) < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("Failed to unlink {}: {:?}", path, err);
+            }
+        }
+    }
+}
 
 fn main() {
     let cmd_arguments = App::new("fireruner wrapper")
@@ -33,7 +57,6 @@ fn main() {
                 .value_name("kernel_args")
                 .takes_value(true)
                 .required(false)
-                .default_value("quiet console=none reboot=k panic=1 pci=off")
                 .help("kernel boot args")
         )
         .arg(
@@ -100,14 +123,6 @@ fn main() {
                  .help("Restore base snapshot memory by copying")
         )
         .arg(
-            Arg::with_name("hugepage")
-                 .long("hugepage")
-                 .value_name("HUGEPAGE")
-                 .takes_value(false)
-                 .required(false)
-                 .help("Use huge pages to back virtual machine memory")
-        )
-        .arg(
             Arg::with_name("diff_dirs")
                  .long("diff_dirs")
                  .value_name("DIFFDIRS")
@@ -145,32 +160,30 @@ fn main() {
         concurrency_limit: 1,
         load_dir: cmd_arguments.value_of("load_dir").map(|s| s.to_string()),
         dump_dir: cmd_arguments.value_of("dump_dir").map(|s| s.to_string()),
+        diff_dirs: cmd_arguments.value_of("diff_dirs").map(|s| s.to_string()),
         copy_base: cmd_arguments.is_present("copy_base_memory"),
         copy_diff: cmd_arguments.is_present("copy_diff_memory"),
-        hugepage: false,
         kernel: cmd_arguments.value_of("kernel").expect("kernel").to_string(),
         cmdline: Some(cmd_arguments.value_of("kernel_args").expect("kernel_args").to_string()),
     };
     let id: &str = cmd_arguments.value_of("id").expect("id");
     println!("id: {}, function config: {:?}", id, vm_app_config);
 
-    let mut listener = VsockListener::bind(VMADDR_CID_HOST, VSOCKPORT).expect("bind");
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let listener_thread = std::thread::spawn(move || {
-        let (conn, _) = listener.accept().expect("accept");
-        sender.send(conn).expect("failed to send vsock stream");
-        listener.closer().close();
-    });
+    let vm_listener_path = format!("worker-{}.sock_1234", CID);
+    let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
     // Launch a vm based on the FunctionConfig value
-    let mut vm = match Vm::new(id, &vm_app_config, &receiver, 124, cmd_arguments.value_of("network")) {
+    let t1 = Instant::now();
+    let mut vm = match Vm::new(id, &vm_app_config, &vm_listener, CID, cmd_arguments.value_of("network")) {
         Ok(vm) => vm,
         Err(e) => {
             println!("Vm creation failed due to: {:?}", e);
+            unlink_unix_sockets();
             std::process::exit(1);
         }
     };
+    let t2 = Instant::now();
 
-    println!("Vm creation succeeded");
+    println!("Vm creation succeeded: {} ms", t2.duration_since(t1).as_millis());
 
     // create a vector of Request values from stdin
     let mut requests: Vec<request::Request> = Vec::new();
@@ -186,7 +199,6 @@ fn main() {
             }
         }
     }
-
     let num_req = requests.len();
     let mut num_rsp = 0;
 
@@ -209,6 +221,6 @@ fn main() {
 
     // Shutdown the vm and exit
     println!("Shutting down vm...");
-    listener_thread.join().expect("join");
     vm.shutdown();
+    unlink_unix_sockets();
 }

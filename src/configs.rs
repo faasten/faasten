@@ -91,18 +91,24 @@ impl ControllerConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct FunctionConfig {
     pub name: String,
-    pub kernel: String,
     pub runtimefs: String,
     pub appfs: String,
     pub vcpus: u64,
     pub memory: usize,
     pub concurrency_limit: usize, // not in use
+    /// base snapshot
     pub load_dir: Option<String>,
-    pub dump_dir: Option<String>,
-    pub hugepage: bool,
+    /// comma-separated list of diff snapshots
+    pub diff_dirs: Option<String>,
+    //pub hugepage: bool,
     pub copy_base: bool,
     pub copy_diff: bool,
+    /// path to uncompressed kernel, only used by `fc_wrapper` not by `snapctr`
+    pub kernel: String,
+    /// boot command line arguments, only used by `fc_wrapper` not by `snapctr`
     pub cmdline: Option<String>,
+    /// directory to store snapshot, only used by `fc_wrapper` not by `snapctr`
+    pub dump_dir: Option<String>,
 }
 
 impl Default for FunctionConfig {
@@ -116,11 +122,11 @@ impl Default for FunctionConfig {
             memory: 128,
             concurrency_limit: 1, // not in use
             load_dir: None,
-            dump_dir: None,
-            hugepage: false,
+            diff_dirs: None,
             copy_base: false,
             copy_diff: true,
             cmdline: None,
+            dump_dir: None,
         }
     }
 }

@@ -1,14 +1,15 @@
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{RecvTimeoutError, Receiver};
-use std::time::Duration;
+//use std::sync::mpsc::{RecvTimeoutError, Receiver};
+//use std::time::Duration;
+use std::net::Shutdown;
+use std::os::unix::net::{UnixStream, UnixListener};
 
 use crate::configs::FunctionConfig;
 use crate::request::Request;
 use crate::request;
-use crate::vsock::VsockStream;
+//use crate::vsock::VsockStream;
 //use cgroups::{cgroup_builder::CgroupBuilder, Cgroup};
-use log::{error};
 
 #[derive(Debug)]
 pub enum VmStatus{
@@ -27,7 +28,7 @@ pub enum VmStatus{
 #[derive(Debug)]
 pub enum Error {
     ProcessSpawn(std::io::Error),
-    VmTimeout(RecvTimeoutError),
+    //VmTimeout(RecvTimeoutError),
     VmWrite(std::io::Error),
     VmRead(std::io::Error),
     KernelNotExist,
@@ -50,7 +51,8 @@ pub struct Vm {
     pub id: usize,
     pub memory: usize, // MB
     pub function_name: String,
-    vsock_stream: VsockStream,
+    //vsock_stream: VsockStream,
+    conn: UnixStream,
     process: Child,
     /*
     pub process: Pid,
@@ -74,7 +76,7 @@ impl Vm {
     pub fn new(
         id: &str,
         function_config: &FunctionConfig,
-        vsock_stream_receiver: &Receiver<VsockStream>,
+        vm_listener: &UnixListener,
         cid: u32,
         network: Option<&str>,
     ) -> Result<Vm, Error> {
@@ -104,11 +106,11 @@ impl Vm {
         if let Some(dump_dir) = function_config.dump_dir.as_ref() {
             args.extend_from_slice(&["--dump_to", &dump_dir]);
         }
+        if let Some(diff_dirs) = function_config.diff_dirs.as_ref() {
+            args.extend_from_slice(&["--diff_dirs", &diff_dirs]);
+        }
         if let Some(cmdline) = function_config.cmdline.as_ref() {
             args.extend_from_slice(&["--kernel_args", &cmdline]);
-        }
-        if function_config.hugepage {
-            args.push("--hugepage");
         }
         if function_config.copy_base {
             args.push("--copy_base");
@@ -129,22 +131,14 @@ impl Vm {
             .spawn()
             .map_err(|e| Error::ProcessSpawn(e))?;
 
-        // It should take much less than 1 sec for the guest to connect to the host.
-        let vsock_stream = match vsock_stream_receiver.recv_timeout(Duration::from_secs(1)) {
-            Ok(conn) => conn,
-            Err(e) => {
-                if let Err(e) = vm_process.kill() {
-                    error!("failed to kill child process: {:?}", e);
-                }
-                return Err(Error::VmTimeout(e));
-            },
-        };
+        println!("waiting for vm to connect...");
+        let (conn, _) = vm_listener.accept().unwrap();
 
         return Ok(Vm {
             id: id.parse::<usize>().expect("vm id not int"),
             function_name: function_config.name.clone(),
             memory: function_config.memory,
-            vsock_stream,
+            conn,
             process: vm_process,
         });
     }
@@ -155,13 +149,13 @@ impl Vm {
 
         let buf = req_str.as_bytes();
 
-        request::write_u8_vm(&buf, &mut self.vsock_stream).map_err(|e| {
+        request::write_u8_vm(&buf, &mut self.conn).map_err(|e| {
             Error::VmWrite(e)
         })?;
 
         // This is a blocking call
         // TODO: add a timeout for this read (maybe ~15 minutes)
-        match request::read_u8_vm(&mut self.vsock_stream) {
+        match request::read_u8_vm(&mut self.conn) {
             Ok(rsp_buf) => {
                 String::from_utf8(rsp_buf).map_err(|e| {
                     Error::NotString(e)
@@ -182,7 +176,7 @@ impl Vm {
         // its clean up process. Previously, we shutdown VMs through SIGTERM
         // which does allow a shutdown process. We need to make sure using
         // SIGKILL won't create any issues with vms.
-        self.vsock_stream.close().expect("Failed to close vsock stream");
+        self.conn.shutdown(Shutdown::Both).expect("Failed to shutdown unix connection");
         self.process.kill().expect("VM already exited");
     }
 }

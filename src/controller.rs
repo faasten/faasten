@@ -1,9 +1,10 @@
 use std::result::Result;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::Receiver;
+//use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 use std::sync::Mutex;
+use std::os::unix::net::UnixListener;
 
 use log::{error, trace};
 use serde_yaml;
@@ -11,7 +12,7 @@ use serde_yaml;
 use crate::*;
 use crate::configs::{ControllerConfig, FunctionConfig};
 use crate::vm::Vm;
-use crate::vsock::VsockStream;
+//use crate::vsock::VsockStream;
 
 
 const EVICTION_TIMEOUT: Duration = Duration::from_secs(2);
@@ -58,6 +59,15 @@ impl Controller {
                         app.runtimefs = format!("{}{}",ctr_config.get_runtimefs_base(), app.runtimefs);
                         app.appfs = format!("{}{}",ctr_config.get_appfs_base(), app.appfs);
                         app.load_dir= app.load_dir.map(|s| format!("{}{}",ctr_config.get_snapshot_base(), s));
+                        app.diff_dirs=app.diff_dirs.map(|s| 
+                            s.split(',').collect::<Vec<&str>>().iter()
+                                .map(|s| format!("{}diff/{}",ctr_config.get_snapshot_base(), s))
+                                .collect::<Vec<String>>().join(","));
+                        app.kernel = ctr_config.kernel_path.clone();
+                        // use the default value of `firerunner`
+                        app.cmdline = None;
+                        // `snapctr` does not support generate snapshots
+                        app.dump_dir = None;
                         function_configs.insert(name.clone(), app);
                         idle.insert(name.clone(), VmList::new());
                     }
@@ -83,7 +93,6 @@ impl Controller {
     /// Shutdown the controller
     /// Things needed to do for shutdown:
     /// 1. Go through idle lists and shutdown all vms
-    /// 2. close the vsock listner
     pub fn shutdown(&self) {
         for key in self.idle.keys() {
             let vmlist = self.idle.get(key).unwrap();
@@ -120,7 +129,7 @@ impl Controller {
     pub fn allocate(
         &self,
         function_config: &FunctionConfig,
-        vsock_stream_receiver: &Receiver<VsockStream>,
+        vm_listener: &UnixListener,
         cid: u32,
         network: &str,
     ) -> Result<Vm, Error> {
@@ -136,7 +145,7 @@ impl Controller {
                 let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
                 trace!("Allocating new VM. ID: {:?}, App: {:?}", id, function_config.name);
 
-                return Vm::new(&id.to_string(), function_config, vsock_stream_receiver, cid, Some(network))
+                return Vm::new(&id.to_string(), function_config, vm_listener, cid, Some(network))
                        .map_err(|e| {
                     // Make sure to "unreserve" the resource by incrementing
                     // `Controller::free_mem`

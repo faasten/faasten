@@ -144,6 +144,7 @@ dependencies = [
  "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "dumbo 0.1.0",
  "epoll 4.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fc_util 0.1.0",
  "libc 0.2.66 (registry+https://github.com/rust-lang/crates.io-index)",
  "logger 0.1.0",
  "memory_model 0.1.0",
@@ -152,8 +153,6 @@ dependencies = [
  "rate_limiter 0.1.0",
  "serde 1.0.103 (registry+https://github.com/rust-lang/crates.io-index)",
  "sys_util 0.1.0",
- "vhost_backend 0.1.0",
- "vhost_gen 0.1.0",
  "virtio_gen 0.1.0",
 ]
 
@@ -608,24 +607,6 @@ dependencies = [
 name = "vec_map"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-
-[[package]]
-name = "vhost_backend"
-version = "0.1.0"
-dependencies = [
- "libc 0.2.66 (registry+https://github.com/rust-lang/crates.io-index)",
- "memory_model 0.1.0",
- "sys_util 0.1.0",
- "vhost_gen 0.1.0",
-]
-
-[[package]]
-name = "vhost_gen"
-version = "0.1.0"
-dependencies = [
- "libc 0.2.66 (registry+https://github.com/rust-lang/crates.io-index)",
- "sys_util 0.1.0",
-]
 
 [[package]]
 name = "virtio_gen"

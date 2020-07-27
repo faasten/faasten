@@ -1,6 +1,7 @@
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
 extern crate cgroups;
+extern crate libc;
 
 use std::fs::File;
 use std::io;
@@ -16,6 +17,7 @@ use net_util::MacAddr;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::SnapFaaSConfig;
+use log::error;
 //use vmm::vmm_config::logger::{LoggerConfig, LoggerLevel};
 
 use clap::{App, Arg};
@@ -44,7 +46,7 @@ fn main() {
                 .value_name("kernel_args")
                 .takes_value(true)
                 .required(false)
-                .default_value("quiet console=none reboot=k panic=1 pci=off")
+                .default_value(vmm::DEFAULT_KERNEL_CMDLINE)
                 .help("kernel boot args")
         )
         .arg(
@@ -109,14 +111,6 @@ fn main() {
                  .takes_value(false)
                  .required(false)
                  .help("Restore base snapshot memory by copying")
-        )
-        .arg(
-            Arg::with_name("hugepage")
-                 .long("hugepage")
-                 .value_name("HUGEPAGE")
-                 .takes_value(false)
-                 .required(false)
-                 .help("Use huge pages to back virtual machine memory")
         )
         .arg(
             Arg::with_name("diff_dirs")
@@ -190,7 +184,6 @@ fn main() {
     let dump_dir: Option<PathBuf> = cmd_arguments.value_of("dump_dir").map(PathBuf::from);
     let diff_dirs = cmd_arguments.value_of("diff_dirs").map_or(Vec::new(), |x| x.split(',').collect::<Vec<&str>>()
         .iter().map(PathBuf::from).collect());
-    let huge_page = cmd_arguments.is_present("hugepage");
     let copy_base = cmd_arguments.is_present("copy_base_memory");
     let copy_diff = cmd_arguments.is_present("copy_diff_memory");
     let mac = cmd_arguments.value_of("mac").map(|x| x.to_string());
@@ -248,7 +241,7 @@ fn main() {
         memory_to_load: None,
         load_dir,
         dump_dir,
-        huge_page,
+        huge_page: false,
         copy_base,
         copy_diff,
         diff_dirs,
@@ -337,10 +330,11 @@ fn main() {
         }
     }
 
-    if let Some(cid) = cid {
+    if let Some(cid) = cid.clone() {
         let vsock_config = VsockDeviceConfig {
-            id: "vsock0".to_string(),
-            guest_cid:cid,
+            vsock_id: "vsock0".to_string(),
+            guest_cid: cid,
+            uds_path: format!("worker-{}.sock", cid).to_string(),
         };
         if let Err(e) = vmm.add_vsock(vsock_config) {
             eprintln!("Vmm failed to add vsock due to: {:?}", e);
@@ -351,78 +345,12 @@ fn main() {
     //TODO: Optionally add a logger
 
     // Launch vm
+    println!("starting vm instance...");
     if let Err(e) = vmm.start_instance() {
         eprintln!("Vmm failed to start instance due to: {:?}", e);
         std::process::exit(1);
     }
 
-    //// wait for ready notification from vm
-    //let ret = match vm.recv_status() {
-    //    Ok(d) => d,
-    //    Err(e) => {
-    //        eprintln!("Failed to receive ready signal due to: {:?}", e);
-    //        io::stdout().write_all(&[vm::VmStatus::NoReadySignal as u8]).expect("stdout");
-    //        io::stdout().flush().expect("stdout");
-    //        std::process::exit(1);
-    //    }
-    //};
-
-    //// notify snapfaas that the vm is ready
-    //io::stdout().write_all(READY).expect("stdout");
-    //io::stdout().flush().expect("stdout");
-    //eprintln!("VM with notifier id {} is ready", u32::from_le_bytes(ret));
-
-    //let mut req_count = 0;
-
-    //loop {
-    //    // Read a request from stdin
-    //    // First read the 8 bytes ([u8;8]) that encodes the number of bytes in
-    //    // payload as a big-endian number
-    //    let mut req_header = [0;8];
-    //    let stdin = io::stdin();
-    //    // XXX: This read blocks when there's nothing in stdin
-    //    stdin.lock().read_exact(&mut req_header).expect("stdin");
-    //    let size = u64::from_be_bytes(req_header);
-
-    //    let mut req_buf = vec![0; size as usize];
-    //    stdin.lock().read_exact(&mut req_buf).expect("stdin");
-
-    //    let mut req = String::from_utf8(req_buf).expect("not json string");
-    //    req.push('\n');
-
-    //    // Send request to vm as [u8]
-    //    let rsp = match vm.send_request_u8(req.as_bytes()) {
-    //        Ok(()) => {
-    //            // Wait and receive response from vm
-    //            match vm.recv_response_string() {
-    //                Ok(s) => s,
-    //                Err(e) => {
-    //                    eprintln!("Failed to receive response from vm due to: {:?}", e);
-    //                    VM_RESPONSE_ERROR.to_string()
-    //                }
-    //            }
-    //        }
-    //        Err(e) => {
-    //            eprintln!("Failed to send request to vm due to: {:?}", e);
-    //            VM_REQUEST_ERROR.to_string()
-    //        }
-    //    };
-
-    //    // first write the number bytes in the response to stdout
-    //    let rsp_buf = rsp.as_bytes();
-    //    let size = rsp_buf.len().to_be_bytes();
-
-    //    let mut data = rsp_buf.to_vec();
-    //    for i in (0..size.len()).rev() {
-    //        data.insert(0, size[i]);
-    //    }
-    //    io::stdout().write_all(&data).expect("stdout");
-    //    io::stdout().flush().expect("stdout");
-
-    //    req_count = req_count+1;
-    //}
-
-    //vmm.shutdown_instance();
     vmm.join_vmm();
     std::process::exit(0);
 }
