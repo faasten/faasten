@@ -123,12 +123,12 @@ impl Controller {
     ///    (Err(Error::StartVm(vm::Error)))
     pub fn allocate(&self, function_config: &FunctionConfig) -> Result<Vm, Error> {
         match self.free_mem.fetch_update(
+            Ordering::SeqCst,
+            Ordering::SeqCst,
             |x| match x >= function_config.memory {
                 true => Some(x - function_config.memory),
                 false => None,
             },
-            Ordering::SeqCst,
-            Ordering::SeqCst,
         ) {
             Ok(_) => {
                 let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
