@@ -68,12 +68,12 @@ fn main() {
                 .required(false)
                 .help("Port on which SnapFaaS accepts requests"),
         )
-        .arg(Arg::with_name("total memory")
-                .long("mem")
-                .takes_value(true)
-                .required(true)
-                .help("Total memory available for all Vms")
-        )
+        //.arg(Arg::with_name("total memory")
+        //        .long("mem")
+        //        .takes_value(true)
+        //        .required(true)
+        //        .help("Total memory available for all Vms")
+        //)
         .get_matches();
 
     // Fail ASAP
@@ -82,7 +82,8 @@ fn main() {
     }
 
     // populate the in-memory config struct
-    let mut ctr_config = configs::ControllerConfig::new(matches.value_of("config"));
+    let config_path = matches.value_of("config").unwrap();
+    let mut ctr_config = configs::ControllerConfig::new(config_path);
 
     //if let Some(kernel_url) = matches.value_of("kernel") {
     //    ctr_config.set_kernel_path(kernel_url);
@@ -95,11 +96,11 @@ fn main() {
     // create a controller object
     let mut controller = Controller::new(ctr_config).expect("Cannot create controller");
 
-    if let Some(total_mem) = matches.value_of("total memory") {
-        if let Ok(total_mem) = total_mem.parse::<usize>() {
-            controller.set_total_mem(total_mem);
-        }
-    }
+    //if let Some(total_mem) = matches.value_of("total memory") {
+    //    if let Ok(total_mem) = total_mem.parse::<usize>() {
+    //        controller.set_total_mem(total_mem);
+    //    }
+    //}
     let controller = Arc::new(controller);
     trace!("{:?}", controller);
 

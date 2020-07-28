@@ -11,7 +11,7 @@ use log::{error, warn, info};
 use crate::*;
 
 const DEFAULT_CONTROLLER_CONFIG_URL: &str = "file://localhost/etc/snapfaas/default-conf.yaml";
-pub const KERNEL_PATH: &str = "/etc/kernel/vmlinux";
+pub const KERNEL_PATH: &str = "/etc/kernel/vmlinux-4.20.0";
 
 #[derive(Deserialize, Debug)]
 pub struct ControllerConfig {
@@ -27,11 +27,8 @@ impl ControllerConfig {
 
     /// Create in-memory ControllerConfig struct from a YAML file
     /// TODO: Currently only supports file://localhost urls
-    pub fn new(config_file: Option<&str>) -> ControllerConfig {
-        let config_url = match config_file {
-            None => DEFAULT_CONTROLLER_CONFIG_URL.to_string(),
-            Some(path) => convert_fs_path_to_url(path),
-        };
+    pub fn new(path: &str) -> ControllerConfig {
+        let config_url = convert_fs_path_to_url(path);
         info!("Using controller config: {}", config_url);
 
         return ControllerConfig::initialize(&config_url);
