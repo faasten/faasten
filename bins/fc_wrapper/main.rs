@@ -164,7 +164,7 @@ fn main() {
         copy_base: cmd_arguments.is_present("copy_base_memory"),
         copy_diff: cmd_arguments.is_present("copy_diff_memory"),
         kernel: cmd_arguments.value_of("kernel").expect("kernel").to_string(),
-        cmdline: Some(cmd_arguments.value_of("kernel_args").expect("kernel_args").to_string()),
+        cmdline: cmd_arguments.value_of("kernel_args").map(|s| s.to_string()),
     };
     let id: &str = cmd_arguments.value_of("id").expect("id");
     println!("id: {}, function config: {:?}", id, vm_app_config);
