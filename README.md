@@ -82,7 +82,7 @@ sudo target/release/fc_wrapper \
     --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
     --network 'tap0/ff:ff:ff:ff:ff:ff' \
     --mem_size 128 \
-    --vcpu_count 1 < resources/json-hello
+    --vcpu_count 1 < resources/hello.json
 ```
 2. To generate a Python3 snapshot, execute:
 ```bash
@@ -128,7 +128,7 @@ sudo target/release/fc_wrapper \
     --mem_size 128 \
     --vcpu_count 1 \
     --load_dir /ssd/snapshots/python3 \
-    --diff_dirs /ssd/snapshots/diff/hello < resources/json-hello
+    --diff_dirs /ssd/snapshots/diff/hello < resources/hello.json
 ```
 
 5. For debugging, one can turn on guest VM console allowing guest VM output,
@@ -140,7 +140,7 @@ sudo target/release/fc_wrapper \
     --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
     --network 'tap0/ff:ff:ff:ff:ff:ff' \
     --mem_size 128 \
-    --vcpu_count 1 < resources/json-hello
+    --vcpu_count 1 < resources/hello.json
 ```
 ## `snapctr` quick try-out
 To quickly try out `snapctr`, run
