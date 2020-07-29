@@ -4,7 +4,7 @@ use std::process::{Child, Command, Stdio};
 //use std::time::Duration;
 use std::net::Shutdown;
 use std::os::unix::net::{UnixStream, UnixListener};
-use log::error;
+use log::{info, error};
 
 use crate::configs::FunctionConfig;
 use crate::request::Request;
@@ -128,9 +128,23 @@ impl Vm {
         }
 
         let cmd = cmd.args(args);
-        let vm_process: Child = cmd.stdin(Stdio::null())
+        let mut vm_process: Child = cmd.stdin(Stdio::null())
             .spawn()
             .map_err(|e| Error::ProcessSpawn(e))?;
+
+        if function_config.dump_dir.is_some() {
+            println!("Waiting for snapshot generation to complete...");
+            match vm_process.wait() {
+                Ok(_) => {
+                    println!("Exiting fc_wrapper upon snapshot generation success");
+                    std::process::exit(0);
+                },
+                Err(_) => {
+                    error!("firerunner didn't run");
+                    std::process::exit(1);
+                }
+            }
+        }
 
         let (conn, _) = vm_listener.accept().unwrap();
 
