@@ -69,7 +69,10 @@ expected to be at `target/release` directory, which is the case if the build ins
 It is good for testing out new language and new applications.
 Users should use `fc_wrapper` to generate VM snapshots.
 
-0. Before executing `fc_wrapper`, make sure `tap0` exists on the host by running `scripts/setup-tap-bridge.sh 1`.
+0. Before executing `fc_wrapper`, make sure `tap0` exists on the host by running
+```bash
+scripts/setup-tap-bridge.sh 1
+```
 1. To conduct a regular boot, execute:
 ```bash
 # run hello function
