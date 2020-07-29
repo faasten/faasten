@@ -98,10 +98,6 @@ sudo target/release/fc_wrapper \
     --vcpu_count 1 \
     --dump_dir /ssd/snapshots/python3
 ```
-When users see the line "Snapshot generation succeeds",
-they should Ctrl-C to terminate the process as the process
-won't exit on itself currently.
-
 3. To generate a diff snapshot for a function, execute:
 ```bash
 # create the target snapshot directory
@@ -147,6 +143,11 @@ To quickly try out `snapctr`, run
 ```bash
 scripts/run-snapctr-example.sh
 ```
+The command above boots app `hello` from kernel and process three requests.
+```bash
+scripts/run-snapctr-snapshot-example.sh
+```
+The command above boots app `hello` from base + diff snapshots and process three requests.
 
 ## `snapctr` setup details
 ### `snapctr` command
