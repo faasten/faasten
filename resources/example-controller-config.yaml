@@ -1,0 +1,5 @@
+kernel_path: "file://localhost/etc/snapfaas/images/vmlinux-4.20.0"
+runtimefs_dir: "file://localhost/etc/snapfaas/images/runtimefs/"
+appfs_dir: "file://localhost/etc/snapfaas/images/appfs/"
+snapshot_dir: "file://localhost/etc/snapfaas/images/snapshot/"
+function_config: "file://localhost/etc/snapfaas/example-function-configs.yaml"

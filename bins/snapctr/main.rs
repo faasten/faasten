@@ -38,26 +38,12 @@ fn main() {
                 .required(true)
                 .help("Path to controller config YAML file"),
         )
-        //.arg(
-        //    Arg::with_name("kernel")
-        //        .long("kernel")
-        //        .takes_value(true)
-        //        .required(false)
-        //        .help("URL to the kernel binary"),
-        //)
-        //.arg(
-        //    Arg::with_name("kernel boot args")
-        //        .long("kernel_args")
-        //        .takes_value(true)
-        //        .required(true)
-        //        .default_value(vmm::DEFAULT_KERNEL_CMDLINE) // see ../firecracker/vmm/src/lib.rs
-        //        .help("Default kernel boot argument"),
-        //)
         .arg(
             Arg::with_name("requests file")
                 .long("requests_file")
                 .takes_value(true)
-                .required(false)
+                .required_unless_one(&["port number"])
+                .conflicts_with("port number")
                 .help("File containing JSON-lines of requests"),
         )
         .arg(
@@ -65,15 +51,16 @@ fn main() {
                 .long("port")
                 .short("p")
                 .takes_value(true)
-                .required(false)
+                .required_unless_one(&["requests file"])
+                .conflicts_with("requests file")
                 .help("Port on which SnapFaaS accepts requests"),
         )
-        //.arg(Arg::with_name("total memory")
-        //        .long("mem")
-        //        .takes_value(true)
-        //        .required(true)
-        //        .help("Total memory available for all Vms")
-        //)
+        .arg(Arg::with_name("total memory")
+                .long("mem")
+                .takes_value(true)
+                .required(true)
+                .help("Total memory available for all VMs")
+        )
         .get_matches();
 
     // Fail ASAP
@@ -83,24 +70,15 @@ fn main() {
 
     // populate the in-memory config struct
     let config_path = matches.value_of("config").unwrap();
-    let mut ctr_config = configs::ControllerConfig::new(config_path);
-
-    //if let Some(kernel_url) = matches.value_of("kernel") {
-    //    ctr_config.set_kernel_path(kernel_url);
-    //}
-
-    //if let Some(kernel_boot_args) = matches.value_of("kernel boot args") {
-    //    ctr_config.set_kernel_boot_args(kernel_boot_args);
-    //}
+    let ctr_config = configs::ControllerConfig::new(config_path);
 
     // create a controller object
     let mut controller = Controller::new(ctr_config).expect("Cannot create controller");
 
-    //if let Some(total_mem) = matches.value_of("total memory") {
-    //    if let Ok(total_mem) = total_mem.parse::<usize>() {
-    //        controller.set_total_mem(total_mem);
-    //    }
-    //}
+    // set total memory
+    let total_mem = matches.value_of("total memory").unwrap()
+        .parse::<usize>().expect("Total memory is not a valid integer");
+    controller.set_total_mem(total_mem);
     let controller = Arc::new(controller);
     trace!("{:?}", controller);
 
@@ -131,7 +109,7 @@ fn main() {
                 break;
             }
             let t2 = precise_time_ns();
-            info!("file gateway latency (t2-t1): {}", t2 - t1);
+            info!("file gateway latency (t2-t1): {} ns", t2 - t1);
             let task = task.unwrap();
             // ignore invalid requests
             if task.is_err() {
@@ -157,13 +135,14 @@ fn main() {
                 std::process::exit(0);
             }
             let t2 = precise_time_ns();
-            info!("schedule latency (t2-t1): {}", t2-t1);
+            info!("schedule latency (t2-t1): {} ns", t2-t1);
         }
 
         let t2 = precise_time_ns();
-        println!("gateway latency {:?}", t2-t1);
+        info!("gateway latency {:?} ns", t2-t1);
 
         wp.shutdown();
+        println!("Shutting down...");
         std::process::exit(0);
     }
 

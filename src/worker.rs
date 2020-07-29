@@ -47,6 +47,17 @@ impl Worker {
         ctr: Arc<Controller>,
         cid: u32,
     ) -> Worker {
+        // unlink unix listeners
+        unsafe {
+            let paths = vec![
+                format!("worker-{}.sock_1234", cid),
+                format!("worker-{}.sock", cid)
+            ];
+            for path in paths {
+                // ignore errors
+                let _ = libc::unlink(path.as_ptr() as *const libc::c_char);
+            }
+        }
         let vm_listener = match UnixListener::bind(format!("worker-{}.sock_1234", cid)) {
             Ok(listener) => listener,
             Err(e) => panic!("Failed to bind to unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
@@ -68,24 +79,10 @@ impl Worker {
                     // To shutdown, dump collected statistics and then terminate
                     Message::Shutdown => {
                         warn!("[Worker {:?}] shutdown received", id);
-
                         let output_file = std::fs::File::create(format!("out/thread-{:?}.stat", id))
                                               .expect("output file failed to create");
                         if let Err(e) = serde_json::to_writer_pretty(output_file, &stat.to_json()) {
                             error!("failed to write measurement results as json: {:?}", e);
-                        }
-                        // unlink unix listeners
-                        unsafe {
-                            let paths = vec![
-                                format!("worker-{}.sock_1234", cid),
-                                format!("worker-{}.sock", cid)
-                            ];
-                            for path in paths {
-                                if libc::unlink(path.as_ptr() as *const libc::c_char) < 0 {
-                                    error!("failed to unlink unix socket at {}: {:?}",
-                                        path, std::io::Error::last_os_error());
-                                }
-                            }
                         }
                         return;
                     }

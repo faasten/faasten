@@ -1,7 +1,6 @@
 use std::result::Result;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
-//use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 use std::sync::Mutex;
 use std::os::unix::net::UnixListener;
@@ -12,7 +11,6 @@ use serde_yaml;
 use crate::*;
 use crate::configs::{ControllerConfig, FunctionConfig};
 use crate::vm::Vm;
-//use crate::vsock::VsockStream;
 
 
 const EVICTION_TIMEOUT: Duration = Duration::from_secs(2);
@@ -53,34 +51,47 @@ impl Controller {
         match open_url(&ctr_config.function_config) {
             Ok(fd) => {
                 let apps: serde_yaml::Result<Vec<FunctionConfig>> = serde_yaml::from_reader(fd);
-                if let Ok(apps) = apps {
-                    for mut app in apps {
-                        let name = app.name.clone();
-                        app.runtimefs = format!("{}{}",ctr_config.get_runtimefs_base(), app.runtimefs);
-                        app.appfs = format!("{}{}",ctr_config.get_appfs_base(), app.appfs);
-                        app.load_dir= app.load_dir.map(|s| format!("{}{}",ctr_config.get_snapshot_base(), s));
-                        app.diff_dirs=app.diff_dirs.map(|s| 
-                            s.split(',').collect::<Vec<&str>>().iter()
-                                .map(|s| format!("{}diff/{}",ctr_config.get_snapshot_base(), s))
-                                .collect::<Vec<String>>().join(","));
-                        app.kernel = ctr_config.kernel_path.clone();
-                        // use the default value of `firerunner`
-                        app.cmdline = None;
-                        // `snapctr` does not support generate snapshots
-                        app.dump_dir = None;
-                        function_configs.insert(name.clone(), app);
-                        idle.insert(name.clone(), VmList::new());
+                match apps {
+                    Ok(apps) => {
+                        for mut app in apps {
+                            let name = app.name.clone();
+                            // build full path to the runtimefs
+                            app.runtimefs = format!("{}{}",ctr_config.get_runtimefs_base(), app.runtimefs);
+                            // build full path to the appfs
+                            app.appfs = format!("{}{}",ctr_config.get_appfs_base(), app.appfs);
+                            // build full path to base snapshot
+                            app.load_dir = app.load_dir.map(|s| format!("{}{}",ctr_config.get_snapshot_base(), s));
+                            // build full paths to diff snapshots: comma-separated list
+                            app.diff_dirs = app.diff_dirs.map(|s| 
+                                s.split(',').collect::<Vec<&str>>().iter()
+                                    .map(|s| format!("{}diff/{}",ctr_config.get_snapshot_base(), s))
+                                    .collect::<Vec<String>>().join(",")
+                            );
+                            // TODO: currently all apps use the same kernel
+                            app.kernel = Url::parse(&ctr_config.kernel_path)
+                                .expect("Bad kernel path URL").path().to_string();
+                            // use `firerunner`'s default DEFAULT_KERNEL_CMDLINE
+                            // defined in firecracker/vmm/lib.rs
+                            app.cmdline = None;
+                            // `snapctr` does not support generate snapshots
+                            app.dump_dir = None;
+
+                            function_configs.insert(name.clone(), app);
+                            idle.insert(name.clone(), VmList::new());
+                        }
+                        // set default total memory to free memory on the machine
+                        let total_mem = get_machine_memory();
+                        return Some(Controller {
+                            controller_config: ctr_config,
+                            function_configs: function_configs,
+                            idle: idle,
+                            total_num_vms: AtomicUsize::new(0),
+                            total_mem,
+                            free_mem: AtomicUsize::new(total_mem),
+                        });
                     }
-                    return Some(Controller {
-                        controller_config: ctr_config,
-                        function_configs: function_configs,
-                        idle: idle,
-                        total_num_vms: AtomicUsize::new(0),
-                        total_mem: get_machine_memory(),
-                        free_mem: AtomicUsize::new(get_machine_memory()),
-                    });
+                    Err(e) => error!("serde_yaml failed to parse function config file: {:?}", e)
                 }
-                error!("serde_yaml failed to parse function config file");
                 return None;
             }
             Err(e) => {
@@ -218,12 +229,18 @@ impl Controller {
     /// should only be called once before Vms are launch. Not supporting
     /// changing total available memory on the fly.
     pub fn set_total_mem(&mut self, mem: usize) {
-        if mem > 0 && mem < get_machine_memory() {
-            self.total_mem = mem;
-            self.free_mem = AtomicUsize::new(mem);
+        if mem > self.total_mem {
+            error!("Target total memory exceeds the available memory of the machine. \
+                Total memory remains {}.", self.total_mem);
+            return;
         }
+        if mem == 0 {
+            error!("Total memory cannot be 0. Total memory remains {}.", self.total_mem);
+            return;
+        }
+        self.total_mem = mem;
+        self.free_mem = AtomicUsize::new(mem);
     }
-
 }
 
 impl VmList {

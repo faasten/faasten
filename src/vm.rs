@@ -4,6 +4,7 @@ use std::process::{Child, Command, Stdio};
 //use std::time::Duration;
 use std::net::Shutdown;
 use std::os::unix::net::{UnixStream, UnixListener};
+use log::error;
 
 use crate::configs::FunctionConfig;
 use crate::request::Request;
@@ -127,11 +128,10 @@ impl Vm {
         }
 
         let cmd = cmd.args(args);
-        let mut vm_process: Child = cmd.stdin(Stdio::null())
+        let vm_process: Child = cmd.stdin(Stdio::null())
             .spawn()
             .map_err(|e| Error::ProcessSpawn(e))?;
 
-        println!("waiting for vm to connect...");
         let (conn, _) = vm_listener.accept().unwrap();
 
         return Ok(Vm {
@@ -176,7 +176,11 @@ impl Vm {
         // its clean up process. Previously, we shutdown VMs through SIGTERM
         // which does allow a shutdown process. We need to make sure using
         // SIGKILL won't create any issues with vms.
-        self.conn.shutdown(Shutdown::Both).expect("Failed to shutdown unix connection");
-        self.process.kill().expect("VM already exited");
+        if let Err(e) = self.conn.shutdown(Shutdown::Both) {
+            error!("Failed to shut down unix connection: {:?}", e);
+        }
+        if let Err(e) = self.process.kill() {
+            error!("VM already exited: {:?}", e);
+        }
     }
 }

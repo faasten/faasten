@@ -68,11 +68,12 @@ impl WorkerPool {
     /// 1. sending Shutdown message to each thread in the pool
     /// 2. wait for all threads in the pool to terminate
     pub fn shutdown(self) {
+        // shutdown all idle VMs
         self.controller.shutdown();
+        // shutdown all workers
         for _ in &self.pool {
             self.req_sender.send(Message::Shutdown).expect("failed to shutdown workers");
         }
-
         for w in self.pool {
             let id = w.thread.thread().id();
             if let Err(e) = w.thread.join() {

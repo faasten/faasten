@@ -3,20 +3,17 @@
 //! function configurations
 use serde::Deserialize;
 use serde_yaml;
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::fs::File;
-use url::{Url, ParseError};
-use log::{error, warn, info};
+use url::Url;
+use log::info;
 use crate::*;
 
-const DEFAULT_CONTROLLER_CONFIG_URL: &str = "file://localhost/etc/snapfaas/default-conf.yaml";
 pub const KERNEL_PATH: &str = "/etc/kernel/vmlinux-4.20.0";
 
 #[derive(Deserialize, Debug)]
 pub struct ControllerConfig {
     pub kernel_path: String,
-    pub kernel_boot_args: String,
     pub runtimefs_dir: String,
     pub appfs_dir: String,
     pub snapshot_dir: String,
@@ -43,33 +40,24 @@ impl ControllerConfig {
                 if let Ok(config) = config {
                     return config;
                 } else {
-                    warn!("Invalid YAML file");
+                    panic!("Invalid YAML file");
                 }
             } else {
-                warn!("Invalid local path to config file");
+                panic!("Invalid local path to config file");
             }
 
         } else {
-            warn!("Invalid URL to config file")
+            panic!("Invalid URL to config file")
         }
-
-        return ControllerConfig {
-            kernel_path: "".to_string(),
-            kernel_boot_args: "".to_string(),
-            runtimefs_dir: "".to_string(),
-            appfs_dir: "".to_string(),
-            function_config: "".to_string(),
-            snapshot_dir: "".to_string(),
-        };
     }
 
-    pub fn set_kernel_path(&mut self, path: &str) {
-        self.kernel_path = convert_fs_path_to_url(path);
-    }
+    //pub fn set_kernel_path(&mut self, path: &str) {
+    //    self.kernel_path = convert_fs_path_to_url(path);
+    //}
 
-    pub fn set_kernel_boot_args(&mut self, args: &str) {
-        self.kernel_boot_args= args.to_string();
-    }
+    //pub fn set_kernel_boot_args(&mut self, args: &str) {
+    //    self.kernel_boot_args= args.to_string();
+    //}
 
     pub fn get_runtimefs_base(&self) -> String {
         Url::parse(&self.runtimefs_dir).expect("invalid runtimefs dir from url").path().to_string()
@@ -87,24 +75,40 @@ impl ControllerConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct FunctionConfig {
+    /// function name used to distinguish functions
     pub name: String,
+    /// path to runtimefs
     pub runtimefs: String,
+    /// path to appfs
     pub appfs: String,
+    /// VM vcpu count
     pub vcpus: u64,
+    /// VM memory size
     pub memory: usize,
     pub concurrency_limit: usize, // not in use
     /// base snapshot
+    #[serde(default)]
     pub load_dir: Option<String>,
-    /// comma-separated list of diff snapshots
+    /// comma-separated list of diff snapshot directories
+    #[serde(default)]
     pub diff_dirs: Option<String>,
-    //pub hugepage: bool,
+    /// copy base snapshot memory dump
+    #[serde(default)]
     pub copy_base: bool,
+    /// copy diff snapshot memory dump
+    #[serde(default)]
     pub copy_diff: bool,
     /// path to uncompressed kernel, only used by `fc_wrapper` not by `snapctr`
+    /// `snapctr` set this field to the path specified in the configuration file
+    #[serde(default)]
     pub kernel: String,
     /// boot command line arguments, only used by `fc_wrapper` not by `snapctr`
+    /// `snapctr` set this field to None
+    #[serde(default)]
     pub cmdline: Option<String>,
     /// directory to store snapshot, only used by `fc_wrapper` not by `snapctr`
+    /// `snapctr` set this field to None
+    #[serde(default)]
     pub dump_dir: Option<String>,
 }
 
