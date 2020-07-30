@@ -151,9 +151,9 @@ impl Controller {
     pub fn allocate(
         &self,
         function_config: &FunctionConfig,
-        vm_listener: &UnixListener,
-        cid: u32,
-        network: &str,
+        _vm_listener: &UnixListener,
+        _cid: u32,
+        _network: &str,
     ) -> Result<Vm, Error> {
         match self.free_mem.fetch_update(
             Ordering::SeqCst,
@@ -168,7 +168,7 @@ impl Controller {
                 trace!("Allocating new VM. ID: {:?}, App: {:?}", id, function_config.name);
 
                 #[cfg(not(test))]
-                return Vm::new(&id.to_string(), function_config, vm_listener, cid, Some(network))
+                return Vm::new(&id.to_string(), function_config, _vm_listener, _cid, Some(_network))
                     .map_err(|e| {
                         // Make sure to "unreserve" the resource by incrementing
                         // `Controller::free_mem`
@@ -198,7 +198,6 @@ impl Controller {
                 // collect some function popularity data and evict based on that.
                 // This is where some policies can be implemented.
                 if let Some(mut vm) = vmlist.try_pop() {
-                    #[cfg(not(test))]
                     vm.shutdown();
                     self.free_mem.fetch_add(vm.memory, Ordering::Relaxed);
                     freed = freed + vm.memory;
@@ -336,13 +335,13 @@ mod tests {
         let total_mem = controller.total_mem;
         let num_vms = 100;
 
-        for i in 0..num_vms {
+        for _ in 0..num_vms {
             controller.allocate(
                 lp_config,
                 unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
                 0,
                 "",
-            );
+            ).unwrap();
         }
 
         assert_eq!(controller.total_num_vms.load(Ordering::Relaxed), num_vms);
@@ -363,7 +362,7 @@ mod tests {
 
         let mut handles = vec![];
 
-        for i in 0..num_vms {
+        for _ in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
                 let c = ctr.get_function_config("hello").unwrap();
@@ -372,13 +371,13 @@ mod tests {
                     unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
                     0,
                     "",
-                );
+                ).unwrap();
             });
             handles.push(h);
         }
 
         for h in handles {
-            h.join();
+            h.join().expect("Couldn't join on the thread");
         }
 
         assert_eq!(sctr.total_num_vms.load(Ordering::Relaxed), num_vms);
@@ -395,7 +394,7 @@ mod tests {
         let controller = build_controller(1024);
         let lp_config = controller.get_function_config("hello").unwrap();
 
-        for i in 0..8 {
+        for _ in 0..8 {
             if let Err(_) = controller.allocate(
                 lp_config,
                 unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
@@ -406,7 +405,7 @@ mod tests {
             }
         }
 
-        if let Ok(vm) = controller.allocate(
+        if let Ok(_) = controller.allocate(
                 lp_config,
                 unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
                 0,
@@ -431,7 +430,7 @@ mod tests {
 
         let mut handles = vec![];
 
-        for i in 0..num_vms {
+        for _ in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
                 let c = ctr.get_function_config("hello").unwrap();
@@ -448,12 +447,12 @@ mod tests {
         }
 
         for h in handles {
-            h.join();
+            h.join().expect("Couldn't join on the thread");
         }
 
         let c = sctr.get_function_config("hello").unwrap();
-        for i in 0..num_vms {
-            if let Ok(vm) = sctr.allocate(
+        for _ in 0..num_vms {
+            if let Ok(_) = sctr.allocate(
                     c,
                     unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
                     0,
@@ -559,7 +558,7 @@ mod tests {
 
         let mut handles = vec![];
 
-        for i in 0..num_vms {
+        for _ in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
                 let c = ctr.get_function_config("hello").unwrap();
@@ -577,12 +576,12 @@ mod tests {
         }
 
         for h in handles {
-            h.join();
+            h.join().expect("Couldn't join on the thread");
         }
 
         let c = sctr.get_function_config("hello").unwrap();
-        for i in 0..num_vms {
-            if let Ok(vm) = sctr.allocate(
+        for _ in 0..num_vms {
+            if let Ok(_) = sctr.allocate(
                     c,
                     unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
                     0,
@@ -664,7 +663,7 @@ mod tests {
             0
         );
 
-        if let Ok(vm) = sctr.get_idle_vm(&c.name) {
+        if let Ok(_) = sctr.get_idle_vm(&c.name) {
             panic!("idle list should be empty");
         }
 
@@ -732,7 +731,7 @@ mod tests {
         }
 
         for h in handles {
-            h.join();
+            h.join().expect("Couldn't join on the thread");
         }
 
         assert_eq!(
@@ -748,7 +747,7 @@ mod tests {
             0
         );
 
-        if let Ok(vm) = sctr.get_idle_vm(&c.name) {
+        if let Ok(_) = sctr.get_idle_vm(&c.name) {
             panic!("idle list should be empty");
         }
 
@@ -805,7 +804,7 @@ mod tests {
             sctr.total_mem - 128 * num_vms
         );
 
-        for i in 0..num_vms {
+        for _ in 0..num_vms {
             if !sctr.evict(c.memory) {
                 panic!("idle list should not be empty")
             }
@@ -824,7 +823,7 @@ mod tests {
             0
         );
 
-        if let Ok(vm) = sctr.get_idle_vm(&c.name) {
+        if let Ok(_) = sctr.get_idle_vm(&c.name) {
             panic!("idle list should be empty");
         }
 
@@ -895,7 +894,7 @@ mod tests {
         }
 
         for h in handles {
-            h.join();
+            h.join().expect("Couldn't join on the thread");
         }
 
         assert_eq!(
@@ -911,7 +910,7 @@ mod tests {
             0
         );
 
-        if let Ok(vm) = sctr.get_idle_vm(&c.name) {
+        if let Ok(_) = sctr.get_idle_vm(&c.name) {
             panic!("idle list should be empty");
         }
 
@@ -971,7 +970,7 @@ mod tests {
 
         let num_evict = num_vms / 2;
 
-        for i in 0..num_evict {
+        for _ in 0..num_evict {
             if !sctr.evict(c.memory * 2) {
                 panic!("idle list should not be empty")
             }
@@ -1044,7 +1043,7 @@ mod tests {
         }
 
         for h in handles {
-            h.join();
+            h.join().expect("Couldn't join on the thread");
         }
 
         assert_eq!(
@@ -1065,7 +1064,6 @@ mod tests {
     /// evict should fail and return if there's nothing idle to evict
     fn test_eviction_failure_not_block() {
         let controller = build_controller(0);
-        let total_mem = controller.total_mem;
         let num_vms = 1;
 
         let sctr = Arc::new(controller);

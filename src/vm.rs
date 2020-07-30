@@ -1,12 +1,18 @@
 use std::path::PathBuf;
+#[cfg(not(test))]
 use std::process::{Child, Command, Stdio};
+#[cfg(not(test))]
 use std::net::Shutdown;
+#[cfg(not(test))]
 use std::os::unix::net::{UnixStream, UnixListener};
+#[cfg(not(test))]
 use log::{info, error};
 
+#[cfg(not(test))]
 use crate::configs::FunctionConfig;
-use crate::request::Request;
+#[cfg(not(test))]
 use crate::request;
+use crate::request::Request;
 
 #[derive(Debug)]
 pub enum VmStatus{
