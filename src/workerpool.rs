@@ -55,7 +55,7 @@ impl WorkerPool {
 
     pub fn send_req_tcp(&self, req: Request, rsp_sender: Arc<Mutex<TcpStream>>) {
         //TODO: better error handling
-        self.req_sender.send(Message::Request_Tcp(req, rsp_sender))
+        self.req_sender.send(Message::RequestTcp(req, rsp_sender))
             .expect("failed to send request over TCP");
     }
 

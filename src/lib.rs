@@ -18,7 +18,6 @@ use url::Url;
 const LOCAL_FILE_URL_PREFIX: &str = "file://localhost";
 const MEM_FILE: &str = "/proc/meminfo";     // meminfo file on linux
 const KB_IN_MB: usize = 1024;
-const MEM_4G: usize = 4096;  // in MB
 
 /// check if a string is a url string
 /// TODO: maybe a more comprehensive check is needed but low priority

@@ -17,8 +17,6 @@ use net_util::MacAddr;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::SnapFaaSConfig;
-use log::error;
-//use vmm::vmm_config::logger::{LoggerConfig, LoggerLevel};
 
 use clap::{App, Arg};
 
@@ -238,7 +236,6 @@ fn main() {
     let from_snapshot = load_dir.is_some();
     let config = SnapFaaSConfig {
         parsed_json,
-        memory_to_load: None,
         load_dir,
         dump_dir,
         huge_page: false,

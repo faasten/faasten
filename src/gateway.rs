@@ -78,7 +78,7 @@ impl FileGateway {
 
     pub fn shutdown(self) {
         &self.rsp_sender.send(Message::Shutdown);
-        self.rsp_serializer.join();
+        self.rsp_serializer.join().expect("Couldn't join on response serializer thread");
     }
 
 }
@@ -187,7 +187,7 @@ impl Iterator for HTTPGateway {
                 return None;
                 //continue; // next() will block waiting for connections
             }
-            Some(mut s) => {
+            Some(s) => {
                 let res = request::read_u8(&mut s.lock().expect("lock failed"));
                 match res {
                     // there's a request sitting in the stream

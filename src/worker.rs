@@ -131,7 +131,7 @@ impl Worker {
                             }
                         }
                     }
-                    Message::Request_Tcp(req, rsp_sender) => {
+                    Message::RequestTcp(req, rsp_sender) => {
                         let function_name = req.function.clone();
                         let ret = Worker::acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid, &network)
                                   .and_then(|vm| {

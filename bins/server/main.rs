@@ -1,8 +1,7 @@
 use std::collections::VecDeque;
-use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
-use std::io::{BufReader, ErrorKind};
+use std::io::ErrorKind;
 
 use snapfaas::request;
 
@@ -117,6 +116,6 @@ fn main() {
     }
 
     for h in handles {
-        h.join();
+        h.join().expect("Couldn't join on the thread");
     }
 }

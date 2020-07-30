@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-//use std::sync::mpsc::{RecvTimeoutError, Receiver};
-//use std::time::Duration;
 use std::net::Shutdown;
 use std::os::unix::net::{UnixStream, UnixListener};
 use log::{info, error};
@@ -9,8 +7,6 @@ use log::{info, error};
 use crate::configs::FunctionConfig;
 use crate::request::Request;
 use crate::request;
-//use crate::vsock::VsockStream;
-//use cgroups::{cgroup_builder::CgroupBuilder, Cgroup};
 
 #[derive(Debug)]
 pub enum VmStatus{

@@ -1,12 +1,8 @@
 /// Wrapper for Firecracker vmm and vm
-use nix::{Error};
-use std::path::{PathBuf};
 use std::sync::{Arc, RwLock, mpsc, mpsc::Sender, mpsc::channel};
 use std::rc::Rc;
-use std::fs::File;
 use std::thread::JoinHandle;
-use std::os::unix::io::FromRawFd;
-use std::io::{self, Read, Write};
+use std::io;
 
 use futures::Future;
 use futures::sync::oneshot;
@@ -18,7 +14,6 @@ use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::SnapFaaSConfig;
-use vmm::vmm_config::logger::{LoggerConfig, LoggerLevel};
 use sys_util::EventFd;
 
 pub struct VmmWrapper {
@@ -158,7 +153,7 @@ impl VmmWrapper {
     }
 
     pub fn join_vmm(self) {
-        self.vmm_thread_handle.join();
+        self.vmm_thread_handle.join().expect("Couldn't join on the VMM thread");
     }
 
 }

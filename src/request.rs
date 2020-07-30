@@ -50,7 +50,7 @@ pub fn read_u8_vm(channel: &mut dyn Read) -> std::io::Result<Vec<u8>>{
 /// If either one of the `write_all()` calls fails, `write_u8` returns
 /// the corresponding std::io::Error.
 pub fn write_u8(buf: &[u8], channel: &mut std::net::TcpStream) ->  std::io::Result<()> {
-    let mut size = buf.len().to_be_bytes();
+    let size = buf.len().to_be_bytes();
     let mut data = buf.to_vec();
     for i in (0..size.len()).rev() {
         data.insert(0, size[i]);

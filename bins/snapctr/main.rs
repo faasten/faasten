@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use time::precise_time_ns;
 use signal_hook::{iterator::Signals, SIGINT};
-use crossbeam_channel::{bounded, Receiver, select};
+use crossbeam_channel::bounded;
 
 fn main() {
     simple_logger::init().expect("simple_logger init failed");
@@ -100,45 +100,43 @@ fn main() {
     if let Some(request_file_url) = matches.value_of("requests file") {
         let mut gateway = gateway::FileGateway::listen(request_file_url).expect("Failed to create file gateway");
         // start admitting and processing incoming requests
-        let t1 = precise_time_ns();
+        let mut t1;
+        let mut t2;
         let mut prev_ts = 0;
         loop {
-            let t1 = precise_time_ns();
+            t1 = precise_time_ns();
             let task = gateway.next();
-            if task.is_none() {
-                break;
-            }
-            let t2 = precise_time_ns();
-            info!("file gateway latency (t2-t1): {} ns", t2 - t1);
-            let task = task.unwrap();
-            // ignore invalid requests
-            if task.is_err() {
-                error!("Invalid task: {:?}", task);
-                continue;
-            }
+            match task {
+                None => break,
+                Some(task) => {
+                    t2 = precise_time_ns();
+                    info!("file gateway latency (t2-t1): {} ns", t2 - t1);
+                    // ignore invalid requests
+                    if task.is_err() {
+                        error!("Invalid task: {:?}", task);
+                        continue;
+                    }
 
-            let (req, rsp_sender) = task.unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(req.time-prev_ts));
-            let t1 = precise_time_ns();
-            prev_ts = req.time;
+                    let (req, rsp_sender) = task.unwrap();
+                    std::thread::sleep(std::time::Duration::from_millis(req.time-prev_ts));
+                    t1 = precise_time_ns();
+                    prev_ts = req.time;
 
-            wp.send_req(req, rsp_sender);
+                    wp.send_req(req, rsp_sender);
+                }
+            }
 
             // check if received any signal
             if let Ok(_) = sig_receiver.try_recv() {
                 warn!("snapctr shutdown received");
-
-                // dump main thread's stats
-                let t2 = precise_time_ns();
-
                 wp.shutdown();
                 std::process::exit(0);
             }
-            let t2 = precise_time_ns();
+            t2 = precise_time_ns();
             info!("schedule latency (t2-t1): {} ns", t2-t1);
         }
 
-        let t2 = precise_time_ns();
+        t2 = precise_time_ns();
         info!("gateway latency {:?} ns", t2-t1);
 
         wp.shutdown();
@@ -150,8 +148,6 @@ fn main() {
     if let Some(p) = matches.value_of("port number") {
         let mut gateway = gateway::HTTPGateway::listen(p).expect("Failed to create HTTP gateway");
         info!("Gateway started on port: {:?}", gateway.port);
-
-        let t1 = precise_time_ns();
 
         loop {
             // read a request from TcpStreams and process it
@@ -175,10 +171,6 @@ fn main() {
             // check if received any signal
             if let Ok(_) = sig_receiver.try_recv() {
                 warn!("snapctr shutdown received");
-
-                // dump main thread's stats
-                let t2 = precise_time_ns();
-
                 wp.shutdown();
                 std::process::exit(0);
             }

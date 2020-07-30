@@ -7,6 +7,6 @@ use crate::request;
 pub enum Message {
     Shutdown,
     Request(request::Request, Sender<Message>),
-    Request_Tcp(request::Request, Arc<Mutex<TcpStream>>),
+    RequestTcp(request::Request, Arc<Mutex<TcpStream>>),
     Response(String),
 }

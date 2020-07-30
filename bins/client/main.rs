@@ -1,13 +1,10 @@
 use std::io::prelude::*;
-use std::io::{BufReader, ErrorKind};
+use std::io::BufReader;
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use clap::{App, Arg};
 use signal_hook::{iterator::Signals, SIGINT};
-use crossbeam_channel::{bounded, Receiver, select};
 
 use snapfaas::request;
 
@@ -56,7 +53,7 @@ fn main() {
     let mut sc = stream.try_clone().expect("Cannot clone TcpStream");
     let num_rspc = num_rsp.clone();
     let num_reqc = num_req.clone();
-    let receiver_thread = std::thread::spawn(move || {
+    let _receiver_thread = std::thread::spawn(move || {
         loop {
 
             match request::read_u8(&mut sc) {
@@ -67,7 +64,7 @@ fn main() {
                 }
                 Err(e) => {
                     match e.kind() {
-                        Other => {
+                        std::io::ErrorKind::Other => {
                             continue
                         }
                         _ => {

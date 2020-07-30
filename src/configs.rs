@@ -3,7 +3,6 @@
 //! function configurations
 use serde::Deserialize;
 use serde_yaml;
-use std::path::Path;
 use std::fs::File;
 use url::Url;
 use log::info;
