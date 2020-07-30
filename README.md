@@ -152,13 +152,13 @@ The command above boots app `hello` from base + diff snapshots and process three
 ## `snapctr` setup details
 ### `snapctr` command
 `snapctr` should be used to run a single machine macrobenchmark. It always takes three arguments:
-1. --config \<**absolute path** to controller configuration file\> (e.g., `resources/example-controller-config.yaml`). The config file specifies:
+1. --config \<path to controller configuration file\> (e.g., `resources/example-controller-config.yaml`). The config file specifies:
 ```txt
-kernel_path: url to the uncompressed kernel binary
-runtimfs_dir: url to root filesystem base directory
-appfs_dir: url to application filesystem base directory
-snapshot_dir: url to snapshot base directory
-function_config: url to function configuration file
+kernel_path: url or path to the uncompressed kernel binary
+runtimfs_dir: url or path to root filesystem base directory
+appfs_dir: url or path to application filesystem base directory
+snapshot_dir: url or path to snapshot base directory
+function_config: url or path to function configuration file
 ```
 2. --mem <total memory available to this `snapctr`\>
 3. --requests_file \<a regular json file contains a workload\>,
@@ -206,3 +206,10 @@ Note that "optional" means that the fields do not need to
 exist. If load_dir and diff_dirs exist, then the function is 
 booted from its base + diff snapshots. If they are missing, 
 then the function goes through the regular boot process.
+
+# SnapFaaS Unit Tests
+To compile and run unit tests, execute:
+```bash
+cargo test
+```
+Note that unit tests rely on several paths to exist. See resources/README.md for details.

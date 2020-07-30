@@ -30,17 +30,20 @@ pub fn check_url(path: &str) -> bool {
 }
 
 
-/// Check is a path is local filesystem path. If yes,
-/// append file://localhost/ to local filesystem paths and expand ., .. and ~.
-/// TODO: maybe a more comprehensive implementation is needed but low priority
-pub fn convert_fs_path_to_url (path: &str) -> String {
+/// Check if a path is local filesystem path. If yes, append file://localhost/;
+/// If the path is already an URL, return itself.
+/// This function supports absolute path and relative path containing only "." and "..".
+/// An error is returned when the path does not exist.
+pub fn convert_fs_path_to_url (path: &str) -> Result<String> {
     if check_url(path) {
-        return path.to_string();
+        return Ok(path.to_string());
     }
     let mut url = String::from(LOCAL_FILE_URL_PREFIX);
-    url.push_str(&shellexpand::tilde(path));
+    // unwrap is safe as the path is utf-8 valid
+    let path = std::fs::canonicalize(path).map(|p| p.to_str().unwrap().to_string())?;
+    url.push_str(path.as_str());
 
-    return url;
+    return Ok(url);
 }
 
 /// Open a file specified by a URL in the form of a string

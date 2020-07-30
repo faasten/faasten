@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use std::sync::Mutex;
 use std::os::unix::net::UnixListener;
+use std::path::PathBuf;
 
 use log::{error, trace};
 use serde_yaml;
@@ -56,15 +57,25 @@ impl Controller {
                         for mut app in apps {
                             let name = app.name.clone();
                             // build full path to the runtimefs
-                            app.runtimefs = format!("{}{}",ctr_config.get_runtimefs_base(), app.runtimefs);
+                            app.runtimefs = [
+                                ctr_config.get_runtimefs_base().as_str(),
+                                app.runtimefs.as_str()
+                            ].iter().collect::<PathBuf>().to_str().unwrap().to_string();
                             // build full path to the appfs
-                            app.appfs = format!("{}{}",ctr_config.get_appfs_base(), app.appfs);
+                            app.appfs = [
+                                ctr_config.get_appfs_base().as_str(),
+                                app.appfs.as_str()
+                            ].iter().collect::<PathBuf>().to_str().unwrap().to_string();
                             // build full path to base snapshot
-                            app.load_dir = app.load_dir.map(|s| format!("{}{}",ctr_config.get_snapshot_base(), s));
+                            app.load_dir = app.load_dir.map(|s|
+                                [ctr_config.get_snapshot_base().as_str(), s.as_str()].iter()
+                                    .collect::<PathBuf>().to_str().unwrap().to_string()
+                            );
                             // build full paths to diff snapshots: comma-separated list
                             app.diff_dirs = app.diff_dirs.map(|s| 
                                 s.split(',').collect::<Vec<&str>>().iter()
-                                    .map(|s| format!("{}diff/{}",ctr_config.get_snapshot_base(), s))
+                                    .map(|s| [ctr_config.get_snapshot_base().as_str(), "diff", s]
+                                        .iter().collect::<PathBuf>().to_str().unwrap().to_string())
                                     .collect::<Vec<String>>().join(",")
                             );
                             // TODO: currently all apps use the same kernel
@@ -156,16 +167,20 @@ impl Controller {
                 let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
                 trace!("Allocating new VM. ID: {:?}, App: {:?}", id, function_config.name);
 
+                #[cfg(not(test))]
                 return Vm::new(&id.to_string(), function_config, vm_listener, cid, Some(network))
-                       .map_err(|e| {
-                    // Make sure to "unreserve" the resource by incrementing
-                    // `Controller::free_mem`
-                    self.free_mem.fetch_add(function_config.memory, Ordering::Relaxed);
-                    Error::StartVm(e)
-                });
+                    .map_err(|e| {
+                        // Make sure to "unreserve" the resource by incrementing
+                        // `Controller::free_mem`
+                        self.free_mem.fetch_add(function_config.memory, Ordering::Relaxed);
+                        Error::StartVm(e)
+                    });
+
+                #[cfg(test)]
+                Ok(Vm::new_dummy(function_config.memory))
             }
             Err(free_mem) => {
-                return Err(Error::LowMemory(free_mem));
+                Err(Error::LowMemory(free_mem))
             }
         }
     }
@@ -183,6 +198,7 @@ impl Controller {
                 // collect some function popularity data and evict based on that.
                 // This is where some policies can be implemented.
                 if let Some(mut vm) = vmlist.try_pop() {
+                    #[cfg(not(test))]
                     vm.shutdown();
                     self.free_mem.fetch_add(vm.memory, Ordering::Relaxed);
                     freed = freed + vm.memory;
@@ -294,18 +310,15 @@ impl VmList {
 mod tests {
     use super::*;
 
+    use std::os::unix::io::{FromRawFd, RawFd};
+    use std::thread;
+    use std::sync::Arc;
+
     /// Helper function to create a Controller value with `mem` amount of memory
     /// If `mem` is set to 0, the amount of memory is set to the total memory
     /// of the machine.
     fn build_controller(mem: usize) -> Controller {
-        let ctr_config = ControllerConfig {
-            kernel_path: "".to_string(),
-            kernel_boot_args: "".to_string(),
-            runtimefs_dir: "".to_string(),
-            appfs_dir: "".to_string(),
-            function_config: "file://localhost/etc/snapfaas/example_function_configs.yaml"
-                .to_string(),
-        };
+        let ctr_config = ControllerConfig::new("./resources/example-controller-config.yaml");
 
         let mut ctr = Controller::new(ctr_config).unwrap();
         if mem != 0 {
@@ -319,12 +332,17 @@ mod tests {
     /// Allocate should correctly increment `total_num_vms` and decrement `free_mem`.
     fn test_allocate() {
         let controller = build_controller(0);
-        let lp_config = controller.get_function_config("lorempy2").unwrap();
+        let lp_config = controller.get_function_config("hello").unwrap();
         let total_mem = controller.total_mem;
         let num_vms = 100;
 
         for i in 0..num_vms {
-            controller.allocate(lp_config);
+            controller.allocate(
+                lp_config,
+                unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                0,
+                "",
+            );
         }
 
         assert_eq!(controller.total_num_vms.load(Ordering::Relaxed), num_vms);
@@ -348,8 +366,13 @@ mod tests {
         for i in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
-                let c = ctr.get_function_config("lorempy2").unwrap();
-                ctr.allocate(c);
+                let c = ctr.get_function_config("hello").unwrap();
+                ctr.allocate(
+                    c,
+                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    0,
+                    "",
+                );
             });
             handles.push(h);
         }
@@ -370,15 +393,25 @@ mod tests {
     /// `total_num_vms` and `free_mem` should also be correct.
     fn test_allocate_resource_limit() {
         let controller = build_controller(1024);
-        let lp_config = controller.get_function_config("lorempy2").unwrap();
+        let lp_config = controller.get_function_config("hello").unwrap();
 
         for i in 0..8 {
-            if let None = controller.allocate(lp_config) {
+            if let Err(_) = controller.allocate(
+                lp_config,
+                unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                0,
+                "",
+            ) {
                 panic!("allocate failed before exhausting resources");
             }
         }
 
-        if let Some(vm) = controller.allocate(lp_config) {
+        if let Ok(vm) = controller.allocate(
+                lp_config,
+                unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                0,
+                "",
+            ) {
             panic!("allocate succeeds after exhausting resources");
         }
 
@@ -394,15 +427,20 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let num_vms = total_mem / sctr.get_function_config("lorempy2").unwrap().memory;
+        let num_vms = total_mem / sctr.get_function_config("hello").unwrap().memory;
 
         let mut handles = vec![];
 
         for i in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
-                let c = ctr.get_function_config("lorempy2").unwrap();
-                if let None = ctr.allocate(c) {
+                let c = ctr.get_function_config("hello").unwrap();
+                if let Err(_) = ctr.allocate(
+                        c,
+                        unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                        0,
+                        "",
+                    ) {
                     panic!("allocate failed before exhausting resources");
                 }
             });
@@ -413,9 +451,14 @@ mod tests {
             h.join();
         }
 
-        let c = sctr.get_function_config("lorempy2").unwrap();
+        let c = sctr.get_function_config("hello").unwrap();
         for i in 0..num_vms {
-            if let Some(vm) = sctr.allocate(c) {
+            if let Ok(vm) = sctr.allocate(
+                    c,
+                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    0,
+                    "",
+                ) {
                 panic!("allocate succeeds after exhausting resources");
             }
         }
@@ -431,7 +474,7 @@ mod tests {
     /// release should add vm to its idle list and increment the list's `num_vms`
     fn test_release() {
         let controller = build_controller(1024);
-        let lp_config = controller.get_function_config("lorempy2").unwrap();
+        let lp_config = controller.get_function_config("hello").unwrap();
 
         assert_eq!(
             controller
@@ -456,9 +499,14 @@ mod tests {
         assert_eq!(controller.free_mem.load(Ordering::Relaxed), 1024);
 
         for _ in 0..8 {
-            match controller.allocate(lp_config) {
-                Some(vm) => controller.release(&lp_config.name, vm),
-                None => panic!("allocate failed before exhausting resources"),
+            match controller.allocate(
+                lp_config,
+                unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                0,
+                "",
+            ) {
+                Ok(vm) => controller.release(&lp_config.name, vm),
+                Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
@@ -492,7 +540,7 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("lorempy2").unwrap();
+        let c = sctr.get_function_config("hello").unwrap();
         let num_vms = total_mem / c.memory;
 
         assert_eq!(
@@ -514,10 +562,15 @@ mod tests {
         for i in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
-                let c = ctr.get_function_config("lorempy2").unwrap();
-                match ctr.allocate(c) {
-                    Some(vm) => ctr.release(&c.name, vm),
-                    None => panic!("allocate failed before exhausting resources"),
+                let c = ctr.get_function_config("hello").unwrap();
+                match ctr.allocate(
+                        c,
+                        unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                        0,
+                        "",
+                    ) {
+                    Ok(vm) => ctr.release(&c.name, vm),
+                    Err(_) => panic!("allocate failed before exhausting resources"),
                 }
             });
             handles.push(h);
@@ -527,9 +580,14 @@ mod tests {
             h.join();
         }
 
-        let c = sctr.get_function_config("lorempy2").unwrap();
+        let c = sctr.get_function_config("hello").unwrap();
         for i in 0..num_vms {
-            if let Some(vm) = sctr.allocate(c) {
+            if let Ok(vm) = sctr.allocate(
+                    c,
+                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    0,
+                    "",
+                ) {
                 panic!("allocate succeeds after exhausting resources");
             }
         }
@@ -559,13 +617,18 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("lorempy2").unwrap();
+        let c = sctr.get_function_config("hello").unwrap();
         let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
-            match sctr.allocate(c) {
-                Some(vm) => sctr.release(&c.name, vm),
-                None => panic!("allocate failed before exhausting resources"),
+            match sctr.allocate(
+                    c,
+                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    0,
+                    "",
+                ) {
+                Ok(vm) => sctr.release(&c.name, vm),
+                Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
@@ -583,7 +646,7 @@ mod tests {
         );
 
         for _ in 0..num_vms {
-            if let None = sctr.get_idle_vm(&c.name) {
+            if let Err(_) = sctr.get_idle_vm(&c.name) {
                 panic!("idle list should not be empty")
             }
         }
@@ -601,7 +664,7 @@ mod tests {
             0
         );
 
-        if let Some(vm) = sctr.get_idle_vm(&c.name) {
+        if let Ok(vm) = sctr.get_idle_vm(&c.name) {
             panic!("idle list should be empty");
         }
 
@@ -627,13 +690,18 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("lorempy2").unwrap();
+        let c = sctr.get_function_config("hello").unwrap();
         let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
-            match sctr.allocate(c) {
-                Some(vm) => sctr.release(&c.name, vm),
-                None => panic!("allocate failed before exhausting resources"),
+            match sctr.allocate(
+                    c,
+                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    0,
+                    "",
+                ) {
+                Ok(vm) => sctr.release(&c.name, vm),
+                Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
@@ -655,8 +723,8 @@ mod tests {
         for _ in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
-                let c = ctr.get_function_config("lorempy2").unwrap();
-                if let None = ctr.get_idle_vm(&c.name) {
+                let c = ctr.get_function_config("hello").unwrap();
+                if let Err(_) = ctr.get_idle_vm(&c.name) {
                     panic!("idle list should not be empty")
                 }
             });
@@ -680,7 +748,7 @@ mod tests {
             0
         );
 
-        if let Some(vm) = sctr.get_idle_vm(&c.name) {
+        if let Ok(vm) = sctr.get_idle_vm(&c.name) {
             panic!("idle list should be empty");
         }
 
@@ -705,13 +773,18 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("lorempy2").unwrap();
+        let c = sctr.get_function_config("hello").unwrap();
         let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
-            match sctr.allocate(c) {
-                Some(vm) => sctr.release(&c.name, vm),
-                None => panic!("allocate failed before exhausting resources"),
+            match sctr.allocate(
+                    c,
+                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    0,
+                    "",
+                ) {
+                Ok(vm) => sctr.release(&c.name, vm),
+                Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
@@ -751,7 +824,7 @@ mod tests {
             0
         );
 
-        if let Some(vm) = sctr.get_idle_vm(&c.name) {
+        if let Ok(vm) = sctr.get_idle_vm(&c.name) {
             panic!("idle list should be empty");
         }
 
@@ -776,13 +849,18 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("lorempy2").unwrap();
+        let c = sctr.get_function_config("hello").unwrap();
         let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
-            match sctr.allocate(c) {
-                Some(vm) => sctr.release(&c.name, vm),
-                None => panic!("allocate failed before exhausting resources"),
+            match sctr.allocate(
+                    c,
+                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    0,
+                    "",
+                ) {
+                Ok(vm) => sctr.release(&c.name, vm),
+                Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
@@ -808,7 +886,7 @@ mod tests {
         for _ in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
-                let c = ctr.get_function_config("lorempy2").unwrap();
+                let c = ctr.get_function_config("hello").unwrap();
                 if !ctr.evict(c.memory) {
                     panic!("idle list should not be empty")
                 }
@@ -833,7 +911,7 @@ mod tests {
             0
         );
 
-        if let Some(vm) = sctr.get_idle_vm(&c.name) {
+        if let Ok(vm) = sctr.get_idle_vm(&c.name) {
             panic!("idle list should be empty");
         }
 
@@ -859,13 +937,18 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("lorempy2").unwrap();
+        let c = sctr.get_function_config("hello").unwrap();
         let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
-            match sctr.allocate(c) {
-                Some(vm) => sctr.release(&c.name, vm),
-                None => panic!("allocate failed before exhausting resources"),
+            match sctr.allocate(
+                    c,
+                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    0,
+                    "",
+                ) {
+                Ok(vm) => sctr.release(&c.name, vm),
+                Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
@@ -914,13 +997,18 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("lorempy2").unwrap();
+        let c = sctr.get_function_config("hello").unwrap();
         let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
-            match sctr.allocate(c) {
-                Some(vm) => sctr.release(&c.name, vm),
-                None => panic!("allocate failed before exhausting resources"),
+            match sctr.allocate(
+                    c,
+                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    0,
+                    "",
+                ) {
+                Ok(vm) => sctr.release(&c.name, vm),
+                Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
@@ -947,7 +1035,7 @@ mod tests {
         for _ in 0..num_evict {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
-                let c = ctr.get_function_config("lorempy2").unwrap();
+                let c = ctr.get_function_config("hello").unwrap();
                 if !ctr.evict(c.memory * 2) {
                     panic!("idle list should not be empty")
                 }
@@ -981,12 +1069,17 @@ mod tests {
         let num_vms = 1;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("lorempy2").unwrap();
+        let c = sctr.get_function_config("hello").unwrap();
 
         for _ in 0..num_vms {
-            match sctr.allocate(c) {
-                Some(vm) => sctr.release(&c.name, vm),
-                None => panic!("allocate failed before exhausting resources"),
+            match sctr.allocate(
+                    c,
+                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    0,
+                    "",
+                ) {
+                Ok(vm) => sctr.release(&c.name, vm),
+                Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 

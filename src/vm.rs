@@ -48,6 +48,7 @@ pub struct VmAppConfig {
 }
 
 #[derive(Debug)]
+#[cfg(not(test))]
 pub struct Vm {
     pub id: usize,
     pub memory: usize, // MB
@@ -68,8 +69,7 @@ pub struct Vm {
     */
 }
 
-
-
+#[cfg(not(test))]
 impl Vm {
     /// Launch a vm instance and return a Vm value
     /// When this function returns, the VM has finished booting and is ready
@@ -127,6 +127,7 @@ impl Vm {
             args.extend_from_slice(&["--mac", v[1]]);
         }
 
+        info!("args: {:?}", args);
         let cmd = cmd.args(args);
         let mut vm_process: Child = cmd.stdin(Stdio::null())
             .spawn()
@@ -196,5 +197,30 @@ impl Vm {
         if let Err(e) = self.process.kill() {
             error!("VM already exited: {:?}", e);
         }
+    }
+}
+
+#[derive(Debug)]
+#[cfg(test)]
+pub struct Vm {
+    pub id: usize,
+    pub memory: usize, // MB
+}
+
+#[cfg(test)]
+impl Vm {
+    /// Create a dummy VM for controller tests
+    pub fn new_dummy(memory: usize) -> Self {
+        Vm {
+            id: 0,
+            memory,
+        }
+    }
+
+    pub fn process_req(&mut self, _: Request) -> Result<String, Error> {
+        Ok(String::new())
+    }
+
+    pub fn shutdown(&mut self) {
     }
 }

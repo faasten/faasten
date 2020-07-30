@@ -25,7 +25,7 @@ impl ControllerConfig {
     /// Create in-memory ControllerConfig struct from a YAML file
     /// TODO: Currently only supports file://localhost urls
     pub fn new(path: &str) -> ControllerConfig {
-        let config_url = convert_fs_path_to_url(path);
+        let config_url = convert_fs_path_to_url(path).expect("Invalid configuration file path");
         info!("Using controller config: {}", config_url);
 
         return ControllerConfig::initialize(&config_url);
@@ -33,12 +33,22 @@ impl ControllerConfig {
 
     fn initialize(config_url: &str) -> ControllerConfig {
         if let Ok(config_url) = Url::parse(config_url) {
-            let config_path = Path::new(config_url.path());
             // populate a ControllerConfig struct from the yaml file
-            if let Ok(config) = File::open(config_path) {
+            if let Ok(config) = File::open(config_url.path()) {
                 let config: serde_yaml::Result<ControllerConfig> = serde_yaml::from_reader(config);
-                if let Ok(config) = config {
-                    return config;
+                if let Ok(mut config) = config {
+                    config.kernel_path = convert_fs_path_to_url(&config.kernel_path)
+                        .expect("Invalid kernel path");
+                    config.runtimefs_dir = convert_fs_path_to_url(&config.runtimefs_dir)
+                        .expect("Invalid runtimefs directory");
+                    config.appfs_dir = convert_fs_path_to_url(&config.appfs_dir)
+                        .expect("Invalid appfs directory");
+                    config.snapshot_dir = convert_fs_path_to_url(&config.snapshot_dir)
+                        .expect("Invalid snapshot directory");
+                    config.function_config = convert_fs_path_to_url(&config.function_config)
+                        .expect("Invalid function configuration file path");
+                    info!("config: {:?}", config);
+                    config
                 } else {
                     panic!("Invalid YAML file");
                 }
