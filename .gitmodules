@@ -3,4 +3,4 @@
         url = git@github.com:princeton-sns/firecracker.git
 [submodule "snapfaas-images"]
 	path = snapfaas-images
-	url = git@github.com:tan-yue/snapfaas-images.git
+	url = git@github.com:princeton-sns/snapfaas-images.git
