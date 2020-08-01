@@ -9,7 +9,6 @@ do
     TAP="tap$i"
     # The first step on the host is to create a `tap` device:
     sudo ip tuntap add $TAP mode tap
-    sudo ip addr add 172.16.0.1/24 dev $TAP
     # connect tap devices to `docker0` bridge
     sudo brctl addif docker0 $TAP
     # bring up tap devices
