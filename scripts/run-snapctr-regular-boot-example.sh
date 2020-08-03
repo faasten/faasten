@@ -28,9 +28,9 @@ echo "    pool size = 8 workers"
 echo "    Setting up 8 tap devices for 8 workers..."
 scripts/setup-tap-bridge.sh 8
 echo 'Start example workload...'
-target/release/snapctr --config resources/$CONTROLLER_CONFIG --mem 1024 --requests_file resources/example-requests.json
+sudo target/release/snapctr --config resources/$CONTROLLER_CONFIG --mem 1024 --requests_file resources/example-requests.json
 echo 'Cleaning up all tap devices...'
 scripts/cleanup-taps.sh 8
 echo 'Cleaning up all unix domain socket listeners...'
-rm worker*
+sudo rm worker*
 echo 'Done'
