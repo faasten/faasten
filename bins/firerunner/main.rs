@@ -1,14 +1,11 @@
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
 extern crate cgroups;
-extern crate libc;
 
 use std::fs::File;
-use std::io;
-use std::io::Write;
 use std::path::PathBuf;
 use std::io::BufReader;
-
+use std::time::Instant;
 
 use vmm::vmm_config::boot_source::BootSourceConfig;
 use vmm::vmm_config::drive::BlockDeviceConfig;
@@ -19,11 +16,13 @@ use vmm::vmm_config::machine_config::VmConfig;
 use vmm::SnapFaaSConfig;
 
 use clap::{App, Arg};
+use log::error;
 
-use snapfaas::vm;
 use snapfaas::firecracker_wrapper::VmmWrapper;
 
 fn main() {
+    let mut ts_vec = Vec::with_capacity(10);
+    ts_vec.push(Instant::now());
     let cmd_arguments = App::new("firecracker")
         .version(crate_version!())
         .author(crate_authors!())
@@ -192,34 +191,37 @@ fn main() {
 
     // Make sure kernel, rootfs, appfs, load_dir, dump_dir exist
     if !&kernel.exists() {
-        io::stdout().write_all(&[vm::VmStatus::KernelNotExist as u8]).expect("stdout");
-        io::stdout().flush().expect("stdout");
+        error!("kernel not exist");
         std::process::exit(1);
     }
     if !&rootfs.exists() {
-        io::stdout().write_all(&[vm::VmStatus::RootfsNotExist as u8]).expect("stdout");
-        io::stdout().flush().expect("stdout");
+        error!("rootfs not exist");
         std::process::exit(1);
     }
 
     if appfs.is_some() && !appfs.as_ref().unwrap().exists(){
-        io::stdout().write_all(&[vm::VmStatus::AppfsNotExist as u8]).expect("stdout");
-        io::stdout().flush().expect("stdout");
+        error!("appfs not exist");
         std::process::exit(1);
     }
 
     if load_dir.is_some() && !load_dir.as_ref().unwrap().exists(){
-        io::stdout().write_all(&[vm::VmStatus::LoadDirNotExist as u8]).expect("stdout");
-        io::stdout().flush().expect("stdout");
+        error!("load directory not exist");
         std::process::exit(1);
     }
 
     if dump_dir.is_some() && !dump_dir.as_ref().unwrap().exists(){
-        io::stdout().write_all(&[vm::VmStatus::DumpDirNotExist as u8]).expect("stdout");
-        io::stdout().flush().expect("stdout");
+        error!("dump directory not exist");
         std::process::exit(1);
     }
 
+    for dir in &diff_dirs {
+        if !dir.exists() {
+            error!("diff snapshot not exist");
+            std::process::exit(1);
+        }
+    }
+
+    ts_vec.push(Instant::now());
     let json_dir = if let Some(dir) = diff_dirs.last() {
         Some(dir.clone())
     } else if let Some(ref dir) = load_dir {
@@ -232,6 +234,7 @@ fn main() {
         let reader = BufReader::new(File::open(dir).expect("Failed to open snapshot.json"));
         serde_json::from_reader(reader).expect("Bad snapshot.json")
     });
+    ts_vec.push(Instant::now());
 
     let from_snapshot = load_dir.is_some();
     let config = SnapFaaSConfig {
@@ -247,12 +250,11 @@ fn main() {
     let mut vmm = match VmmWrapper::new(instance_id, config) {
         Ok(vmm) => vmm,
         Err(e) => {
-            io::stdout().write_all(&[vm::VmStatus::VmmFailedToStart as u8]).expect("stdout");
-            io::stdout().flush().expect("stdout");
-            eprintln!("Vmm failed to start due to: {:?}", e);
+            error!("Vmm failed to start due to: {:?}", e);
             std::process::exit(1);
         }
     };
+    ts_vec.push(Instant::now());
 
     // Configure vm through vmm thread
     // If any of the configuration actions fail, just exits the process with
@@ -266,7 +268,7 @@ fn main() {
     };
 
     if let Err(e) = vmm.set_configuration(machine_config) {
-        eprintln!("Vmm failed to set configuration due to: {:?}", e);
+        error!("Vmm failed to set configuration due to: {:?}", e);
         std::process::exit(1);
     }
 
@@ -277,7 +279,7 @@ fn main() {
         };
 
         if let Err(e) = vmm.set_boot_source(boot_config) {
-            eprintln!("Vmm failed to set boot source due to: {:?}", e);
+            error!("Vmm failed to set boot source due to: {:?}", e);
             std::process::exit(1);
         }
     }
@@ -292,7 +294,7 @@ fn main() {
     };
 
     if let Err(e) = vmm.insert_block_device(block_config) {
-        eprintln!("Vmm failed to insert rootfs due to: {:?}", e);
+        error!("Vmm failed to insert rootfs due to: {:?}", e);
         std::process::exit(1);
     }
 
@@ -306,7 +308,7 @@ fn main() {
 	    rate_limiter: None,
 	};
         if let Err(e) = vmm.insert_block_device(block_config) {
-            eprintln!("Vmm failed to insert appfs due to: {:?}", e);
+            error!("Vmm failed to insert appfs due to: {:?}", e);
             std::process::exit(1);
         }
     }
@@ -322,7 +324,7 @@ fn main() {
             tap: None,
         };
         if let Err(e) = vmm.insert_network_device(netif_config) {
-            eprintln!("Vmm failed to insert network device due to: {:?}", e);
+            error!("Vmm failed to insert network device due to: {:?}", e);
             std::process::exit(1);
         }
     }
@@ -334,17 +336,21 @@ fn main() {
             uds_path: format!("worker-{}.sock", cid).to_string(),
         };
         if let Err(e) = vmm.add_vsock(vsock_config) {
-            eprintln!("Vmm failed to add vsock due to: {:?}", e);
+            error!("Vmm failed to add vsock due to: {:?}", e);
             std::process::exit(1);
         }
     }
  
+    ts_vec.push(Instant::now());
     //TODO: Optionally add a logger
 
+    fc_util::fc_log!("firerunner: parsing command took: {} us", ts_vec[1].duration_since(ts_vec[0]).as_micros());
+    fc_util::fc_log!("firerunner: parsing Snapshot.json took: {} us", ts_vec[2].duration_since(ts_vec[1]).as_micros());
+    fc_util::fc_log!("firerunner: starting vmm thread took: {} us", ts_vec[3].duration_since(ts_vec[2]).as_micros());
+    fc_util::fc_log!("firerunner: configuring VM took: {} us", ts_vec[4].duration_since(ts_vec[3]).as_micros());
     // Launch vm
-    println!("starting vm instance...");
     if let Err(e) = vmm.start_instance() {
-        eprintln!("Vmm failed to start instance due to: {:?}", e);
+        error!("Vmm failed to start instance due to: {:?}", e);
         std::process::exit(1);
     }
 

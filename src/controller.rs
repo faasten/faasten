@@ -168,13 +168,13 @@ impl Controller {
                 trace!("Allocating new VM. ID: {:?}, App: {:?}", id, function_config.name);
 
                 #[cfg(not(test))]
-                return Vm::new(&id.to_string(), function_config, _vm_listener, _cid, Some(_network))
+                return Vm::new(&id.to_string(), function_config, _vm_listener, _cid, Some(_network), &self.controller_config.firerunner_path)
                     .map_err(|e| {
                         // Make sure to "unreserve" the resource by incrementing
                         // `Controller::free_mem`
                         self.free_mem.fetch_add(function_config.memory, Ordering::Relaxed);
                         Error::StartVm(e)
-                    });
+                    }).map(|t| t.0);
 
                 #[cfg(test)]
                 Ok(Vm::new_dummy(function_config.memory))

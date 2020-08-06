@@ -1,12 +1,12 @@
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
-extern crate libc;
 /// This binary is used to launch a single instance of firerunner
 /// It reads a request from stdin, launches a VM based on cmdline inputs, sends
 /// the request to VM, waits for VM's response and finally prints the response
 /// to stdout, kills the VM and exits.
 use snapfaas::vm::Vm;
 use snapfaas::request;
+use snapfaas::unlink_unix_sockets;
 use snapfaas::configs::FunctionConfig;
 use std::io::BufRead;
 use std::os::unix::net::UnixListener;
@@ -15,26 +15,6 @@ use std::time::Instant;
 use clap::{App, Arg};
 
 const CID: u32 = 124;
-const LISTENER_PORT: u32 = 1234;
-
-fn unlink_unix_sockets() {
-    unsafe {
-        let path = format!("worker-{}.sock", CID);
-        if libc::unlink(path.as_ptr() as *const libc::c_char) < 0 {
-            let err = std::io::Error::last_os_error();
-            if err.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("Failed to unlink {}: {:?}", path, err);
-            }
-        }
-        let path = format!("worker-{}.sock_{}", CID, LISTENER_PORT);
-        if libc::unlink(path.as_ptr() as *const libc::c_char) < 0 {
-            let err = std::io::Error::last_os_error();
-            if err.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("Failed to unlink {}: {:?}", path, err);
-            }
-        }
-    }
-}
 
 fn main() {
     let cmd_arguments = App::new("fireruner wrapper")
@@ -73,7 +53,7 @@ fn main() {
                 .long("appfs")
                 .value_name("appfs")
                 .takes_value(true)
-                .required(true)
+                .required(false)
                 .help("path to the app file system")
         )
         .arg(
@@ -146,13 +126,22 @@ fn main() {
                 .required(false)
                 .help("newtork device of format TAP_NAME/MAC_ADDRESS")
         )
+        .arg(
+            Arg::with_name("firerunner")
+                .long("firerunner")
+                .value_name("FIRERUNNER")
+                .takes_value(true)
+                .required(true)
+                .default_value("target/release/firerunner")
+                .help("path to the firerunner binary")
+        )
         .get_matches();
 
     // Create a FunctionConfig value based on cmdline inputs
     let vm_app_config = FunctionConfig {
         name: "app".to_string(), //dummy value
         runtimefs: cmd_arguments.value_of("rootfs").expect("rootfs").to_string(),
-        appfs: cmd_arguments.value_of("appfs").expect("appfs").to_string(),
+        appfs: cmd_arguments.value_of("appfs").unwrap_or_default().to_string(),
         vcpus: cmd_arguments.value_of("vcpu_count").expect("vcpu")
                             .parse::<u64>().expect("vcpu not int"),
         memory: cmd_arguments.value_of("mem_size").expect("mem_size")
@@ -167,13 +156,14 @@ fn main() {
         cmdline: cmd_arguments.value_of("kernel_args").map(|s| s.to_string()),
     };
     let id: &str = cmd_arguments.value_of("id").expect("id");
-    println!("id: {}, function config: {:?}", id, vm_app_config);
+    //println!("id: {}, function config: {:?}", id, vm_app_config);
 
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
-    let mut vm = match Vm::new(id, &vm_app_config, &vm_listener, CID, cmd_arguments.value_of("network")) {
+    let firerunner = cmd_arguments.value_of("firerunner").unwrap();
+    let (mut vm, ts_vec) = match Vm::new(id, &vm_app_config, &vm_listener, CID, cmd_arguments.value_of("network"), firerunner) {
         Ok(vm) => vm,
         Err(e) => {
             println!("Vm creation failed due to: {:?}", e);
@@ -183,7 +173,10 @@ fn main() {
     };
     let t2 = Instant::now();
 
-    println!("Vm creation succeeded: {} ms", t2.duration_since(t1).as_millis());
+    println!("fc_wrapper: Building command took: {} us", ts_vec[1].duration_since(ts_vec[0]).as_micros());
+    println!("fc_wrapper: Spawning the command took: {} us", ts_vec[2].duration_since(ts_vec[1]).as_micros());
+    println!("fc_wrapper: Waiting for guest connection took: {} us", ts_vec[3].duration_since(ts_vec[2]).as_micros());
+    println!("fc_wrapper: Vm creation took: {} us", t2.duration_since(t1).as_micros());
 
     // create a vector of Request values from stdin
     let mut requests: Vec<request::Request> = Vec::new();
@@ -204,9 +197,11 @@ fn main() {
 
     // Synchronously send the request to vm and wait for a response
     for req in requests {
+        let t1 = Instant::now();
         match vm.process_req(req) {
-            Ok(rsp) => {
-                println!("Request succeeded: {:?}", rsp);
+            Ok(_rsp) => {
+                let t2 = Instant::now();
+                println!("Request took: {} us", t2.duration_since(t1).as_micros());
                 num_rsp+=1;
             }
             Err(e) => {

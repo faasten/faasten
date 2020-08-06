@@ -47,17 +47,6 @@ impl Worker {
         ctr: Arc<Controller>,
         cid: u32,
     ) -> Worker {
-        // unlink unix listeners
-        unsafe {
-            let paths = vec![
-                format!("worker-{}.sock_1234", cid),
-                format!("worker-{}.sock", cid)
-            ];
-            for path in paths {
-                // ignore errors
-                let _ = libc::unlink(path.as_ptr() as *const libc::c_char);
-            }
-        }
         let vm_listener = match UnixListener::bind(format!("worker-{}.sock_1234", cid)) {
             Ok(listener) => listener,
             Err(e) => panic!("Failed to bind to unix listener \"worker-{}.sock_1234\": {:?}", cid, e),

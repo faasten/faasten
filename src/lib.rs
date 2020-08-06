@@ -1,3 +1,5 @@
+extern crate glob;
+
 pub mod request;
 pub mod worker;
 pub mod workerpool;
@@ -8,16 +10,33 @@ pub mod controller;
 pub mod vm;
 pub mod metrics;
 pub mod firecracker_wrapper;
-pub mod vsock;
 
 use std::string::String;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufReader, BufRead, Error, ErrorKind, Result};
 use url::Url;
+use log::error;
 
 const LOCAL_FILE_URL_PREFIX: &str = "file://localhost";
 const MEM_FILE: &str = "/proc/meminfo";     // meminfo file on linux
 const KB_IN_MB: usize = 1024;
+
+/// rm worker*
+pub fn unlink_unix_sockets() {
+    match glob::glob("worker-*sock*") {
+        Err(_) => error!("Invalid file pattern"),
+        Ok(paths) => {
+            for entry in paths {
+                if let Ok(path) = entry {
+                    if let Err(e) = fs::remove_file(&path) {
+                        error!("Failed to unlink {}: {:?}", path.to_str().unwrap(), e);
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 /// check if a string is a url string
 /// TODO: maybe a more comprehensive check is needed but low priority

@@ -12,6 +12,7 @@ pub const KERNEL_PATH: &str = "/etc/kernel/vmlinux-4.20.0";
 
 #[derive(Deserialize, Debug)]
 pub struct ControllerConfig {
+    pub firerunner_path: String,
     pub kernel_path: String,
     pub runtimefs_dir: String,
     pub appfs_dir: String,

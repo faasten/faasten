@@ -52,8 +52,6 @@ impl VmmWrapper {
                             state: InstanceState::Uninitialized,
                             id: id.clone(),
                             vmm_version: "0.1".to_string(),
-                            start_monotime_us: 0,
-                            start_cputime_us: 0,
         }));
 
         let event_fd = EventFd::new().map_err(|e| VmmError::EventFd(e))?;
