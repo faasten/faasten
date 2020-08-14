@@ -1,20 +1,44 @@
-use nix::unistd::Pid;
-use std::fs::File;
-use std::io::{Read, Write};
 use std::path::PathBuf;
+#[cfg(not(test))]
 use std::process::{Child, Command, Stdio};
+#[cfg(not(test))]
+use std::net::Shutdown;
+#[cfg(not(test))]
+use std::os::unix::net::{UnixStream, UnixListener};
+#[cfg(not(test))]
+use log::{info, error};
 
+#[cfg(not(test))]
 use crate::configs::FunctionConfig;
-use crate::request::Request;
+#[cfg(not(test))]
 use crate::request;
-use cgroups::{cgroup_builder::CgroupBuilder, Cgroup};
-use log::{info, warn, error};
+use crate::request::Request;
 
+#[derive(Debug)]
 pub enum VmStatus{
-    NotReady,
     Ready = 65,
+    KernelNotExist,
+    RootfsNotExist,
+    AppfsNotExist,
+    LoadDirNotExist,
+    DumpDirNotExist,
+    VmmFailedToStart,
+    NoReadySignal,
     Unresponsive,
     Crashed,
+}
+
+#[derive(Debug)]
+pub enum Error {
+    ProcessSpawn(std::io::Error),
+    //VmTimeout(RecvTimeoutError),
+    VmWrite(std::io::Error),
+    VmRead(std::io::Error),
+    KernelNotExist,
+    RootfsNotExist,
+    AppfsNotExist,
+    LoadDirNotExist,
+    NotString(std::string::FromUtf8Error),
 }
 
 #[derive(Debug)]
@@ -26,10 +50,13 @@ pub struct VmAppConfig {
 }
 
 #[derive(Debug)]
+#[cfg(not(test))]
 pub struct Vm {
     pub id: usize,
     pub memory: usize, // MB
     pub function_name: String,
+    //vsock_stream: VsockStream,
+    conn: UnixStream,
     process: Child,
     /*
     pub process: Pid,
@@ -44,76 +71,116 @@ pub struct Vm {
     */
 }
 
+#[cfg(not(test))]
 impl Vm {
     /// Launch a vm instance and return a Vm value
     /// When this function returns, the VM has finished booting and is ready
     /// to accept requests.
-    pub fn new(id: usize, function_config: &FunctionConfig) -> Option<Vm> {
-        let mut vm_process = Command::new("target/release/firerunner")
-            .args(&[
+    pub fn new(
+        id: &str,
+        function_config: &FunctionConfig,
+        vm_listener: &UnixListener,
+        cid: u32,
+        network: Option<&str>,
+    ) -> Result<Vm, Error> {
+        let mut cmd = Command::new("target/release/firerunner");
+        let mem_str = function_config.memory.to_string();
+        let vcpu_str = function_config.vcpus.to_string();
+        let cid_str = cid.to_string();
+        let mut args = vec![
                 "--id",
-                &id.to_string(),
+                id,
                 "--kernel",
-                "/etc/snapfaas/vmlinux",
-                "--kernel_args",
-                "quiet",
+                &function_config.kernel,
                 "--mem_size",
-                &function_config.memory.to_string(),
+                &mem_str,
                 "--vcpu_count",
-                &function_config.vcpus.to_string(),
+                &vcpu_str,
                 "--rootfs",
                 &function_config.runtimefs,
                 "--appfs",
                 &function_config.appfs,
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn();
-
-        if vm_process.is_err() {
-            return None;
+                "--cid",
+                &cid_str,
+        ];
+        if let Some(load_dir) = function_config.load_dir.as_ref() {
+            args.extend_from_slice(&["--load_from", &load_dir]);
         }
-        let mut vm_process = vm_process.unwrap();
+        if let Some(dump_dir) = function_config.dump_dir.as_ref() {
+            args.extend_from_slice(&["--dump_to", &dump_dir]);
+        }
+        if let Some(diff_dirs) = function_config.diff_dirs.as_ref() {
+            args.extend_from_slice(&["--diff_dirs", &diff_dirs]);
+        }
+        if let Some(cmdline) = function_config.cmdline.as_ref() {
+            args.extend_from_slice(&["--kernel_args", &cmdline]);
+        }
+        if function_config.copy_base {
+            args.push("--copy_base");
+        }
+        if function_config.copy_diff {
+            args.push("--copy_diff");
+        }
 
-        //let mut ready_msg = String::new();
-        let mut ready_msg = vec![0;1];
-        {
-            let stdout = vm_process.stdout.as_mut().unwrap();
-            //stdout.read_to_string(&mut ready_msg);
-            // If no ready message is received, kill the child process and
-            // return None.
-            // TODO: have a timeout here in case the firerunner process does
-            // not die but hangs
-            match stdout.read(&mut ready_msg) {
-                Ok(_) => (), //info!("vm {:?} is ready", ready_msg),
-                Err(e) => {
-                    error!("No ready message received from {:?}, with {:?}", vm_process, e);
-                    vm_process.kill();
-                    return None;
+        // network config should be of the format <TAP-Name>/<MAC Address>
+        if let Some(network) = network {
+            let v: Vec<&str> = network.split('/').collect();
+            args.extend_from_slice(&["--tap_name", v[0]]);
+            args.extend_from_slice(&["--mac", v[1]]);
+        }
+
+        info!("args: {:?}", args);
+        let cmd = cmd.args(args);
+        let mut vm_process: Child = cmd.stdin(Stdio::null())
+            .spawn()
+            .map_err(|e| Error::ProcessSpawn(e))?;
+
+        if function_config.dump_dir.is_some() {
+            println!("Waiting for snapshot generation to complete...");
+            match vm_process.wait() {
+                Ok(_) => {
+                    println!("Exiting fc_wrapper upon snapshot generation success");
+                    std::process::exit(0);
+                },
+                Err(_) => {
+                    error!("firerunner didn't run");
+                    std::process::exit(1);
                 }
             }
         }
 
-        return Some(Vm {
-            id: id,
-            memory: function_config.memory,
-            process: vm_process,
+        let (conn, _) = vm_listener.accept().unwrap();
+
+        return Ok(Vm {
+            id: id.parse::<usize>().expect("vm id not int"),
             function_name: function_config.name.clone(),
+            memory: function_config.memory,
+            conn,
+            process: vm_process,
         });
     }
 
     /// Send request to vm and wait for its response
-    pub fn process_req(&mut self, req: Request) -> Result<String, String> {
+    pub fn process_req(&mut self, req: Request) -> Result<String, Error> {
         let req_str = req.payload_as_string();
-        let mut req_sender = self.process.stdin.as_mut().unwrap();
 
         let buf = req_str.as_bytes();
 
-        request::write_u8_vm(&buf, &mut req_sender);
+        request::write_u8_vm(&buf, &mut self.conn).map_err(|e| {
+            Error::VmWrite(e)
+        })?;
 
-        return match request::read_u8_vm(&mut self.process.stdout.as_mut().unwrap()) {
-            Ok(rsp_buf) => Ok(String::from_utf8(rsp_buf).unwrap()),
-            Err(e) => Err(String::from("failed to read from vm")),
+        // This is a blocking call
+        // TODO: add a timeout for this read (maybe ~15 minutes)
+        match request::read_u8_vm(&mut self.conn) {
+            Ok(rsp_buf) => {
+                String::from_utf8(rsp_buf).map_err(|e| {
+                    Error::NotString(e)
+                })
+            }
+            Err(e) => {
+                Err(Error::VmRead(e))
+            }
         }
     }
 
@@ -126,6 +193,36 @@ impl Vm {
         // its clean up process. Previously, we shutdown VMs through SIGTERM
         // which does allow a shutdown process. We need to make sure using
         // SIGKILL won't create any issues with vms.
-        self.process.kill();
+        if let Err(e) = self.conn.shutdown(Shutdown::Both) {
+            error!("Failed to shut down unix connection: {:?}", e);
+        }
+        if let Err(e) = self.process.kill() {
+            error!("VM already exited: {:?}", e);
+        }
+    }
+}
+
+#[derive(Debug)]
+#[cfg(test)]
+pub struct Vm {
+    pub id: usize,
+    pub memory: usize, // MB
+}
+
+#[cfg(test)]
+impl Vm {
+    /// Create a dummy VM for controller tests
+    pub fn new_dummy(memory: usize) -> Self {
+        Vm {
+            id: 0,
+            memory,
+        }
+    }
+
+    pub fn process_req(&mut self, _: Request) -> Result<String, Error> {
+        Ok(String::new())
+    }
+
+    pub fn shutdown(&mut self) {
     }
 }

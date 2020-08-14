@@ -1,13 +1,10 @@
 use std::io::prelude::*;
-use std::io::{BufReader, ErrorKind};
+use std::io::BufReader;
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use clap::{App, Arg};
 use signal_hook::{iterator::Signals, SIGINT};
-use crossbeam_channel::{bounded, Receiver, select};
 
 use snapfaas::request;
 
@@ -56,7 +53,7 @@ fn main() {
     let mut sc = stream.try_clone().expect("Cannot clone TcpStream");
     let num_rspc = num_rsp.clone();
     let num_reqc = num_req.clone();
-    let receiver_thread = std::thread::spawn(move || {
+    let _receiver_thread = std::thread::spawn(move || {
         loop {
 
             match request::read_u8(&mut sc) {
@@ -67,7 +64,7 @@ fn main() {
                 }
                 Err(e) => {
                     match e.kind() {
-                        Other => {
+                        std::io::ErrorKind::Other => {
                             continue
                         }
                         _ => {
@@ -102,8 +99,13 @@ fn main() {
         loop {
             // read line as String
             let mut buf = String::new();
-            if let Ok(s) = reader.read_line(&mut buf) {
-                if s > 0 {
+            match reader.read_line(&mut buf) {
+                Ok(0) => {
+                    // Ok(0) should indicate that we're at the end of the file
+                    println!("read_line() returned 0 bytes");
+                    break;
+                }
+                Ok(_n) => {
                     let req = request::parse_json(&buf).expect(&format!("cannot parse string: {}",buf));
                     std::thread::sleep(std::time::Duration::from_millis(req.time-prev_time));
                     prev_time = req.time;
@@ -114,16 +116,28 @@ fn main() {
                         let mut num_req= num_req.lock().expect("lock poisoned");
                         *num_req+=1;
                     }
-                } else {
-                    break;
                 }
-            } else {
-                break;
+                Err(e) => {
+                    println!("read_line() returned error: {:?}", e);
+                }
             }
         }
     } else {
 
     }
 
-    receiver_thread.join();
+    loop {
+        let cond = {
+            let num_req = num_req.lock().expect("num_req lock");
+            let num_rsp = num_rsp.lock().expect("num_rsp lock");
+            *num_rsp < *num_req 
+        };
+        if cond {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+        } else {
+	    println!("# Requests: {:?}", num_req);                        
+	    println!("# Responses: {:?}", num_rsp);                        
+            std::process::exit(0);
+        }
+    }
 }

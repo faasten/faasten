@@ -6,11 +6,12 @@
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::mpsc::{Sender, Receiver, SendError};
+use std::sync::mpsc::Sender;
 use std::net::{TcpStream};
 
-use log::{error, warn, info};
+use log::error;
 
+//use crate::vsock::*;
 use crate::worker::Worker;
 use crate::request::Request;
 use crate::message::Message;
@@ -31,9 +32,13 @@ impl WorkerPool {
 
         let pool_size = controller.total_mem/128;
         let mut pool = Vec::with_capacity(pool_size);
+        //let mut vsock_stream_senders = HashMap::with_capacity(pool_size);
 
-        for _ in 0..pool_size {
-            pool.push(Worker::new(rx.clone(), controller.clone()));
+        for i in 0..pool_size {
+            //let (sender, receiver) = mpsc::channel();
+            let cid = i as u32 + 100;
+            pool.push(Worker::new(rx.clone(), controller.clone(), cid));
+            //vsock_stream_senders.insert(cid, sender);
         }
 
         WorkerPool {
@@ -44,11 +49,14 @@ impl WorkerPool {
     }
 
     pub fn send_req(&self, req: Request, rsp_sender: Sender<Message>) {
-        self.req_sender.send(Message::Request(req, rsp_sender));
+        self.req_sender.send(Message::Request(req, rsp_sender))
+            .expect("failed to send request");
     }
 
     pub fn send_req_tcp(&self, req: Request, rsp_sender: Arc<Mutex<TcpStream>>) {
-        self.req_sender.send(Message::Request_Tcp(req, rsp_sender));
+        //TODO: better error handling
+        self.req_sender.send(Message::RequestTcp(req, rsp_sender))
+            .expect("failed to send request over TCP");
     }
 
     pub fn pool_size(&self) -> usize {
@@ -60,10 +68,12 @@ impl WorkerPool {
     /// 1. sending Shutdown message to each thread in the pool
     /// 2. wait for all threads in the pool to terminate
     pub fn shutdown(self) {
+        // shutdown all idle VMs
+        self.controller.shutdown();
+        // shutdown all workers
         for _ in &self.pool {
-            self.req_sender.send(Message::Shutdown);
+            self.req_sender.send(Message::Shutdown).expect("failed to shutdown workers");
         }
-
         for w in self.pool {
             let id = w.thread.thread().id();
             if let Err(e) = w.thread.join() {

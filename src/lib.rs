@@ -1,4 +1,3 @@
-#![feature(no_more_cas)]
 pub mod request;
 pub mod worker;
 pub mod workerpool;
@@ -8,6 +7,8 @@ pub mod configs;
 pub mod controller;
 pub mod vm;
 pub mod metrics;
+pub mod firecracker_wrapper;
+pub mod vsock;
 
 use std::string::String;
 use std::fs::File;
@@ -17,7 +18,6 @@ use url::Url;
 const LOCAL_FILE_URL_PREFIX: &str = "file://localhost";
 const MEM_FILE: &str = "/proc/meminfo";     // meminfo file on linux
 const KB_IN_MB: usize = 1024;
-const MEM_4G: usize = 4096;  // in MB
 
 /// check if a string is a url string
 /// TODO: maybe a more comprehensive check is needed but low priority
@@ -29,17 +29,20 @@ pub fn check_url(path: &str) -> bool {
 }
 
 
-/// Check is a path is local filesystem path. If yes,
-/// append file://localhost/ to local filesystem paths and expand ., .. and ~.
-/// TODO: maybe a more comprehensive implementation is needed but low priority
-pub fn convert_fs_path_to_url (path: &str) -> String {
+/// Check if a path is local filesystem path. If yes, append file://localhost/;
+/// If the path is already an URL, return itself.
+/// This function supports absolute path and relative path containing only "." and "..".
+/// An error is returned when the path does not exist.
+pub fn convert_fs_path_to_url (path: &str) -> Result<String> {
     if check_url(path) {
-        return path.to_string();
+        return Ok(path.to_string());
     }
     let mut url = String::from(LOCAL_FILE_URL_PREFIX);
-    url.push_str(&shellexpand::tilde(path));
+    // unwrap is safe as the path is utf-8 valid
+    let path = std::fs::canonicalize(path).map(|p| p.to_str().unwrap().to_string())?;
+    url.push_str(path.as_str());
 
-    return url;
+    return Ok(url);
 }
 
 /// Open a file specified by a URL in the form of a string

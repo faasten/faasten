@@ -1,6 +1,0 @@
-import time
-import lorem
-
-def handle(obj):
-    time.sleep(0.5)
-    return {'request': obj, 'body': lorem.sentence()}

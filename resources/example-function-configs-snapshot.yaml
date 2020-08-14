@@ -1,0 +1,8 @@
+- name: "hello"
+  runtimefs: "python3.ext4"
+  appfs: "hello.ext2"
+  vcpus: 1
+  memory: 128 
+  concurrency_limit: 600
+  load_dir: "python3"
+  diff_dirs: "hello"

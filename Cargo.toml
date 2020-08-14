@@ -1,7 +1,7 @@
 [package]
 name = "snapfaas"
 version = "0.1.0"
-authors = ["David H. Liu<hl7@cs.princeton.edu>"]
+authors = ["David H. Liu<hl7@cs.princeton.edu>", "Yue Tan<yuetan@cs.princeton.edu"]
 edition = "2018"
 
 [[bin]]
@@ -20,6 +20,10 @@ path = "bins/client/main.rs"
 name = "server"
 path = "bins/server/main.rs"
 
+[[bin]]
+name = "fc_wrapper"
+path = "bins/fc_wrapper/main.rs"
+
 [lib]
 
 [dependencies]
@@ -33,9 +37,12 @@ serde_json = "*"
 shellexpand = "1.0.0"
 nix = "0.16.0"
 cgroups = "0.1.0"
-vmm = { path = "firecracker/vmm", features = ["vsock"] }
+vmm = { path = "firecracker/vmm", features = ["vsock"]}
+fc_util = { path = "firecracker/fc_util" }
 sys_util = { path = "firecracker/sys_util" }
+net_util = { path = "firecracker/net_util" }
 time = "0.1"
 signal-hook = "0.1.13"
 crossbeam-channel = "0.4.2"
 futures = "0.1.18"
+libc =  "*"
