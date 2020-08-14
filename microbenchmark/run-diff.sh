@@ -1,8 +1,12 @@
 #!/bin/bash
 
+if [ ! -d microbenchmark ] || [ ! -d resources ]; then
+    echo 'Directory microbenchnark and resources do not exist in current working directory'
+    exit 1
+fi
 
 if [ $# -ne 1 ]; then
-    echo 'usage: SCRIPT NUMBER_OF_ROUNDS'
+    echo 'usage: microbenchmark/run.sh NUMBER_OF_ROUNDS'
     exit 1
 fi
 rounds=$1
@@ -12,11 +16,6 @@ for ((i=0; i<$rounds; i++))
 do
     # drop page cache
     echo 1 | sudo tee /proc/sys/vm/drop_caches &>/dev/null
-    cat tmp/bin/release/firerunner >/dev/null
-    cat tmp/bin/release/fc_wrapper >/dev/null
-    cat tmp/images/vmlinux-4.20.0 >/dev/null
-    cat tmp/images/python3.ext4 >/dev/null
-    cat tmp/images/snapshot/python3/* >/dev/null
     for app in $(dir /ssd/images/snapshot/diff)
     do
         taskset -c 0 sudo tmp/bin/release/fc_wrapper \
@@ -29,7 +28,7 @@ do
             --diff_dirs /ssd/images/snapshot/diff/$app \
             --firerunner tmp/bin/release/firerunner \
             --network 'tap0/aa:bb:cc:dd:ff:00' \
-            --copy_diff > microbenchmark/out/$app.$i.txt < microbenchmark/requests/$app.json
+            --copy_diff > microbenchmark/out/$app.$i.txt < resources/requests/$app.json
         if [ $? -eq 1 ]; then
             echo 'error: failed to execute' $app
             exit 1

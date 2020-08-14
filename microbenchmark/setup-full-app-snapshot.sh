@@ -18,13 +18,16 @@ cargo build --release --target-dir tmp/bin --quiet --bin fc_wrapper --bin fireru
 echo 'Building combined appfs...'
 cd snapfaas-images/combined
 [ ! -d /ssd/images/rootfs ] && mkdir -p /ssd/images/rootfs
-languages=( python3 )
+languages=( python3 nodejs)
 appfsDir='../appfs'
 for language in "${languages[@]}"
 do
-    apps=$(ls $appfsDir/$language -I noop-carray)
+    apps=$(ls $appfsDir/$language)
     for app in $apps
     do
+        if [[ $app =~ ^\. ]]; then
+            continue
+        fi
         ./mk_appimage.sh python3-net-vsock /ssd/images/rootfs/$app-$language.ext4 $appfsDir/$language/$app &>/dev/null
     done
 done
