@@ -168,7 +168,7 @@ impl Controller {
                 trace!("Allocating new VM. ID: {:?}, App: {:?}", id, function_config.name);
 
                 #[cfg(not(test))]
-                return Vm::new(&id.to_string(), function_config, _vm_listener, _cid, Some(_network), &self.controller_config.firerunner_path)
+                return Vm::new(&id.to_string(), function_config, _vm_listener, _cid, Some(_network), &self.controller_config.firerunner_path, false)
                     .map_err(|e| {
                         // Make sure to "unreserve" the resource by incrementing
                         // `Controller::free_mem`

@@ -135,6 +135,14 @@ fn main() {
                 .default_value("target/release/firerunner")
                 .help("path to the firerunner binary")
         )
+        .arg(
+            Arg::with_name("force exit")
+                .long("force_exit")
+                .value_name("FORCEEXIT")
+                .takes_value(false)
+                .required(false)
+                .help("force fc_wrapper to exit once firerunner exits")
+        )
         .get_matches();
 
     // Create a FunctionConfig value based on cmdline inputs
@@ -163,10 +171,12 @@ fn main() {
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
     let firerunner = cmd_arguments.value_of("firerunner").unwrap();
-    let (mut vm, ts_vec) = match Vm::new(id, &vm_app_config, &vm_listener, CID, cmd_arguments.value_of("network"), firerunner) {
+    let (mut vm, ts_vec) = match Vm::new(id, &vm_app_config, &vm_listener, CID,
+        cmd_arguments.value_of("network"), firerunner, cmd_arguments.is_present("force exit"))
+    {
         Ok(vm) => vm,
         Err(e) => {
-            println!("Vm creation failed due to: {:?}", e);
+            eprintln!("Vm creation failed due to: {:?}", e);
             unlink_unix_sockets();
             std::process::exit(1);
         }
@@ -187,7 +197,9 @@ fn main() {
                 requests.push(j);
             }
             Err(e) => {
-                println!("invalid requests: {:?}", e);
+                eprintln!("invalid requests: {:?}", e);
+                vm.shutdown();
+                unlink_unix_sockets();
                 std::process::exit(1);
             }
         }
@@ -205,7 +217,7 @@ fn main() {
                 num_rsp+=1;
             }
             Err(e) => {
-                println!("Request failed due to: {:?}", e);
+                eprintln!("Request failed due to: {:?}", e);
             }
         }
     }

@@ -13,7 +13,7 @@ use log::{info, error};
 #[cfg(not(test))]
 use crate::configs::FunctionConfig;
 #[cfg(not(test))]
-use crate::{unlink_unix_sockets, request};
+use crate::{request};
 use crate::request::Request;
 
 #[derive(Debug)]
@@ -71,6 +71,7 @@ impl Vm {
         cid: u32,
         network: Option<&str>,
         firerunner: &str,
+        force_exit: bool,
     ) -> Result<(Vm, Vec<Instant>), Error> {
         let mut ts_vec = Vec::with_capacity(10);
         ts_vec.push(Instant::now());
@@ -130,23 +131,10 @@ impl Vm {
             .map_err(|e| Error::ProcessSpawn(e))?;
         ts_vec.push(Instant::now());
 
-        if function_config.dump_dir.is_some() {
-            match vm_process.wait() {
-                Ok(s) => {
-                    unlink_unix_sockets();
-                    if s.success() {
-                        std::process::exit(0);
-                    } else {
-                        error!("snapshot generation failed");
-                        std::process::exit(1);
-                    }
-                },
-                Err(_) => {
-                    error!("firerunner didn't run");
-                    unlink_unix_sockets();
-                    std::process::exit(1);
-                }
-            }
+        if force_exit {
+            vm_process.wait().unwrap();
+            crate::unlink_unix_sockets();
+            std::process::exit(0);
         }
 
         let (conn, _) = vm_listener.accept().unwrap();

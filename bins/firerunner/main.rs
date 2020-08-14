@@ -350,7 +350,7 @@ fn main() {
     fc_util::fc_log!("firerunner: configuring VM took: {} us", ts_vec[4].duration_since(ts_vec[3]).as_micros());
     // Launch vm
     if let Err(e) = vmm.start_instance() {
-        error!("Vmm failed to start instance due to: {:?}", e);
+        eprintln!("Vmm failed to start instance due to: {:?}", e);
         std::process::exit(1);
     }
 
