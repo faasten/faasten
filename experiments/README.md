@@ -31,7 +31,8 @@ There are 2 ways of running experiments with generated workload files using `sna
 One is using `snapctr --requests_file <workload.json>` and the other is using a TCP load generator.
 You can see examples of both in `run_experiment_filegateway.sh` and `run_experiment_tcpgateway.sh`.
 
-You can limit how much memory `snapctr` uses with the `--mem` option.
+You can limit how much memory `snapctr` uses with the `--mem` option. The amount of available memory
+limits how many VMs `snapctr` can allocate.
 
 ## Input workload file through `--requests_file` to `snapctr`
 
