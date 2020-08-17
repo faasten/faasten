@@ -23,6 +23,7 @@ do
         for app in $(ls ../snapfaas-images/appfs/$runtime)
         do
             echo "- $app-$runtime"
+	    cat ../resources/requests/$app-$runtime.json | head -1 | \
             taskset -c 0 sudo $MEMBINDIR/fc_wrapper \
                 --vcpu_count 1 \
                 --mem_size 128 \
@@ -30,7 +31,7 @@ do
                 --network 'tap0/aa:bb:cc:dd:ff:00' \
                 --firerunner $MEMBINDIR/firerunner \
                 --rootfs $SSDROOTFSDIR/$app-$runtime.ext4 \
-                > regular-out/$app.$i.txt < ../resources/requests/$app-$runtime.json
+                > regular-out/$app.$i.txt
             [ $? -ne 0 ] && echo '!! failed' && exit 1
         done
     done

@@ -24,6 +24,7 @@ do
         for app in $(ls ../snapfaas-images/appfs/$runtime)
         do
             echo "$app-$runtime"
+	    cat ../resources/requests/$app-$runtime.json | head -1 | \
             taskset -c 0 sudo $MEMBINDIR/fc_wrapper \
                 --vcpu_count 1 \
                 --mem_size 128 \
@@ -34,7 +35,7 @@ do
                 --appfs $SSDAPPFSDIR/$app-$runtime.ext2 \
                 --load_dir $MEMSNAPSHOTDIR/$runtime \
                 --diff_dirs $SSDSNAPSHOTDIR/diff/$app-$runtime \
-                --copy_diff > out/$app-$runtime.$i.txt < ../resources/requests/$app-$runtime.json
+                --copy_diff > out/$app-$runtime.$i.txt
             [ $? -ne 0 ] && echo '!! failed' && exit 1
         done
     done

@@ -38,18 +38,19 @@ echo "Switching to directory $PWD..."
 cd $full_path
 echo "Switching to directory $PWD..."
 
+echo 'Configuring tap0...'
+../scripts/setup-tap-bridge.sh 1
+
 # build firerunner/fc_wrapper binaries
-setup_scripts/build_binaries.sh
-# build root filesystems
-setup_scripts/build_rootfs.sh
-# build app filesystems
-setup_scripts/build_appfs.sh
+#setup_scripts/build_binaries.sh
+## build root filesystems
+#setup_scripts/build_rootfs.sh
+## build app filesystems
+#setup_scripts/build_appfs.sh
 # build language base snapshots + app diff snapshots
 setup_scripts/build_diff_snapshots.sh
 # build full-app snapshots
 setup_scripts/build_fullapp_snapshots.sh
-# build base snapshots with 'console=ttyS0' boot command line argument
-setup_scripts/build_debug_base_snapshots.sh
 # build diff snapshots with 'console=ttyS0' boot command line argument
 setup_scripts/build_debug_diff_snapshots.sh
 echo 'setup' > .stat
