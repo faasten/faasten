@@ -14,6 +14,7 @@ use net_util::MacAddr;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::SnapFaaSConfig;
+use memory_model::MemoryFileOption;
 
 use clap::{App, Arg};
 use log::error;
@@ -149,6 +150,40 @@ fn main() {
                 .required(false)
                 .help("vsock cid of the guest VM")
         )
+        .arg(
+            // by default base snapshot is not opened with O_DIRECT
+            Arg::with_name("odirect base")
+                .long("odirect_base")
+                .value_name("ODIRECT_BASE")
+                .takes_value(false)
+                .required(false)
+                .help("If present, open base snapshot's memory file with O_DIRECT")
+        )
+        .arg(
+            // by default diff snapshot is opened with O_DIRECT
+            Arg::with_name("no odirect diff")
+                .long("no_odirect_diff")
+                .value_name("NO_ODIRECT_DIFF")
+                .takes_value(false)
+                .required(false)
+                .help("If present, open diff snapshot's memory file without O_DIRECT")
+        )
+        .arg(
+            Arg::with_name("no odirect rootfs")
+                .long("no_odirect_root")
+                .value_name("NO_ODIRECT_ROOT")
+                .takes_value(false)
+                .required(false)
+                .help("If present, open rootfs file without O_DIRECT")
+        )
+        .arg(
+            Arg::with_name("no odirect appfs")
+                .long("no_odirect_app")
+                .value_name("NO_ODIRECT_APP")
+                .takes_value(false)
+                .required(false)
+                .help("If present, open appfs file without O_DIRECT")
+        )
         .get_matches();
 
     // process command line arguments
@@ -183,6 +218,10 @@ fn main() {
         .iter().map(PathBuf::from).collect());
     let copy_base = cmd_arguments.is_present("copy_base_memory");
     let copy_diff = cmd_arguments.is_present("copy_diff_memory");
+    let odirect_base = cmd_arguments.is_present("odirect base");
+    let odirect_diff = !cmd_arguments.is_present("no odirect diff");
+    let odirect_rootfs = !cmd_arguments.is_present("no odirect rootfs");
+    let odirect_appfs = !cmd_arguments.is_present("no odirect appfs");
     let mac = cmd_arguments.value_of("mac").map(|x| x.to_string());
     let tap_name = cmd_arguments.value_of("tap_name").map(|x| x.to_string());
     assert!(tap_name.is_none() == mac.is_none());
@@ -242,8 +281,8 @@ fn main() {
         load_dir,
         dump_dir,
         huge_page: false,
-        copy_base,
-        copy_diff,
+        base: MemoryFileOption { copy: copy_base, odirect: odirect_base},
+        diff: MemoryFileOption { copy: copy_diff, odirect: odirect_diff},
         diff_dirs,
     };
     // Create vmm thread
@@ -291,6 +330,7 @@ fn main() {
 	is_read_only: true,
 	partuuid: None,
 	rate_limiter: None,
+        odirect: odirect_rootfs,
     };
 
     if let Err(e) = vmm.insert_block_device(block_config) {
@@ -306,6 +346,7 @@ fn main() {
 	    is_read_only: true,
 	    partuuid: None,
 	    rate_limiter: None,
+            odirect: odirect_appfs,
 	};
         if let Err(e) = vmm.insert_block_device(block_config) {
             error!("Vmm failed to insert appfs due to: {:?}", e);
