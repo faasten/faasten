@@ -45,7 +45,66 @@ Note that the FileGateway runs an open-loop experiment where the sending of the 
 does *not* depend on the completion of the previous request.
 
 ## Load generator
+`$SNAPFAAS_ROOT/bins/client` implements a simple open-loop load generator. 
 
-See `$SNAPFAAS_ROOT/bins/client` for an simple load generator. 
+To run a workload using the load generator, start `snapctr` on a port, for example, `snapctr -p 28888`.
+Then start the load generator by specifying the `snapctr` address and input workload file.
+For example, `client -s localhost:28888 -i experiments/multiapp-medium.json`.
 
 # How to analyze experimental results
+
+Each worker thread in `snapctr` outputs a `.stat` file. `.stat` files contains data
+in the form of a JSON string with the following format:
+```json
+{
+    "number of requests dropped": an_integer,
+    "number of evictions": an_integer,
+    "number of requests completed": an_integer,
+    "number of vms created": an_integer,
+    "boot timestamps": {
+        "an_integer_vm_id": [
+            start_timestamp,
+            end_timestamp
+        ],
+        "another_integer_vm_id": [
+            another_start_timestamp,
+            another_end_timestamp
+        ],
+        ...
+    }
+    "eviction timestamps": {
+        "an_integer_vm_id": [
+            start_timestamp,
+            end_timestamp
+        ],
+        "another_integer_vm_id": [
+            another_start_timestamp,
+            another_end_timestamp
+        ],
+        ...
+    }
+    "request/response timestamps": {
+        "an_integer_vm_id": [
+            start_timestamp,
+            end_timestamp
+        ],
+        "another_integer_vm_id": [
+            another_start_timestamp,
+            another_end_timestamp
+        ],
+        ...
+    }
+    "vm memory sizes": {
+        "an_integer_vm_id": an_integer_of_memory_size,
+        "another_integer_vm_id": another_integer_of_memory_size,
+    }
+}
+```
+
+Use `process_data.py` to analyze experiment data. Run `python3 process_data.py <dir_to_all_stat_files>`,
+where `<dir_to_all_stat_files>` is the directory containing all `.stat` files from an experiment.
+
+`process_experiment(experiment_dir)` function is the primary API. Given `experiment_dir` where all
+`.stat` files reside, `process_experiment()` returns a list of `VM` objects with complete timeline
+of events (boot, eviction, request and response time, etc.), and `result` dictionary with high-level
+statistics. With `process_experiment()`, you can write your own analysis and plotting code.
