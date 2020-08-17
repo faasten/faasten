@@ -1,3 +1,4 @@
+firerunner_path: "./target/release/firerunner"
 kernel_path: "./resources/images/vmlinux-4.20.0"
 runtimefs_dir: "./resources/images/runtimefs/"
 appfs_dir: "./resources/images/appfs/"

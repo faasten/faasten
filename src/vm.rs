@@ -6,27 +6,15 @@ use std::net::Shutdown;
 #[cfg(not(test))]
 use std::os::unix::net::{UnixStream, UnixListener};
 #[cfg(not(test))]
+use std::time::Instant;
+#[cfg(not(test))]
 use log::{info, error};
 
 #[cfg(not(test))]
 use crate::configs::FunctionConfig;
 #[cfg(not(test))]
-use crate::request;
+use crate::{request};
 use crate::request::Request;
-
-#[derive(Debug)]
-pub enum VmStatus{
-    Ready = 65,
-    KernelNotExist,
-    RootfsNotExist,
-    AppfsNotExist,
-    LoadDirNotExist,
-    DumpDirNotExist,
-    VmmFailedToStart,
-    NoReadySignal,
-    Unresponsive,
-    Crashed,
-}
 
 #[derive(Debug)]
 pub enum Error {
@@ -82,8 +70,12 @@ impl Vm {
         vm_listener: &UnixListener,
         cid: u32,
         network: Option<&str>,
-    ) -> Result<Vm, Error> {
-        let mut cmd = Command::new("target/release/firerunner");
+        firerunner: &str,
+        force_exit: bool,
+    ) -> Result<(Vm, Vec<Instant>), Error> {
+        let mut ts_vec = Vec::with_capacity(10);
+        ts_vec.push(Instant::now());
+        let mut cmd = Command::new(firerunner);
         let mem_str = function_config.memory.to_string();
         let vcpu_str = function_config.vcpus.to_string();
         let cid_str = cid.to_string();
@@ -98,11 +90,13 @@ impl Vm {
                 &vcpu_str,
                 "--rootfs",
                 &function_config.runtimefs,
-                "--appfs",
-                &function_config.appfs,
                 "--cid",
                 &cid_str,
         ];
+
+        if function_config.appfs != "" {
+            args.extend_from_slice(&["--appfs", &function_config.appfs]);
+        }
         if let Some(load_dir) = function_config.load_dir.as_ref() {
             args.extend_from_slice(&["--load_from", &load_dir]);
         }
@@ -131,33 +125,28 @@ impl Vm {
 
         info!("args: {:?}", args);
         let cmd = cmd.args(args);
+        ts_vec.push(Instant::now());
         let mut vm_process: Child = cmd.stdin(Stdio::null())
             .spawn()
             .map_err(|e| Error::ProcessSpawn(e))?;
+        ts_vec.push(Instant::now());
 
-        if function_config.dump_dir.is_some() {
-            println!("Waiting for snapshot generation to complete...");
-            match vm_process.wait() {
-                Ok(_) => {
-                    println!("Exiting fc_wrapper upon snapshot generation success");
-                    std::process::exit(0);
-                },
-                Err(_) => {
-                    error!("firerunner didn't run");
-                    std::process::exit(1);
-                }
-            }
+        if force_exit {
+            vm_process.wait().unwrap();
+            crate::unlink_unix_sockets();
+            std::process::exit(0);
         }
 
         let (conn, _) = vm_listener.accept().unwrap();
+        ts_vec.push(Instant::now());
 
-        return Ok(Vm {
+        return Ok((Vm {
             id: id.parse::<usize>().expect("vm id not int"),
             function_name: function_config.name.clone(),
             memory: function_config.memory,
             conn,
             process: vm_process,
-        });
+        }, ts_vec));
     }
 
     /// Send request to vm and wait for its response
