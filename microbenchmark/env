@@ -1,4 +1,4 @@
-MOUNTPOINT=/tmp/snapfaas
+export MOUNTPOINT=/tmp/snapfaas
 export MEMSNAPSHOTDIR=$MOUNTPOINT/images/snapshot
 export MEMROOTFSDIR=$MOUNTPOINT/images/rootfs
 export MEMAPPFSDIR=$MOUNTPOINT/images/appfs
