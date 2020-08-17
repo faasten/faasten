@@ -143,6 +143,40 @@ fn main() {
                 .required(false)
                 .help("force fc_wrapper to exit once firerunner exits")
         )
+        .arg(
+            // by default base snapshot is not opened with O_DIRECT
+            Arg::with_name("odirect base")
+                .long("odirect_base")
+                .value_name("ODIRECT_BASE")
+                .takes_value(false)
+                .required(false)
+                .help("If present, open base snapshot's memory file with O_DIRECT")
+        )
+        .arg(
+            // by default diff snapshot is opened with O_DIRECT
+            Arg::with_name("no odirect diff")
+                .long("no_odirect_diff")
+                .value_name("NO_ODIRECT_DIFF")
+                .takes_value(false)
+                .required(false)
+                .help("If present, open diff snapshot's memory file without O_DIRECT")
+        )
+        .arg(
+            Arg::with_name("no odirect rootfs")
+                .long("no_odirect_root")
+                .value_name("NO_ODIRECT_ROOT")
+                .takes_value(false)
+                .required(false)
+                .help("If present, open rootfs file without O_DIRECT")
+        )
+        .arg(
+            Arg::with_name("no odirect appfs")
+                .long("no_odirect_app")
+                .value_name("NO_ODIRECT_APP")
+                .takes_value(false)
+                .required(false)
+                .help("If present, open appfs file without O_DIRECT")
+        )
         .get_matches();
 
     // Create a FunctionConfig value based on cmdline inputs
@@ -166,13 +200,19 @@ fn main() {
     let id: &str = cmd_arguments.value_of("id").expect("id");
     //println!("id: {}, function config: {:?}", id, vm_app_config);
 
+    let odirect = snapfaas::vm::OdirectOption {
+        base: cmd_arguments.is_present("odirect base"),
+        diff: !cmd_arguments.is_present("no odirect diff"),
+        rootfs: !cmd_arguments.is_present("no odirect rootfs"),
+        appfs: !cmd_arguments.is_present("no odirect appfs")
+    };
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
     let firerunner = cmd_arguments.value_of("firerunner").unwrap();
     let (mut vm, ts_vec) = match Vm::new(id, &vm_app_config, &vm_listener, CID,
-        cmd_arguments.value_of("network"), firerunner, cmd_arguments.is_present("force exit"))
+        cmd_arguments.value_of("network"), firerunner, cmd_arguments.is_present("force exit"), Some(odirect))
     {
         Ok(vm) => vm,
         Err(e) => {
