@@ -20,7 +20,7 @@ mountpoint -q $MOUNTPOINT
 [ ! -d  $MEMSNAPSHOTDIR ] && mkdir -p $MEMSNAPSHOTDIR && mkdir $MEMSNAPSHOTDIR/diff
 [ ! -d $MEMROOTFSDIR ] && mkdir -p $MEMROOTFSDIR
 [ ! -d $MEMAPPFSDIR ] && mkdir -p $MEMAPPFSDIR
-[ ! -d $MEMBINDIR ] && mkdir $MEMBINDIR
+[ ! -d $MEMBINDIR ] && mkdir -p $MEMBINDIR
 # /ssd
 [ ! -d $SSDSNAPSHOTDIR ] && mkdir -p $SSDSNAPSHOTDIR
 [ ! -d $SSDROOTFSDIR ] && mkdir -p $SSDROOTFSDIR
