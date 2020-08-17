@@ -30,6 +30,14 @@ mountpoint -q $MOUNTPOINT
 
 cp ../resources/images/vmlinux-4.20.0 $MOUNTPOINT/images
 
+echo 'Deploying alexa-door device...'
+full_path=$(dirname $(realpath $0))
+cd ../snapfaas-images/appfs/nodejs/alexa-door/door-device
+echo "Switching to directory $PWD..."
+./deploy.sh
+cd $full_path
+echo "Switching to directory $PWD..."
+
 # build firerunner/fc_wrapper binaries
 setup_scripts/build_binaries.sh
 # build root filesystems
