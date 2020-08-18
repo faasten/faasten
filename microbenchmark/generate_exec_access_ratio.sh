@@ -67,7 +67,7 @@ echo 'Writing results to ratio.txt'
 >ratio.txt
 for runtime in "${runtimes[@]}"
 do
-    for app in $apps
+    for app in $(ls ../snapfaas-images/appfs/$runtime)
     do
         echo $app-$runtime >> ratio.txt
         ../snapfaas-images/python_scripts/parse_page_numbers.py $SSDEXECSNAPSHOTDIR/$runtime/page_numbers,$SSDEXECSNAPSHOTDIR/diff/$app-$runtime-func/page_numbers,$SSDEXECSNAPSHOTDIR/diff/$app-$runtime-exec/page_numbers >> ratio.txt
