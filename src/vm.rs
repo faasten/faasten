@@ -29,6 +29,13 @@ pub enum Error {
     NotString(std::string::FromUtf8Error),
 }
 
+pub struct OdirectOption {
+    pub base: bool,
+    pub diff: bool,
+    pub rootfs: bool,
+    pub appfs: bool,
+}
+
 #[derive(Debug)]
 pub struct VmAppConfig {
     pub rootfs: String,
@@ -72,6 +79,7 @@ impl Vm {
         network: Option<&str>,
         firerunner: &str,
         force_exit: bool,
+        odirect: Option<OdirectOption>,
     ) -> Result<(Vm, Vec<Instant>), Error> {
         let mut ts_vec = Vec::with_capacity(10);
         ts_vec.push(Instant::now());
@@ -121,6 +129,22 @@ impl Vm {
             let v: Vec<&str> = network.split('/').collect();
             args.extend_from_slice(&["--tap_name", v[0]]);
             args.extend_from_slice(&["--mac", v[1]]);
+        }
+
+        // odirect
+        if let Some(odirect) = odirect {
+            if odirect.base {
+                args.push("--odirect_base");
+            }
+            if !odirect.diff {
+                args.push("--no_odirect_diff");
+            }
+            if !odirect.rootfs {
+                args.push("--no_odirect_root");
+            }
+            if !odirect.appfs {
+                args.push("--no_odirect_app");
+            }
         }
 
         info!("args: {:?}", args);

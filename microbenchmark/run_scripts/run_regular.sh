@@ -31,7 +31,7 @@ do
                 --network 'tap0/aa:bb:cc:dd:ff:00' \
                 --firerunner $MEMBINDIR/firerunner \
                 --rootfs $SSDROOTFSDIR/$app-$runtime.ext4 \
-                > regular-out/$app.$i.txt
+                > regular-out/$app-$runtime.$i.txt
             [ $? -ne 0 ] && echo '!! failed' && exit 1
         done
     done

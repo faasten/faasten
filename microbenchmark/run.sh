@@ -7,6 +7,6 @@ fi
 
 source ./env
 
-run_scripts/run_diff.sh $1 $2
-run_scripts/run_fullapp.sh $1 $2
+#run_scripts/run_diff.sh $1 $2
+#run_scripts/run_fullapp.sh $1 $2
 run_scripts/run_regular.sh $1 $2
