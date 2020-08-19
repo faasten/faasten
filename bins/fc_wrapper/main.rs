@@ -11,12 +11,14 @@ use snapfaas::configs::FunctionConfig;
 use std::io::BufRead;
 use std::os::unix::net::UnixListener;
 use std::time::Instant;
+use log::debug;
 
 use clap::{App, Arg};
 
 const CID: u32 = 124;
 
 fn main() {
+    simple_logger::init().expect("simple_logger init failed");
     let cmd_arguments = App::new("fireruner wrapper")
         .version(crate_version!())
         .author(crate_authors!())
@@ -254,6 +256,7 @@ fn main() {
             Ok(_rsp) => {
                 let t2 = Instant::now();
                 println!("Request took: {} us", t2.duration_since(t1).as_micros());
+                debug!("Response: {:?}",_rsp);
                 num_rsp+=1;
             }
             Err(e) => {
