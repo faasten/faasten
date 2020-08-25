@@ -65,12 +65,12 @@ The Linux distro used is Alpine Linux v3.10.
 
 ## root filesystem
 
-Currently only Python3.7 is supported. To build a root filesystem for Python3.7, execute
+Currently Python3.7 and Node.js10 are supported. To build a root filesystem, execute
 
 ```bash
 cd snapfaas-images/separate
 # replace the path `/ssd/rootfs/python3.ext4` with the path at which you want to place the root filesystem.
-./mk_rt_images python3-net-vsock /ssd/rootfs/python3.ext4
+./mk_rt_images [python3|nodejs] /ssd/rootfs/[python3|nodejs].ext4
 ```
 
 ## application filesystem
@@ -110,7 +110,7 @@ sudo target/release/fc_wrapper \
     --kernel resources/vmlinux-4.20.0 \
     --rootfs /ssd/ext4/python3.ext4 \
     --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
-    --network 'tap0/ff:ff:ff:ff:ff:ff' \
+    --network 'tap0/aa:bb:cc:dd:ff:00' \
     --mem_size 128 \
     --vcpu_count 1 < resources/hello.json
 ```
@@ -125,7 +125,7 @@ sudo target/release/fc_wrapper \
     --kernel resources/vmlinux-4.20.0 \
     --rootfs /ssd/ext4/python3.ext4 \
     --appfs snapfaas-images/appfs/empty/output.ext2 \
-    --network 'tap0/ff:ff:ff:ff:ff:ff' \
+    --network 'tap0/aa:bb:cc:dd:ff:00' \
     --mem_size 128 \
     --vcpu_count 1 \
     --dump_dir /ssd/snapshots/python3
@@ -141,7 +141,7 @@ sudo target/release/fc_wrapper \
     --kernel resources/vmlinux-4.20.0 \
     --rootfs /ssd/ext4/python3.ext4 \
     --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
-    --network 'tap0/ff:ff:ff:ff:ff:ff' \
+    --network 'tap0/aa:bb:cc:dd:ff:00' \
     --mem_size 128 \
     --vcpu_count 1 \
     --load_dir /ssd/snapshots/python3 \
@@ -156,7 +156,7 @@ sudo target/release/fc_wrapper \
     --kernel resources/vmlinux-4.20.0 \
     --rootfs /ssd/ext4/python3.ext4 \
     --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
-    --network 'tap0/ff:ff:ff:ff:ff:ff' \
+    --network 'tap0/aa:bb:cc:dd:ff:00' \
     --mem_size 128 \
     --vcpu_count 1 \
     --load_dir /ssd/snapshots/python3 \
@@ -171,7 +171,7 @@ sudo target/release/fc_wrapper \
     --kernel_args 'console=ttyS0' \
     --rootfs /ssd/ext4/python3.ext4 \
     --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
-    --network 'tap0/ff:ff:ff:ff:ff:ff' \
+    --network 'tap0/aa:bb:cc:dd:ff:00' \
     --mem_size 128 \
     --vcpu_count 1 < resources/hello.json
 ```
