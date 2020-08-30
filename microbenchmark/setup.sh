@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
 
+# check the existence of /ssd directory
+# and make sure /ssd is on an SSD device
 if [ ! -d /ssd ]; then
     echo '/ssd must exists'
     exit 1
 fi
 mountpoint -q /ssd
 if [ $? -eq 1 ]; then
-    echo 'WARNING: an SSD device should be mounted to /ssd'
-    exit 1
+    echo 'INFO: /ssd is not a mountpoint, checking if the root block device is an SSD...'
+    if [ $(lsblk -o mountpoint,rota | egrep "^/ +" | awk '{ print $2 }') -ne 0 ]; then
+        echo 'ERROT: the root device is not an SSD'
+        exit 1
+    fi
+else 
+    if [ $(lsblk -o rota,mountpoint | egrep /ssd | awk '{ print $1 }') -ne 0 ]; then
+	echo 'ERROR: the device mounted to /ssd is not an SSD device.'
+	exit 1
+    fi
 fi
 
 source ./env
