@@ -7,5 +7,6 @@ export SSDROOTFSDIR=/ssd/images/rootfs
 export SSDAPPFSDIR=/ssd/images/appfs
 export SSDEXECSNAPSHOTDIR=/ssd/images/exec-snapshot
 export KERNEL=$MOUNTPOINT/images/vmlinux-4.20.0
+export NETDEV=tap0/aa:bb:cc:dd:ff:00
 
 export MEMBINDIR=$MOUNTPOINT/bin/release
