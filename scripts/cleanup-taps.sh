@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 if [ $# -ne 1 ]; then
     echo 'usage: ./cleanup-taps.sh NUMBER_OF_TAPS'
     exit 1
