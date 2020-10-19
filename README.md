@@ -36,6 +36,12 @@ git submodule update
 
 # Build Binaries
 
+This project is written in Rust. You can install Rust by following instructions [here](https://www.rust-lang.org/tools/install).
+The recommended way is to run and follow the on-screen instructions:
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
 This repo contains binaries `snapctr`, `fc_wrapper`, and `firerunner`.
 
 To build binary `snapctr`, execute
