@@ -9,7 +9,7 @@ rounds=$(($1 + $2 - 1))
 
 [ $(cat ./.stat | head -1) != 'setup' ] && echo 'Please run ./setup.sh before run this script.' && exit 1
 
-source ./env
+source ./default_env
 
 outDir=hello-fullapp-mem-ondemand-out
 echo 'Starting fullapp mem ondemand...'

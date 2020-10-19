@@ -7,9 +7,9 @@ fi
 startindex=$1
 rounds=$(($1 + $2 - 1))
 
-[ $(cat ./.stat | head -1) != 'setup' ] && echo 'Please run ./setup.sh before run this script.' && exit 1
+[ $(cat ./.stat | grep setup | wc -l) -ne 1 ] && echo 'Please run ./setup.sh before run this script.' && exit 1
 
-source ./env
+source ./default_env
 
 outDir=ocr-regular-out
 echo 'Starting...'

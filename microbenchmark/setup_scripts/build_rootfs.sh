@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+# only source the environment file when invoked directly from command line
+if [ $(ps -o stat= -p $PPID) == 'Ss' ]; then
+	source ./default_env
+fi
 echo 'Building app generic root filesystems...'
 cd ../snapfaas-images/separate
 echo "switching to $PWD"
@@ -14,13 +18,22 @@ done
 echo 'Building app specific root filesystems...'
 cd ../combined
 echo "switching to $PWD"
-languages=( python3 nodejs)
+languages=(python3 nodejs)
 appfsDir='../appfs'
 for language in "${languages[@]}"
 do
     apps=$(ls $appfsDir/$language)
     for app in $apps
     do
+	if [ $runtime == 'python3' ]; then
+	    PKGDIR=package
+	fi
+	if [ $runtime == 'nodejs' ]; then
+	    PKGDIR=node_modules
+	fi
+	if [ -d $appfsDir/$runtime/$app/$PKGDIR ] && [ $(ls $appfsDir/$runtime/$app/$PKGDIR | wc -l) -eq 0 ]; then
+	    rm -r $appfsDir/$runtime/$app/$PKGDIR
+	fi
         echo "- $app-$language.ext4"
         ./mk_appimage.sh $language $SSDROOTFSDIR/$app-$language.ext4 $appfsDir/$language/$app &>/dev/null
     done

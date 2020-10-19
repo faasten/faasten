@@ -5,7 +5,10 @@ if [ ! -d /ssd ]; then
     exit 1
 fi
 
-source ./env
+# only source the environment file when invoked directly from command line
+if [ $(ps -o stat= -p $PPID) == 'Ss' ]; then
+	source ./default_env
+fi
 echo 'Building debug base snapshots...'
 runtimes=( python3 nodejs )
 make -C ../snapfaas-images/appfs/empty &>/dev/null
@@ -33,7 +36,7 @@ for runtime in python3 nodejs
 do
     for app in $(ls $appfsDir/$runtime)
     do
-        echo "$SSDSNAPSHOTDIR/diff/$app-$runtime-debug"
+        echo "- $SSDSNAPSHOTDIR/diff/$app-$runtime-debug"
         [ ! -d $SSDSNAPSHOTDIR/diff/$app-$runtime-debug ] && mkdir -p $SSDSNAPSHOTDIR/diff/$app-$runtime-debug
         sudo $MEMBINDIR/fc_wrapper \
             --vcpu_count 1 \
@@ -49,3 +52,4 @@ do
         [ $? -ne 0 ] && echo '!! failed' && exit 1
     done
 done
+exit 0

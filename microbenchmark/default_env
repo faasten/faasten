@@ -1,12 +1,12 @@
 export MOUNTPOINT=/tmp/snapfaas
-export MEMSNAPSHOTDIR=$MOUNTPOINT/images/snapshot
+export MEMSNAPSHOTDIR=$MOUNTPOINT/snapshots
 export MEMROOTFSDIR=$MOUNTPOINT/images/rootfs
 export MEMAPPFSDIR=$MOUNTPOINT/images/appfs
-export SSDSNAPSHOTDIR=/ssd/images/snapshot
+export SSDSNAPSHOTDIR=/ssd/snapshots
 export SSDROOTFSDIR=/ssd/images/rootfs
 export SSDAPPFSDIR=/ssd/images/appfs
 export SSDEXECSNAPSHOTDIR=/ssd/images/exec-snapshot
 export KERNEL=$MOUNTPOINT/images/vmlinux-4.20.0
 export NETDEV=tap0/aa:bb:cc:dd:ff:00
 
-export MEMBINDIR=$MOUNTPOINT/bin/release
+export MEMBINDIR=$MOUNTPOINT/release

@@ -5,7 +5,10 @@ if [ ! -d /ssd ]; then
     exit 1
 fi
 
-source ./env
+# only source the environment file when invoked directly from command line
+if [ $(ps -o stat= -p $PPID) == 'Ss' ]; then
+	source ./default_env
+fi
 echo 'Building base snapshots...'
 runtimes=( python3 nodejs )
 make -C ../snapfaas-images/appfs/empty &>/dev/null
@@ -36,7 +39,7 @@ for runtime in "${runtimes[@]}"
 do
     for app in $(ls $appfsDir/$runtime)
     do
-        echo "$SSDSNAPSHOTDIR/diff/$app-$runtime"
+        echo "- $SSDSNAPSHOTDIR/diff/$app-$runtime"
         [ ! -d $SSDSNAPSHOTDIR/diff/$app-$runtime ] && mkdir -p $SSDSNAPSHOTDIR/diff/$app-$runtime
         sudo $MEMBINDIR/fc_wrapper \
             --vcpu_count 1 \
@@ -51,7 +54,7 @@ do
             --force_exit >/dev/null
         [ $? -ne 0 ] && echo '!! failed' && exit 1
 
-        echo "$MEMSNAPSHOTDIR/diff/$app-$runtime"
+        echo "- $MEMSNAPSHOTDIR/diff/$app-$runtime"
         [ ! -d $MEMSNAPSHOTDIR/diff/$app-$runtime ] && mkdir $MEMSNAPSHOTDIR/diff/$app-$runtime
         cp $SSDSNAPSHOTDIR/diff/$app-$runtime/* $MEMSNAPSHOTDIR/diff/$app-$runtime
     done

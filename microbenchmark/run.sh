@@ -5,7 +5,7 @@ if [ $# -ne 2 ]; then
     exit 1
 fi
 
-source ./env
+source ./default_env
 
 run_scripts/run_diff.sh $1 $2
 run_scripts/run_fullapp.sh $1 $2

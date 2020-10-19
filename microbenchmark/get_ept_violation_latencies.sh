@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-source ./env
+source ./default_env
 
 [ ! -d ept_out ] && mkdir ept_out
 for (( i=0; i<100; i++ ))

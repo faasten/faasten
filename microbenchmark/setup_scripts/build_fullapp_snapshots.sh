@@ -5,7 +5,10 @@ if [ ! -d /ssd ]; then
     exit 1
 fi
 
-source ./env
+# only source the environment file when invoked directly from command line
+if [ $(ps -o stat= -p $PPID) == 'Ss' ]; then
+	source ./default_env
+fi
 appfsDir='../snapfaas-images/appfs'
 echo 'Building full-app snapshots...'
 languages=( python3 nodejs )

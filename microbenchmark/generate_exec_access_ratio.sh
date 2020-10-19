@@ -6,7 +6,7 @@ if [ ! -d /ssd ]; then
 fi
 
 runtimes=( python3 nodejs )
-source ./env
+source ./default_env
 echo 'Generating language snapshots...'
 for runtime in "${runtimes[@]}"
 do
