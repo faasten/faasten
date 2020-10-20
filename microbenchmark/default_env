@@ -10,3 +10,7 @@ export KERNEL=$MOUNTPOINT/images/vmlinux-4.20.0
 export NETDEV=tap0/aa:bb:cc:dd:ff:00
 
 export MEMBINDIR=$MOUNTPOINT/release
+
+export RUNTIMES=(python3 nodejs)
+# if running microbenchmark one can comment out the line below
+export OTHER_RUNTIMES=(python3-exec nodejs-exec python3-threshold)

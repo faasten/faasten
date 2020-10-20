@@ -5,10 +5,9 @@ if [ ! -d /ssd ]; then
     exit 1
 fi
 
-runtimes=( python3 nodejs )
 source ./default_env
 echo 'Generating language snapshots...'
-for runtime in "${runtimes[@]}"
+for runtime in "${RUNTIMES[@]}"
 do
     echo "- $SSDEXECSNAPSHOTDIR/$runtime"
     [ ! -d $SSDEXECSNAPSHOTDIR/$runtime ] && mkdir $SSDEXECSNAPSHOTDIR/$runtime
@@ -26,7 +25,7 @@ do
 done
 
 echo 'Generating diff snapshots...'
-for runtime in "${runtimes[@]}"
+for runtime in "${RUNTIMES[@]}"
 do
     apps=$(ls ../snapfaas-images/appfs/$runtime)
     for app in $apps
@@ -65,7 +64,7 @@ done
 
 echo 'Writing results to ratio.txt'
 >ratio.txt
-for runtime in "${runtimes[@]}"
+for runtime in "${RUNTIMES[@]}"
 do
     for app in $(ls ../snapfaas-images/appfs/$runtime)
     do

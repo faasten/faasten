@@ -7,7 +7,7 @@ fi
 echo 'Building app generic root filesystems...'
 cd ../snapfaas-images/separate
 echo "switching to $PWD"
-for runtime in python3 nodejs python3-exec nodejs-exec python3-threshold
+for runtime in "${RUNTIMES[@]}" "${OTHER_RUNTIMES[@]}"
 do
     echo "- $SSDROOTFSDIR/$runtime.ext4"
     ./mk_rtimage.sh $runtime $SSDROOTFSDIR/$runtime.ext4 &>/dev/null
@@ -18,9 +18,8 @@ done
 echo 'Building app specific root filesystems...'
 cd ../combined
 echo "switching to $PWD"
-languages=(python3 nodejs)
 appfsDir='../appfs'
-for language in "${languages[@]}"
+for language in "${RUNTIMES[@]}"
 do
     apps=$(ls $appfsDir/$language)
     for app in $apps

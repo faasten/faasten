@@ -11,8 +11,7 @@ if [ $(ps -o stat= -p $PPID) == 'Ss' ]; then
 fi
 appfsDir='../snapfaas-images/appfs'
 echo 'Building full-app snapshots...'
-languages=( python3 nodejs )
-for language in "${languages[@]}"
+for language in "${RUNTIMES[@]}"
 do
     for app in $(ls $appfsDir/$language)
     do

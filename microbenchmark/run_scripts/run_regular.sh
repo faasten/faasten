@@ -18,7 +18,7 @@ echo 1 | sudo tee /proc/sys/vm/drop_caches &>/dev/null
 for ((i=$startindex; i<=$rounds; i++))
 do
     echo "Round $i"
-    for runtime in python3 nodejs
+    for runtime in "${RUNTIMES[@]}"
     do
         for app in $(ls ../snapfaas-images/appfs/$runtime)
         do

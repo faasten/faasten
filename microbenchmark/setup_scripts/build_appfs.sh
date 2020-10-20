@@ -6,8 +6,7 @@ if [ $(ps -o stat= -p $PPID) == 'Ss' ]; then
 fi
 echo 'Building appfs...'
 appfsDir='../snapfaas-images/appfs'
-runtimes=( python3 nodejs )
-for runtime in "${runtimes[@]}"
+for runtime in "${RUNTIMES[@]}"
 do
     for app in $(ls $appfsDir/$runtime)
     do

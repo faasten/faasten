@@ -10,9 +10,8 @@ if [ $(ps -o stat= -p $PPID) == 'Ss' ]; then
 	source ./default_env
 fi
 echo 'Building base snapshots...'
-runtimes=( python3 nodejs )
 make -C ../snapfaas-images/appfs/empty &>/dev/null
-for runtime in "${runtimes[@]}"
+for runtime in "${RUNTIMES[@]}"
 do
     echo "- $MEMSNAPSHOTDIR/$runtime"
     [ ! -d $MEMSNAPSHOTDIR/$runtime ] && mkdir $MEMSNAPSHOTDIR/$runtime
@@ -35,7 +34,7 @@ done
 
 echo 'Building diff snapshots...'
 appfsDir=../snapfaas-images/appfs
-for runtime in "${runtimes[@]}"
+for runtime in "${RUNTIMES[@]}"
 do
     for app in $(ls $appfsDir/$runtime)
     do
