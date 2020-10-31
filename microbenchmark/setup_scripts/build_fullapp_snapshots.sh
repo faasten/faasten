@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 
-if [ ! -d /ssd ]; then
-    echo '/ssd must exists'
-    exit 1
-fi
+source ./default_env
 
-# only source the environment file when invoked directly from command line
-if [ $(ps -o stat= -p $PPID) == 'Ss' ]; then
-	source ./default_env
-fi
+echo 'creating snapshot directories...'
+[ ! -d $MEMSNAPSHOTDIR ] && mkdir -p $MEMSNAPSHOTDIR
+[ ! -d $SSDSNAPSHOTDIR ] && mkdir -p $SSDSNAPSHOTDIR
+[ ! -d $HDDSNAPSHOTDIR ] && mkdir -p $HDDSNAPSHOTDIR
+
 appfsDir='../snapfaas-images/appfs'
 echo 'Building full-app snapshots...'
 for language in "${RUNTIMES[@]}"
@@ -20,10 +18,10 @@ do
         sudo $MEMBINDIR/fc_wrapper \
             --vcpu_count 1 \
             --mem_size 128 \
-            --network 'tap0/aa:bb:cc:dd:ff:00' \
+            --network $NETDEV \
             --kernel $KERNEL \
             --firerunner $MEMBINDIR/firerunner \
-            --rootfs $SSDROOTFSDIR/$app-$language.ext4 \
+            --rootfs $SSDROOTFSDIR/fullapp/$app-$language.ext4 \
             --dump_dir $SSDSNAPSHOTDIR/$app-$language \
             --force_exit >/dev/null
         [ $? -ne 0 ] && echo '!! failed' && exit 1
@@ -31,5 +29,8 @@ do
         echo "- $MEMSNAPSHOTDIR/$app-$language"
         [ ! -d $MEMSNAPSHOTDIR/$app-$language ] && mkdir $MEMSNAPSHOTDIR/$app-$language
         cp $SSDSNAPSHOTDIR/$app-$language/* $MEMSNAPSHOTDIR/$app-$language
+        echo "- $HDDSNAPSHOTDIR/$app-$language"
+        [ ! -d $HDDSNAPSHOTDIR/$app-$language ] && mkdir $HDDSNAPSHOTDIR/$app-$language
+        cp $SSDSNAPSHOTDIR/$app-$language/* $HDDSNAPSHOTDIR/$app-$language
     done
 done

@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 
-if [ ! -d /ssd ]; then
-    echo '/ssd must exists'
-    exit 1
-fi
+source ./default_env
 
-# only source the environment file when invoked directly from command line
-if [ $(ps -o stat= -p $PPID) == 'Ss' ]; then
-	source ./default_env
-fi
+echo 'creating snapshot directories...'
+[ ! -d $MEMSNAPSHOTDIR ] && mkdir -p $MEMSNAPSHOTDIR/diff
+[ ! -d $SSDSNAPSHOTDIR ] && mkdir -p $SSDSNAPSHOTDIR/diff
+[ ! -d $HDDSNAPSHOTDIR ] && mkdir -p $HDDSNAPSHOTDIR/diff
+
 echo 'Building base snapshots...'
 make -C ../snapfaas-images/appfs/empty &>/dev/null
 for runtime in "${RUNTIMES[@]}"
@@ -19,9 +17,9 @@ do
         --vcpu_count 1 \
         --mem_size 128 \
         --kernel $KERNEL \
-        --network 'tap0/aa:bb:cc:dd:ff:00' \
+        --network $NETDEV \
         --firerunner $MEMBINDIR/firerunner \
-        --rootfs $SSDROOTFSDIR/$runtime.ext4 \
+        --rootfs $SSDROOTFSDIR/snapfaas/$runtime.ext4 \
         --appfs ../snapfaas-images/appfs/empty/output.ext2 \
         --dump_dir $MEMSNAPSHOTDIR/$runtime \
         --force_exit >/dev/null
@@ -30,6 +28,9 @@ do
     echo "- $SSDSNAPSHOTDIR/$runtime"
     [ ! -d $SSDSNAPSHOTDIR/$runtime ] && mkdir $SSDSNAPSHOTDIR/$runtime
     cp $MEMSNAPSHOTDIR/$runtime/* $SSDSNAPSHOTDIR/$runtime
+    echo "- $HDDSNAPSHOTDIR/$runtime"
+    [ ! -d $HDDSNAPSHOTDIR/$runtime ] && mkdir $HDDSNAPSHOTDIR/$runtime
+    cp $MEMSNAPSHOTDIR/$runtime/* $HDDSNAPSHOTDIR/$runtime
 done
 
 echo 'Building diff snapshots...'
@@ -45,10 +46,10 @@ do
             --mem_size 128 \
             --kernel $KERNEL \
             --firerunner $MEMBINDIR/firerunner \
-            --network 'tap0/aa:bb:cc:dd:ff:00' \
-            --rootfs $SSDROOTFSDIR/$runtime.ext4 \
+            --network $NETDEV \
+            --rootfs $SSDROOTFSDIR/snapfaas/$runtime.ext4 \
             --appfs $SSDAPPFSDIR/$app-$runtime.ext2 \
-            --load_dir $MEMSNAPSHOTDIR/$runtime \
+            --load_dir $SSDSNAPSHOTDIR/$runtime \
             --dump_dir $SSDSNAPSHOTDIR/diff/$app-$runtime \
             --force_exit >/dev/null
         [ $? -ne 0 ] && echo '!! failed' && exit 1
@@ -56,5 +57,8 @@ do
         echo "- $MEMSNAPSHOTDIR/diff/$app-$runtime"
         [ ! -d $MEMSNAPSHOTDIR/diff/$app-$runtime ] && mkdir $MEMSNAPSHOTDIR/diff/$app-$runtime
         cp $SSDSNAPSHOTDIR/diff/$app-$runtime/* $MEMSNAPSHOTDIR/diff/$app-$runtime
+        echo "- $HDDSNAPSHOTDIR/diff/$app-$runtime"
+        [ ! -d $HDDSNAPSHOTDIR/diff/$app-$runtime ] && mkdir $HDDSNAPSHOTDIR/diff/$app-$runtime
+        cp $SSDSNAPSHOTDIR/diff/$app-$runtime/* $HDDSNAPSHOTDIR/diff/$app-$runtime
     done
 done

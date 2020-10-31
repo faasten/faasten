@@ -1,30 +1,23 @@
 #!/usr/bin/env bash
 
-if [ ! -d /ssd ]; then
-    echo '/ssd must exists'
-    exit 1
-fi
+source ./default_env
 
-# only source the environment file when invoked directly from command line
-if [ $(ps -o stat= -p $PPID) == 'Ss' ]; then
-	source ./default_env
-fi
 echo 'Building debug base snapshots...'
 make -C ../snapfaas-images/appfs/empty &>/dev/null
 for runtime in "${RUNTIMES[@]}"
 do
-    echo "- $MEMSNAPSHOTDIR/$runtime-debug"
-    [ ! -d $MEMSNAPSHOTDIR/$runtime-debug ] && mkdir $MEMSNAPSHOTDIR/$runtime-debug
+    echo "- $SSDSNAPSHOTDIR/$runtime-debug"
+    [ ! -d $SSDSNAPSHOTDIR/$runtime-debug ] && mkdir $SSDSNAPSHOTDIR/$runtime-debug
     sudo $MEMBINDIR/fc_wrapper \
         --vcpu_count 1 \
         --mem_size 128 \
-        --kernel_args 'console=ttyS0' \
+        --kernel_args 'console=ttyS0 quiet' \
         --kernel $KERNEL \
-        --network 'tap0/aa:bb:cc:dd:ff:00' \
+        --network $NETDEV \
         --firerunner $MEMBINDIR/firerunner \
-        --rootfs $SSDROOTFSDIR/$runtime.ext4 \
+        --rootfs $SSDROOTFSDIR/snapfaas/$runtime.ext4 \
         --appfs ../snapfaas-images/appfs/empty/output.ext2 \
-        --dump_dir $MEMSNAPSHOTDIR/$runtime-debug \
+        --dump_dir $SSDSNAPSHOTDIR/$runtime-debug \
         --force_exit &>/dev/null
     [ $? -ne 0 ] && echo '!! failed' && exit 1
 done
@@ -42,10 +35,10 @@ do
             --mem_size 128 \
             --kernel $KERNEL \
             --firerunner $MEMBINDIR/firerunner \
-            --network 'tap0/aa:bb:cc:dd:ff:00' \
-            --rootfs $SSDROOTFSDIR/$runtime.ext4 \
+            --network $NETDEV \
+            --rootfs $SSDROOTFSDIR/snapfaas/$runtime.ext4 \
             --appfs $SSDAPPFSDIR/$app-$runtime.ext2 \
-            --load_dir $MEMSNAPSHOTDIR/$runtime-debug \
+            --load_dir $SSDSNAPSHOTDIR/$runtime-debug \
             --dump_dir $SSDSNAPSHOTDIR/diff/$app-$runtime-debug \
             --force_exit &>/dev/null
         [ $? -ne 0 ] && echo '!! failed' && exit 1

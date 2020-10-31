@@ -22,7 +22,26 @@ fi
 # make /ssd accessible to current user
 sudo chown -R $(id -un):$(id -gn) /ssd
 
+if [ ! -d /hdd ]; then
+    echo '/hdd must exists'
+    exit 1
+fi
+mountpoint -q /hdd
+if [ $? -eq 1 ]; then
+    echo 'INFO: /hdd is not a mountpoint, checking if the root block device is an HDD...'
+    if [ $(lsblk -o mountpoint,rota | egrep "^/ +" | awk '{ print $2 }') -ne 1 ]; then
+        echo 'ERROT: the root device is not an HDD'
+        exit 1
+    fi
+else 
+    if [ $(lsblk -o rota,mountpoint | egrep /hdd | awk '{ print $1 }') -ne 1 ]; then
+	echo 'ERROR: the device mounted to /hdd is not an HDD device.'
+	exit 1
+    fi
+fi
+
 # check docker can run in non-root mode
+echo 'checking docker can run in non-root mode...'
 docker run hello-world &>/dev/null
 if [ $? -ne 0 ]; then
 	echo 'Check that docker daemon is running using `service docker status`.'
@@ -32,24 +51,15 @@ if [ $? -ne 0 ]; then
 fi
 
 source ./default_env
-echo 'creating directories...'
+echo 'mounting 20GB tmpfs at /tmp/snapfaas...'
 # mount a 20GB tmpfs at /tmp/snapfaas
 [ ! -d $MOUNTPOINT ] && mkdir $MOUNTPOINT
 mountpoint -q $MOUNTPOINT
 [ $? -eq 1 ] && sudo mount -t tmpfs -o size=20G tmpfs $MOUNTPOINT
-# image and snapshot directories in memory
-[ ! -d  $MEMSNAPSHOTDIR ] && mkdir -p $MEMSNAPSHOTDIR && mkdir $MEMSNAPSHOTDIR/diff
-[ ! -d $MEMROOTFSDIR ] && mkdir -p $MEMROOTFSDIR
-[ ! -d $MEMAPPFSDIR ] && mkdir -p $MEMAPPFSDIR
-[ ! -d $MEMBINDIR ] && mkdir -p $MEMBINDIR
-# image and snapshot directories in SSD
-[ ! -d $SSDSNAPSHOTDIR ] && mkdir -p $SSDSNAPSHOTDIR
-[ ! -d $SSDROOTFSDIR ] && mkdir -p $SSDROOTFSDIR
-[ ! -d $SSDAPPFSDIR ] && mkdir -p $SSDAPPFSDIR
-[ ! -d $SSDEXECSNAPSHOTDIR ] && mkdir -p $SSDEXECSNAPSHOTDIR
 
-echo "copying kernel image to $MOUNTPOINT/images..."
-cp ../resources/images/vmlinux-4.20.0 $MOUNTPOINT/images
+echo "copying kernel image to $MOUNTPOINT/kernel..."
+[ ! -d $MOUNTPOINT/kernel ] && mkdir $MOUNTPOINT/kernel
+cp ../resources/images/vmlinux-4.20.0 $MOUNTPOINT/kernel
 
 # deploy door device if one is not deployed
 if [ $(docker ps | grep door | wc -l) -ne 1 ]; then
@@ -70,6 +80,7 @@ fi
 
 # prerequisites for building snapshots
 prereq=1
+[ ! -f .stat ] && touch .stat
 # build root filesystems
 if [ $(cat .stat | grep 'rootfs' | wc -l) -eq 0 ]; then
 	setup_scripts/build_rootfs.sh
@@ -93,6 +104,7 @@ if [ $(cat .stat | grep 'appfs' | wc -l) -eq 0 ]; then
 	fi
 fi
 # build firerunner/fc_wrapper binaries
+[ ! -d $MEMBINDIR ] && mkdir -p $MEMBINDIR
 if [ $(cat .stat | grep 'binaries' | wc -l) -eq 0 ]; then
 	setup_scripts/build_binaries.sh
 	if [ $? -ne 0 ]; then
