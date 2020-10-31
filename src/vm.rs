@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::string::String;
 #[cfg(not(test))]
 use std::process::{Child, Command, Stdio};
 #[cfg(not(test))]
@@ -150,15 +151,20 @@ impl Vm {
         info!("args: {:?}", args);
         let cmd = cmd.args(args);
         ts_vec.push(Instant::now());
-        let mut vm_process: Child = cmd.stdin(Stdio::null())
+        let vm_process: Child = cmd.stdin(Stdio::null()).stderr(Stdio::piped())
             .spawn()
             .map_err(|e| Error::ProcessSpawn(e))?;
         ts_vec.push(Instant::now());
 
         if force_exit {
-            vm_process.wait().unwrap();
+            let output = vm_process.wait_with_output().expect("failed to wait on child");
+            let mut status = 0;
+            if !output.status.success() {
+                eprintln!("{:?}", String::from_utf8_lossy(&output.stderr));
+                status = 1;
+            }
             crate::unlink_unix_sockets();
-            std::process::exit(0);
+            std::process::exit(status);
         }
 
         let (conn, _) = vm_listener.accept().unwrap();

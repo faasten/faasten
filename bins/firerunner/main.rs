@@ -17,7 +17,7 @@ use vmm::SnapFaaSConfig;
 use memory_model::MemoryFileOption;
 
 use clap::{App, Arg};
-use log::error;
+//use log::error;
 
 use snapfaas::firecracker_wrapper::VmmWrapper;
 
@@ -230,32 +230,32 @@ fn main() {
 
     // Make sure kernel, rootfs, appfs, load_dir, dump_dir exist
     if !&kernel.exists() {
-        error!("kernel not exist");
+        eprintln!("kernel not exist");
         std::process::exit(1);
     }
     if !&rootfs.exists() {
-        error!("rootfs not exist");
+        eprintln!("rootfs not exist");
         std::process::exit(1);
     }
 
     if appfs.is_some() && !appfs.as_ref().unwrap().exists(){
-        error!("appfs not exist");
+        eprintln!("appfs not exist");
         std::process::exit(1);
     }
 
     if load_dir.is_some() && !load_dir.as_ref().unwrap().exists(){
-        error!("load directory not exist");
+        eprintln!("load directory not exist");
         std::process::exit(1);
     }
 
     if dump_dir.is_some() && !dump_dir.as_ref().unwrap().exists(){
-        error!("dump directory not exist");
+        eprintln!("dump directory not exist");
         std::process::exit(1);
     }
 
     for dir in &diff_dirs {
         if !dir.exists() {
-            error!("diff snapshot not exist");
+            eprintln!("diff snapshot not exist");
             std::process::exit(1);
         }
     }
@@ -289,7 +289,7 @@ fn main() {
     let mut vmm = match VmmWrapper::new(instance_id, config) {
         Ok(vmm) => vmm,
         Err(e) => {
-            error!("Vmm failed to start due to: {:?}", e);
+            eprintln!("Vmm failed to start due to: {:?}", e);
             std::process::exit(1);
         }
     };
@@ -307,7 +307,7 @@ fn main() {
     };
 
     if let Err(e) = vmm.set_configuration(machine_config) {
-        error!("Vmm failed to set configuration due to: {:?}", e);
+        eprintln!("Vmm failed to set configuration due to: {:?}", e);
         std::process::exit(1);
     }
 
@@ -318,7 +318,7 @@ fn main() {
         };
 
         if let Err(e) = vmm.set_boot_source(boot_config) {
-            error!("Vmm failed to set boot source due to: {:?}", e);
+            eprintln!("Vmm failed to set boot source due to: {:?}", e);
             std::process::exit(1);
         }
     }
@@ -334,7 +334,7 @@ fn main() {
     };
 
     if let Err(e) = vmm.insert_block_device(block_config) {
-        error!("Vmm failed to insert rootfs due to: {:?}", e);
+        eprintln!("Vmm failed to insert rootfs due to: {:?}", e);
         std::process::exit(1);
     }
 
@@ -349,7 +349,7 @@ fn main() {
             odirect: odirect_appfs,
 	};
         if let Err(e) = vmm.insert_block_device(block_config) {
-            error!("Vmm failed to insert appfs due to: {:?}", e);
+            eprintln!("Vmm failed to insert appfs due to: {:?}", e);
             std::process::exit(1);
         }
     }
@@ -365,7 +365,7 @@ fn main() {
             tap: None,
         };
         if let Err(e) = vmm.insert_network_device(netif_config) {
-            error!("Vmm failed to insert network device due to: {:?}", e);
+            eprintln!("Vmm failed to insert network device due to: {:?}", e);
             std::process::exit(1);
         }
     }
@@ -377,7 +377,7 @@ fn main() {
             uds_path: format!("worker-{}.sock", cid).to_string(),
         };
         if let Err(e) = vmm.add_vsock(vsock_config) {
-            error!("Vmm failed to add vsock due to: {:?}", e);
+            eprintln!("Vmm failed to add vsock due to: {:?}", e);
             std::process::exit(1);
         }
     }
