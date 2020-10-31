@@ -39,6 +39,7 @@ else
 	exit 1
     fi
 fi
+sudo chown -R $(id -un):$(id -gn) /hdd
 
 # check docker can run in non-root mode
 echo 'checking docker can run in non-root mode...'
