@@ -1,3 +1,5 @@
 source ./default_env
 sudo umount $MOUNTPOINT
-sudo rm -r /ssd/*
+rm -rf /ssd/*
+rm -rf /hdd/*
+rm .stat
