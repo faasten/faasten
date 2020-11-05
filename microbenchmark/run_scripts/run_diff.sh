@@ -35,6 +35,7 @@ case "$2" in
 	rootfsdir=$SSDROOTFSDIR/snapfaas
 	appfsdir=$SSDAPPFSDIR
 	snapshotdir=$MEMSNAPSHOTDIR
+        odirectFlag='--no_odirect_diff'
 	;;
     nvm)
         rootfsdir=$SSDROOTFSDIR/snapfaas
@@ -76,7 +77,7 @@ do
                 --appfs $appfsdir/$app-$runtime.ext2 \
                 --load_dir $MEMSNAPSHOTDIR/$runtime \
                 --diff_dirs $snapshotdir/diff/$app-$runtime \
-                $mode > $outdir/$app-$runtime.$i.txt
+                $mode $odirectFlag > $outdir/$app-$runtime.$i.txt
             [ $? -ne 0 ] && echo '!! failed' && exit 1
         done
     done
