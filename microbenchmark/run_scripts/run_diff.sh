@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 if [ $# -ne 4 ]; then
-    echo 'usage: run_scripts/run_diff.sh eager|ondemand ssd|hdd START_INDEX NUMBER_OF_ROUNDS'
+    echo 'usage: run_scripts/run_diff.sh eager|ondemand mem|nvm|ssd|hdd START_INDEX NUMBER_OF_ROUNDS'
     exit 1
 fi
 
@@ -31,8 +31,18 @@ case "$2" in
         appfsdir=$HDDAPPFSDIR
         snapshotdir=$HDDSNAPSHOTDIR
         ;;
+    mem)
+	rootfsdir=$SSDROOTFSDIR/snapfaas
+	appfsdir=$SSDAPPFSDIR
+	snapshotdir=$MEMSNAPSHOTDIR
+	;;
+    nvm)
+        rootfsdir=$SSDROOTFSDIR/snapfaas
+	appfsdir=$SSDAPPFSDIR
+	snapshotidr=$NVMSNAPSHOTDIR
+	;;
     *)
-        echo 'Error: the second positional argument must be either sdd or hdd'
+        echo 'Error: the second positional argument must be either sdd or hdd or mem or nvm'
         exit 1
         ;;
 esac
