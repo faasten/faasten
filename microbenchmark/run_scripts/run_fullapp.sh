@@ -31,16 +31,19 @@ case "$2" in
         ;;
     mem)
 	rootfsdir=$SSDROOTFSDIR/fullapp
-	appfsdir=$SSDAPPFSDIR
 	snapshotdir=$MEMSNAPSHOTDIR
 	;;
+    memmem)
+        rootfsdir=$MEMROOTFSDIR/fullapp
+        snapshotdir=$MEMSNAPSHOTDIR
+        odirectFlag='--no_odirect_root'
+        ;;
     nvm)
         rootfsdir=$SSDROOTFSDIR/fullapp
-	appfsdir=$SSDAPPFSDIR
 	snapshotidr=$NVMSNAPSHOTDIR
 	;;
     *)
-        echo 'Error: the second positional argument must be either sdd or hdd or mem or nvm'
+        echo 'Error: the second positional argument must be either sdd or hdd or mem or nvm or memmem'
         exit 1
         ;;
 esac
@@ -72,7 +75,7 @@ do
                 --firerunner $MEMBINDIR/firerunner \
                 --rootfs $rootfsdir/$app-$runtime.ext4 \
                 --load_dir $snapshotdir/$app-$runtime \
-                $mode > $outdir/$app-$runtime.$i.txt
+                $mode $odirectFlag > $outdir/$app-$runtime.$i.txt
             [ $? -ne 0 ] && echo '!! failed' && exit 1
         done
     done

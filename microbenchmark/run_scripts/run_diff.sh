@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 if [ $# -ne 4 ]; then
-    echo 'usage: run_scripts/run_diff.sh eager|ondemand mem|nvm|ssd|hdd START_INDEX NUMBER_OF_ROUNDS'
+    echo 'usage: run_scripts/run_diff.sh eager|ondemand mem|memmem|nvm|ssd|hdd START_INDEX NUMBER_OF_ROUNDS'
     exit 1
 fi
 
@@ -37,6 +37,12 @@ case "$2" in
 	snapshotdir=$MEMSNAPSHOTDIR
         odirectFlag='--no_odirect_diff'
 	;;
+    memmem)
+        rootfsdir=$MEMROOTFSDIR/snapfaas
+        appfsdir=$MEMAPPFSDIR
+        snapshotdir=$MEMSNAPSHOTDIR
+        odirectFlag='--no_odirect_diff --no_odirect_root --no_odirect_app'
+        ;;
     nvm)
         rootfsdir=$SSDROOTFSDIR/snapfaas
 	appfsdir=$SSDAPPFSDIR
@@ -65,7 +71,7 @@ do
     do
         for app in $(ls ../snapfaas-images/appfs/$runtime)
         do
-            echo "$app-$runtime"
+            echo "- $app-$runtime"
 	    cat ../resources/requests/$app-$runtime.json | head -1 | \
             taskset -c 0 sudo $MEMBINDIR/fc_wrapper \
                 --vcpu_count 1 \

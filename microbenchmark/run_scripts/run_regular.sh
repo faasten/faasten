@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 if [ $# -ne 3 ]; then
-    echo 'usage: run_scripts/run_regular.sh ssd|hdd START_INDEX NUMBER_OF_ROUNDS'
+    echo 'usage: run_scripts/run_regular.sh mem|ssd|hdd START_INDEX NUMBER_OF_ROUNDS'
     exit 1
 fi
 
@@ -14,8 +14,12 @@ case "$1" in
     hdd)
         rootfsdir=$HDDROOTFSDIR/regular
         ;;
+    mem)
+        rootfsdir=$MEMROOTFSDIR/regular
+        odirectFlag='--no_odirect_root'
+        ;;
     *)
-        echo 'Error: the second positional argument must be either sdd or hdd'
+        echo 'Error: the second positional argument must be either mem or sdd or hdd'
         exit 1
         ;;
 esac
@@ -44,7 +48,7 @@ do
                 --network $NETDEV \
                 --firerunner $MEMBINDIR/firerunner \
                 --rootfs $rootfsdir/$app-$runtime.ext4 \
-                > $outdir/$app-$runtime.$i.txt
+                $odirectFlag > $outdir/$app-$runtime.$i.txt
             [ $? -ne 0 ] && echo '!! failed' && exit 1
         done
     done
