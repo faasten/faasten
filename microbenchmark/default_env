@@ -1,21 +1,28 @@
-export MOUNTPOINT=/tmp/snapfaas
-export MEMSNAPSHOTDIR=$MOUNTPOINT/snapshots
-export MEMROOTFSDIR=$MOUNTPOINT/rootfs
-export MEMAPPFSDIR=$MOUNTPOINT/appfs
+export MEMROOT=/tmp/snapfaas
+export MEMSNAPSHOTDIR=$MEMROOT/snapshots
+export MEMROOTFSDIR=$MEMROOT/rootfs
+export MEMAPPFSDIR=$MEMROOT/appfs
 
-export SSDSNAPSHOTDIR=/ssd/snapshots
-export SSDROOTFSDIR=/ssd/rootfs
-export SSDAPPFSDIR=/ssd/appfs
-export SSDEXECSNAPSHOTDIR=/ssd/exec-snapshot
+export NVMROOT=/nvm
+export NVMSNAPSHOTDIR=$NVMROOT/snapshots
+export NVMROOTFSDIR=$NVMROOT/rootfs
+export NVMAPPFSDIR=$NVMROOT/appfs
 
-export HDDSNAPSHOTDIR=/hdd/snapshots
-export HDDROOTFSDIR=/hdd/rootfs
-export HDDAPPFSDIR=/hdd/appfs
+export SSDROOT=/ssd
+export SSDSNAPSHOTDIR=$SSDROOT/snapshots
+export SSDROOTFSDIR=$SSDROOT/rootfs
+export SSDAPPFSDIR=$SSDROOT/appfs
+export SSDEXECSNAPSHOTDIR=$SSDROOT/exec-snapshot
 
-export KERNEL=$MOUNTPOINT/kernel/vmlinux-4.20.0
+export HDDROOT=/hdd
+export HDDSNAPSHOTDIR=$HDDROOT/snapshots
+export HDDROOTFSDIR=$HDDROOT/rootfs
+export HDDAPPFSDIR=$HDDROOT/appfs
+
+export KERNEL=$MEMROOT/kernel/vmlinux-4.20.0
 export NETDEV=tap0/aa:bb:cc:dd:ff:00
 
-export MEMBINDIR=$MOUNTPOINT/release
+export MEMBINDIR=$MEMROOT/release
 
 export RUNTIMES=(python3 nodejs)
 # if running microbenchmark one can comment out the line below

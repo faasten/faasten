@@ -44,8 +44,8 @@ case "$2" in
         odirectFlag='--no_odirect_diff --no_odirect_root --no_odirect_app'
         ;;
     nvm)
-        rootfsdir=$SSDROOTFSDIR/snapfaas
-	appfsdir=$SSDAPPFSDIR
+        rootfsdir=$NVMROOTFSDIR/snapfaas
+	appfsdir=$NVMAPPFSDIR
 	snapshotidr=$NVMSNAPSHOTDIR
 	;;
     *)

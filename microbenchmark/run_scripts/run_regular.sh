@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 if [ $# -ne 3 ]; then
-    echo 'usage: run_scripts/run_regular.sh mem|ssd|hdd START_INDEX NUMBER_OF_ROUNDS'
+    echo 'usage: run_scripts/run_regular.sh mem|nvm|ssd|hdd START_INDEX NUMBER_OF_ROUNDS'
     exit 1
 fi
 
@@ -18,8 +18,10 @@ case "$1" in
         rootfsdir=$MEMROOTFSDIR/regular
         odirectFlag='--no_odirect_root'
         ;;
+    nvm)
+        rootfsdir=$NVMROOTFSDIR/regular
     *)
-        echo 'Error: the second positional argument must be either mem or sdd or hdd'
+        echo 'Error: the second positional argument must be either mem or nvm or sdd or hdd'
         exit 1
         ;;
 esac

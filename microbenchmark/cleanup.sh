@@ -1,5 +1,6 @@
 source ./default_env
-sudo umount $MOUNTPOINT
-rm -rf /ssd/*
-rm -rf /hdd/*
+sudo umount $MEMROOT
+rm -rf $SSDROOT/*
+rm -rf $HDDROOT/*
+rm -rf $NVMROOT/*
 rm .stat

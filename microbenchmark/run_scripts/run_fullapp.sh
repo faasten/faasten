@@ -39,7 +39,7 @@ case "$2" in
         odirectFlag='--no_odirect_root'
         ;;
     nvm)
-        rootfsdir=$SSDROOTFSDIR/fullapp
+        rootfsdir=$NVMROOTFSDIR/fullapp
 	snapshotidr=$NVMSNAPSHOTDIR
 	;;
     *)

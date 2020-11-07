@@ -3,4 +3,4 @@
 source ./default_env
 
 echo 'Building fc_wrapper and firerunner...'
-cargo build --release --quiet --target-dir $MOUNTPOINT --bins
+cargo build --release --quiet --target-dir $MEMROOT --bins

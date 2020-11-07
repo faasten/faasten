@@ -4,8 +4,9 @@ source ./default_env
 
 echo 'creating appfs directories...'
 [ ! -d $MEMAPPFSDIR ] && mkdir -p $MEMAPPFSDIR
-[ ! -d $SSDAPPFSDIR ] && mkdir -p $SSDAPPFSDIR
-[ ! -d $HDDAPPFSDIR ] && mkdir -p $HDDAPPFSDIR
+#[ ! -d $NVMAPPFSDIR ] && mkdir -p $NVMAPPFSDIR
+#[ ! -d $SSDAPPFSDIR ] && mkdir -p $SSDAPPFSDIR
+#[ ! -d $HDDAPPFSDIR ] && mkdir -p $HDDAPPFSDIR
 
 echo $RUNTIMES
 echo $KERNEL
@@ -27,11 +28,13 @@ do
 		rm -r $appfsDir/$runtime/$app/$pkgdir
 	fi
         make -C $appfsDir/$runtime/$app &>/dev/null
-        echo "- $SSDAPPFSDIR/$app-$runtime.ext2"
-        cp $appfsDir/$runtime/$app/output.ext2 $SSDAPPFSDIR/$app-$runtime.ext2
-        echo "- $HDDAPPFSDIR/$app-$runtime.ext2"
-        cp $appfsDir/$runtime/$app/output.ext2 $HDDAPPFSDIR/$app-$runtime.ext2
         echo "- $MEMAPPFSDIR/$app-$runtime.ext2"
         mv $appfsDir/$runtime/$app/output.ext2 $MEMAPPFSDIR/$app-$runtime.ext2
+#        echo "- $SSDAPPFSDIR/$app-$runtime.ext2"
+#        cp $appfsDir/$runtime/$app/output.ext2 $SSDAPPFSDIR/$app-$runtime.ext2
+#        echo "- $HDDAPPFSDIR/$app-$runtime.ext2"
+#        cp $appfsDir/$runtime/$app/output.ext2 $HDDAPPFSDIR/$app-$runtime.ext2
+#        echo "- $NVMAPPFSDIR/$app-$runtime.ext2"
+#        mv $appfsDir/$runtime/$app/output.ext2 $NVMAPPFSDIR/$app-$runtime.ext2
     done
 done

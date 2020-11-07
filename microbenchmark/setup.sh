@@ -1,46 +1,5 @@
 #!/usr/bin/env bash
 
-# check the existence of /ssd directory
-# and make sure /ssd is on an SSD device
-if [ ! -d /ssd ]; then
-    echo '/ssd must exists'
-    exit 1
-fi
-mountpoint -q /ssd
-if [ $? -eq 1 ]; then
-    echo 'INFO: /ssd is not a mountpoint, checking if the root block device is an SSD...'
-    if [ $(lsblk -o mountpoint,rota | egrep "^/ +" | awk '{ print $2 }') -ne 0 ]; then
-        echo 'ERROT: the root device is not an SSD'
-        exit 1
-    fi
-else 
-    if [ $(lsblk -o rota,mountpoint | egrep /ssd | awk '{ print $1 }') -ne 0 ]; then
-	echo 'ERROR: the device mounted to /ssd is not an SSD device.'
-	exit 1
-    fi
-fi
-# make /ssd accessible to current user
-sudo chown -R $(id -un):$(id -gn) /ssd
-
-if [ ! -d /hdd ]; then
-    echo '/hdd must exists'
-    exit 1
-fi
-mountpoint -q /hdd
-if [ $? -eq 1 ]; then
-    echo 'INFO: /hdd is not a mountpoint, checking if the root block device is an HDD...'
-    if [ $(lsblk -o mountpoint,rota | egrep "^/ +" | awk '{ print $2 }') -ne 1 ]; then
-        echo 'ERROT: the root device is not an HDD'
-        exit 1
-    fi
-else 
-    if [ $(lsblk -o rota,mountpoint | egrep /hdd | awk '{ print $1 }') -ne 1 ]; then
-	echo 'ERROR: the device mounted to /hdd is not an HDD device.'
-	exit 1
-    fi
-fi
-sudo chown -R $(id -un):$(id -gn) /hdd
-
 # check docker can run in non-root mode
 echo 'checking docker can run in non-root mode...'
 docker run hello-world &>/dev/null
@@ -52,15 +11,16 @@ if [ $? -ne 0 ]; then
 fi
 
 source ./default_env
-echo 'mounting 20GB tmpfs at /tmp/snapfaas...'
+echo $MEMROOT
+echo "mounting 20GB tmpfs at $MEMROOT..."
 # mount a 20GB tmpfs at /tmp/snapfaas
-[ ! -d $MOUNTPOINT ] && mkdir $MOUNTPOINT
-mountpoint -q $MOUNTPOINT
-[ $? -eq 1 ] && sudo mount -t tmpfs -o size=20G tmpfs $MOUNTPOINT
+[ ! -d $MEMROOT ] && mkdir $MEMROOT
+mountpoint -q $MEMROOT
+[ $? -eq 1 ] && sudo mount -t tmpfs -o size=20G tmpfs $MEMROOT
 
-echo "copying kernel image to $MOUNTPOINT/kernel..."
-[ ! -d $MOUNTPOINT/kernel ] && mkdir $MOUNTPOINT/kernel
-cp ../resources/images/vmlinux-4.20.0 $MOUNTPOINT/kernel
+echo "copying kernel image to $MEMROOT/kernel..."
+[ ! -d $MEMROOT/kernel ] && mkdir $MEMROOT/kernel
+cp ../resources/images/vmlinux-4.20.0 $MEMROOT/kernel
 
 # deploy door device if one is not deployed
 if [ $(docker ps | grep door | wc -l) -ne 1 ]; then
@@ -140,16 +100,16 @@ if [ $prereq -eq 1 ]; then
     	    echo 'fullapp' >> .stat
     	fi
     fi
-    # build diff snapshots with 'console=ttyS0' boot command line argument
-    if [ $(cat .stat | grep 'debug_diff' | wc -l) -eq 0 ]; then
-    	setup_scripts/build_debug_diff_snapshots.sh
-    	if [ $? -ne 0 ]; then
-    	    tput setaf 1; echo 'Building debug diff snapshots failed'
-    	    tput sgr0
-	    complete=0
-    	else
-    	    echo 'debug_diff' >> .stat
-    	fi
-    fi
+    ## build diff snapshots with 'console=ttyS0' boot command line argument
+    #if [ $(cat .stat | grep 'debug_diff' | wc -l) -eq 0 ]; then
+    #	setup_scripts/build_debug_diff_snapshots.sh
+    #	if [ $? -ne 0 ]; then
+    #	    tput setaf 1; echo 'Building debug diff snapshots failed'
+    #	    tput sgr0
+    #        complete=0
+    #	else
+    #	    echo 'debug_diff' >> .stat
+    #	fi
+    #fi
     [ $complete -eq 1 ] && echo 'setup' >> .stat
 fi
