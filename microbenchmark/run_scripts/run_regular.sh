@@ -20,6 +20,7 @@ case "$1" in
         ;;
     nvm)
         rootfsdir=$NVMROOTFSDIR/regular
+        ;;
     *)
         echo 'Error: the second positional argument must be either mem or nvm or sdd or hdd'
         exit 1
@@ -42,6 +43,8 @@ do
         for app in $(ls ../snapfaas-images/appfs/$runtime)
         do
             echo "- $app-$runtime"
+            rootfs=$rootfsdir/$app-$runtime.ext4
+            [ ! -f $rootfs ] && echo $rootfs' does not exist' && exit 1
 	    cat ../resources/requests/$app-$runtime.json | head -1 | \
             taskset -c 0 sudo $MEMBINDIR/fc_wrapper \
                 --vcpu_count 1 \
@@ -49,7 +52,7 @@ do
                 --kernel $KERNEL \
                 --network $NETDEV \
                 --firerunner $MEMBINDIR/firerunner \
-                --rootfs $rootfsdir/$app-$runtime.ext4 \
+                --rootfs $rootfs \
                 $odirectFlag > $outdir/$app-$runtime.$i.txt
             [ $? -ne 0 ] && echo '!! failed' && exit 1
         done
