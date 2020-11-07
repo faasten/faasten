@@ -9,16 +9,16 @@ default, `RUNTIMES=(python3 nodejs)`.
 
 ## `setup.sh` and `setup_scripts`
 `setup.sh` run scripts located in `setup_scripts`. The flow of `setup.sh` is:
-1. checks /ssd exists and an SSD device is mounted to it
-2. makes /ssd writable to the current user
-2. checks docker can run in non-root mode
-4. `source default_env`
-5. creates all required directories, namely `/tmp/snapfaas/release`, `/tmp/snapfaas/images/appfs`, `/tmp/snapfaas/images/rootfs`, `/tmp/snapfaas/snapshots`, `/tmp/snapfaas/snapshots/diff`, `/ssd/images/appfs`, `/ssd/images/rootfs`, `/ssd/snapashots`, `/ssd/snapshots/diff`, and `/tmp/snapfaas` is mounted a 20GB tmpfs.
-6. copies `../resources/images/vmlinux-4.20.0` into `/tmp/snapfaas/images`
-7. builds docker image smartdevice for nodejs alexa-door function
-8. configures `tap0`
-9. builds binaries, root filesystems, and app filesystems
-10. if step 9 succeeds, builds diff snapshots, fullapp snapshots, and debug diff snapshots
+1. checks docker can run in non-root mode
+2. copies `../resources/images/vmlinux-4.20.0` into `$MEMROOT/kernel`
+3. builds docker image smartdevice for nodejs alexa-door function
+4. configures `tap0` if not already configured
+5. builds binaries, root filesystems, and app filesystems into `$MEMROOT/release`, `$MEMROOT/rootfs`, and `$MEMROOT/appfs`
+6. if step 5 succeeds, builds diff snapshots and fullapp snapshots into `$MEMROOT/snapshots`
+
+## `copyfs.sh`
+copyfs.sh should be used to copy all filesystems and snapshots placed in $MEMROOT by `setup.sh` to
+`$NVMROOT`, `$SSDROOT`, or `$HDDROOT`
 
 ### Control which script in `setup_scripts` will be run by `setup.sh`
 `setup.sh` writes a unique word to `.stat` when a script in `setup_scripts` completes with success.
