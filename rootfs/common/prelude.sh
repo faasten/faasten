@@ -1,6 +1,7 @@
 apk add openrc util-linux
 
 cp /common/outl /usr/bin/outl
+cp /common/do-snapshot /usr/bin/do-snapshot
 cp /common/setup-eth0.sh /usr/bin/setup-eth0.sh
 cp /common/ioctl /usr/bin/ioctl
 
