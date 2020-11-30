@@ -1,0 +1,2 @@
+{"time": 15, "user_id": 2, "function":"ocr",	"payload" :{"img": "pitontable.png"}}
+{"time": 15, "user_id": 2, "function":"ocr",	"payload" :{"img": "linuxboot.png"}}
