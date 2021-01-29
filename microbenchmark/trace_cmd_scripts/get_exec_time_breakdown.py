@@ -24,6 +24,7 @@ for d in latency_dirs:
 report_dirs=['../fullapp-eager-report-out',
         '../snapfaas-eager-report-out',
         '../regular-report-out']
+exit_reason_ordering = ['EPT_VIOLATION', 'EPT_MISCONFIG', 'EPT_VIOLATION-mmio', 'HLT', 'EXTERNAL_INTERRUPT', 'PREEMPTION_TIMER', 'MSR_WRITE']
 with open('breakdown.raw.txt', 'w') as ofile, open('breakdown.txt', 'w') as ofile2:
     for d, exec_latencies in zip(report_dirs, exec_latencies_all):
         print(d, file=ofile)
@@ -55,6 +56,9 @@ with open('breakdown.raw.txt', 'w') as ofile, open('breakdown.txt', 'w') as ofil
             print(resstr, file=ofile2)
 
             resstr = ','.join([app, 'total', str(exec_latencies[app])])
-            for k, v in sorted(latencies.items(), key=lambda x: sum(x[1]), reverse=True):
-                resstr = ','.join([resstr, k, str(sum(v))])
+            for reason in exit_reason_ordering:
+                resstr = ','.join([resstr, reason, str(sum(latencies[reason]))])
+            for k, v in sorted(latencies.items(), key=lambda x: x[0]):
+                if k not in exit_reason_ordering:
+                    resstr = ','.join([resstr, k, str(sum(v))])
             print(resstr, file=ofile)
