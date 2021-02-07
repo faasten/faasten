@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+if [ $# -ne 2 ]; then
+    echo 'usage: ./get_exec_time_breakdown.sh START_ROUND END_ROUND(inclusive)'
+    exit 1
+fi
+
 source ./default_env
 
 # create directories for latency numbers
@@ -10,7 +15,7 @@ source ./default_env
 [ ! -d fullapp-eager-report-out ] && mkdir fullapp-eager-report-out
 [ ! -d snapfaas-eager-report-out ] && mkdir snapfaas-eager-report-out
 [ ! -d regular-report-out ] && mkdir regular-report-out
-for (( i=0; i<1; i++ ))
+for (( i=$1; i<=$2; i++ ))
 do
     echo 'Round' $i
     for runtime in python3 nodejs
