@@ -1,20 +1,34 @@
 #!/usr/bin/env bash
 
-if [ $# -ne 2 ]; then
-    echo 'usage: ./get_exec_time_breakdown.sh START_ROUND END_ROUND(inclusive)'
+if [ $# -ne 3 ]; then
+    echo 'usage: ./get_exec_time_breakdown.sh START_ROUND END_ROUND(inclusive) OUTPUT_DIRECTORY'
     exit 1
 fi
+
+OUTPUT_DIRECTORY=$3
+if [ ! -d $OUTPUT_DIRECOTRY ]; then
+    echo "error: $OUTPUT_DIRECTORY does not exist"
+    exit 1
+fi
+FULLAPP_LAT_OUT=$OUTPUT_DIRECTORY/fullapp-eager-latency-out
+SNAPFAAS_LAT_OUT=$OUTPUT_DIRECTORY/snapfaas-eager-latency-out
+REGULAR_LAT_OUT=$OUTPUT_DIRECTORY/regular-latency-out
+
+FULLAPP_REPORT_OUT=$OUTPUT_DIRECTORY/fullapp-eager-report-out
+SNAPFAAS_REPORT_OUT=$OUTPUT_DIRECTORY/snapfaas-eager-report-out
+REGULAR_REPORT_OUT=$OUTPUT_DIRECTORY/regular-report-out
 
 source ./default_env
 
 # create directories for latency numbers
-[ ! -d fullapp-eager-latency-out ] && mkdir fullapp-eager-latency-out
-[ ! -d snapfaas-eager-latency-out ] && mkdir snapfaas-eager-latency-out
-[ ! -d regular-latency-out ] && mkdir regular-latency-out
+[ ! -d $FULLAPP_LAT_OUT ]  &&  mkdir $FULLAPP_LAT_OUT
+[ ! -d $SNAPFAAS_LAT_OUT ] &&  mkdir $SNAPFAAS_LAT_OUT
+[ ! -d $REGULAR_LAT_OUT ]  &&  mkdir $REGULAR_LAT_OUT
 # create directories for ftrace reports
-[ ! -d fullapp-eager-report-out ] && mkdir fullapp-eager-report-out
-[ ! -d snapfaas-eager-report-out ] && mkdir snapfaas-eager-report-out
-[ ! -d regular-report-out ] && mkdir regular-report-out
+[ ! -d $FULLAPP_REPORT_OUT ] && mkdir  $FULLAPP_REPORT_OUT
+[ ! -d $SNAPFAAS_REPORT_OUT ] && mkdir $SNAPFAAS_REPORT_OUT
+[ ! -d $REGULAR_REPORT_OUT ] && mkdir  $REGULAR_REPORT_OUT
+
 for (( i=$1; i<=$2; i++ ))
 do
     echo 'Round' $i
@@ -33,8 +47,8 @@ do
                 --rootfs $SSDROOTFSDIR/fullapp/$app-$runtime.ext4 \
                 --load_dir $SSDSNAPSHOTDIR/$app-$runtime \
                 --copy_base \
-                --odirect_base 1>fullapp-eager-latency-out/$app-$runtime.$i.txt 2>/dev/null < <(cat ../resources/requests/$app-$runtime.json | head -1)
-            trace-cmd report 1> fullapp-eager-report-out/$app-$runtime.$i.txt 2>/dev/null
+                --odirect_base 1>$FULLAPP_LAT_OUT/$app-$runtime.$i.txt 2>/dev/null < <(cat ../resources/requests/$app-$runtime.json | head -1)
+            trace-cmd report 1> $FULLAPP_REPORT_OUT/$app-$runtime.$i.txt 2>/dev/null
             #trace_cmd_scripts/print_host_latencies.py --ftrace_report ept_report > breakdown.$1.txt
             #total1=$(cat tmp.out | head -2 | tail -1 | awk '{ print $2 }')
             #echo "total(us): $total1" >> ept_out/ept_$i.txt
@@ -52,8 +66,8 @@ do
                 --appfs $SSDAPPFSDIR/$app-$runtime.ext2 \
                 --load_dir $MEMSNAPSHOTDIR/$runtime \
                 --diff_dirs $SSDSNAPSHOTDIR/diff/$app-$runtime \
-                --copy_diff 1>snapfaas-eager-latency-out/$app-$runtime.$i.txt 2>/dev/null < <(cat ../resources/requests/$app-$runtime.json | head -1)
-            trace-cmd report 1> snapfaas-eager-report-out/$app-$runtime.$i.txt 2>/dev/null
+                --copy_diff 1>$SNAPFAAS_LAT_OUT/$app-$runtime.$i.txt 2>/dev/null < <(cat ../resources/requests/$app-$runtime.json | head -1)
+            trace-cmd report 1> $SNAPFAAS_REPORT_OUT/$app-$runtime.$i.txt 2>/dev/null
 
             echo "- regular boot: $app-$runtime"
             sudo trace-cmd record -e kvm \
@@ -63,8 +77,9 @@ do
                 --kernel $KERNEL \
                 --network $NETDEV \
                 --firerunner $MEMBINDIR/firerunner \
-                --rootfs $SSDROOTFSDIR/regular/$app-$runtime.ext4 1>regular-latency-out/$app-$runtime.$i.txt 2>/dev/null < <(cat ../resources/requests/$app-$runtime.json | head -1)
-            trace-cmd report 1>regular-report-out/$app-$runtime.$i.txt 2>/dev/null
+                --rootfs $SSDROOTFSDIR/regular/$app-$runtime.ext4 \
+                1>$REGULAR_LAT_OUT/$app-$runtime.$i.txt 2>/dev/null < <(cat ../resources/requests/$app-$runtime.json | head -1)
+            trace-cmd report 1>$REGULAR_REPORT_OUT/$app-$runtime.$i.txt 2>/dev/null
             # find the line of port IO write to 0x3f0
             #linenum=$(egrep -n 0x3f0 ept_report | head -1 | awk -F: '{ print $1 }')
             # discard all traces up to the port IO
