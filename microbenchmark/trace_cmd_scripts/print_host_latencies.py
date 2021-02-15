@@ -20,7 +20,11 @@ def parse_report(report,infile=None, kvmmmu=False, PAGE_SHIFT=12):
             if (lines[0].split()[3] != 'kvm_page_fault:' or int(lines[0].split()[5], 16) > 0xd0000000):
                 # mmio can cause EPT VIOLATION instead of EPT MISCONFIG
                 reason += '-mmio'
-            error_code = int(lines[0].strip().split()[-1], 16)
+            try:
+                error_code = int(lines[0].strip().split()[-1], 16)
+            except ValueError:
+                print(lines[0])
+                raise ValueError
             ept_violation_latencies[error_code].append(lat_us)
             if kvmmmu:
                 strs = lines[1].strip().split()
@@ -40,7 +44,11 @@ def parse_report(report,infile=None, kvmmmu=False, PAGE_SHIFT=12):
             linenum += 1
             strs = line.strip().split()
             if len(strs) > 3 and strs[3] == 'kvm_exit:':
-                reason = strs[5]
+                try:
+                    reason = strs[5]
+                except IndexError:
+                    print(line)
+                    raise IndexError
                 start_s, start_us = [int(x) for x in strs[2][:-1].split('.')]
                 lines = []
                 for line in infile:

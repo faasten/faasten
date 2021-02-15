@@ -2,6 +2,13 @@
 import os
 import print_host_latencies as print_host
 from collections import defaultdict
+import sys
+
+if len(sys.argv) != 2:
+    print('usage: python3 get_ept_counts.py REPORT_DIRECTORY')
+    sys.exit(1)
+
+report_directory = sys.argv[1]
 
 def sortAppName(appname):
     return appname.split('-')[-1] + '-'.join(appname.split('-')[:-1])
@@ -14,7 +21,7 @@ with open('ept_counts.txt', 'w') as ofile:
         round_counts = defaultdict(lambda: defaultdict(list))
         round_sums = defaultdict(lambda: defaultdict(list))
         print(style, file=ofile)
-        d = os.path.join('..', style + '-report-out')
+        d = os.path.join(report_directory, style + '-report-out')
         files = os.listdir(d)
         for f in files:
             fpath = os.path.join(d, f)
@@ -25,11 +32,18 @@ with open('ept_counts.txt', 'w') as ofile:
                 #        break
                 # only regular has a second write to 0x3f0
                 # discard all lines before this second write
-                if d == os.path.join('..', styles[-1] + '-report-out'):
+                if style == styles[-1]:
                     for line in infile:
                         if '0x3f0' in line:
                             break
-                latencies, counts, _, _, _, _ = print_host.parse_report('', infile=infile)
+                try:
+                    latencies, counts, _, _, _, _ = print_host.parse_report('', infile=infile)
+                except IndexError:
+                    print(fpath)
+                    sys.exit(1)
+                except ValueError:
+                    print(fpath)
+                    sys.exit(1)
             app = f.split('.')[0]
             for reason in ept_exit_reason:
                 round_counts[app][reason].append(counts[reason])

@@ -2,6 +2,13 @@
 import os
 import print_host_latencies as print_host
 from collections import defaultdict
+import sys
+
+if len(sys.argv) != 2:
+    print('usage: python3 get_exec_time_breakdown.py REPORT_DIRECTORY')
+    sys.exit(1)
+
+report_directory = sys.argv[1]
 
 def sortAppName(appname):
     return appname.split('-')[-1] + '-'.join(appname.split('-')[:-1])
@@ -23,15 +30,14 @@ def sortAppName(appname):
 #            exec_latencies[app] = int(lines[4].split()[-2])
 #    exec_latencies_all.append(exec_latencies)
 
-report_dirs=['../fullapp-eager-report-out',
-        '../snapfaas-eager-report-out',
-        '../regular-report-out']
+styles=['fullapp-eager', 'snapfaas-eager', 'regular']
 exit_reason_ordering = ['EPT_VIOLATION', 'EPT_MISCONFIG', 'EPT_VIOLATION-mmio', 'HLT', 'EXTERNAL_INTERRUPT', 'PREEMPTION_TIMER', 'MSR_WRITE']
 with open('breakdown.raw.txt', 'w') as ofile:
     print(','.join(['function name', ','.join(exit_reason_ordering)]), file=ofile)
-    for d in report_dirs:
+    for style in styles:
         round_latencies = defaultdict(lambda: defaultdict(list))
-        print(d.split('/')[-1].split('-report-out')[0], file=ofile)
+        print(style, file=ofile)
+        d = os.path.join(report_directory, style + '-report-out')
         files = os.listdir(d)
         for f in files:
             fpath = os.path.join(d, f)
@@ -42,7 +48,7 @@ with open('breakdown.raw.txt', 'w') as ofile:
                 #        break
                 # only regular has a second write tto 0x3f0
                 # discard all lines before this second write
-                if d == report_dirs[-1]:
+                if style == styles[-1]:
                     for line in infile:
                         if '0x3f0' in line:
                             break
