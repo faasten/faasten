@@ -14,7 +14,7 @@ def parse_report(report,infile=None, kvmmmu=False, PAGE_SHIFT=12):
     min_lat = dict()
     ept_violation_latencies = defaultdict(list)
     gfn_latencies = defaultdict(list)
-    mmio_addresses = defaultdict(int)
+    mmios = defaultdict(list)
 
     def classify_latency(reason, lines, lat_us):
         if reason == 'EPT_VIOLATION':
@@ -22,7 +22,7 @@ def parse_report(report,infile=None, kvmmmu=False, PAGE_SHIFT=12):
                 # mmio can cause EPT VIOLATION instead of EPT MISCONFIG
                 reason += '-mmio'
                 try:
-                    mmio_addresses[int(lines[0].split()[5], 16)] += 1
+                    mmios[int(lines[0].split()[5], 16)].append(lat_us)
                 except ValueError:
                     print(lines[0])
                     raise ValueError
@@ -37,7 +37,7 @@ def parse_report(report,infile=None, kvmmmu=False, PAGE_SHIFT=12):
                 strs = lines[1].strip().split()
                 gfn_latencies[int(strs[7], 16) >> PAGE_SHIFT].append((strs[7], error_code, strs[9], lat_us))
         if reason == 'EPT_MISCONFIG':
-            mmio_addresses[int(lines[1].split()[7], 16)] += 1
+            mmios[int(lines[1].split()[7], 16)].append(lat_us)
         latencies[reason].append(lat_us)
         counts[reason] += 1
         if lat_us > max_lat[reason]:
@@ -76,7 +76,7 @@ def parse_report(report,infile=None, kvmmmu=False, PAGE_SHIFT=12):
     else:
         readfile(infile)
 
-    return latencies, counts, max_lat, min_lat, ept_violation_latencies, gfn_latencies, mmio_addresses
+    return latencies, counts, max_lat, min_lat, ept_violation_latencies, gfn_latencies, mmios
 
 def parse_and_print():
     parser = argparse.ArgumentParser()
@@ -96,7 +96,7 @@ def parse_and_print():
     if args.hugepage:
         PAGE_SHIFT += 9
 
-    latencies, counts, max_lat, min_lat, ept_violation_latencies, gfn_latencies, mmio_addresses = parse_report(args.ftrace_report[0])
+    latencies, counts, max_lat, min_lat, ept_violation_latencies, gfn_latencies, mmios = parse_report(args.ftrace_report[0])
 
     print('###exit reason | total_latency (us) | counts | mean (us) | max (us) | min (us) | std')
     k = 'EPT_VIOLATION'
@@ -124,9 +124,9 @@ def parse_and_print():
             print(hex(k), v)
 
     if mmio:
-        print('MMIO Address (hex) | counts')
-        for mmio, count in sorted(mmio_addresses.items(), key=lambda x: x[0]):
-            print(hex(mmio), count)
+        print('MMIO Address (hex) | counts | latencies (us, chronological order)')
+        for mmio, latencies in sorted(mmios.items(), key=lambda x: x[0]):
+            print(hex(mmio), len(latencies), latencies)
 
     if kvmmmu:
         print('\nguest page number | time ordered list of (gpa, error code, error string, latency in us)')
