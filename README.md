@@ -128,45 +128,79 @@ sudo target/release/fc_wrapper \
 mkdir /ssd/snapshots/python3
 # generate a snapshot
 sudo target/release/fc_wrapper \
-    --kernel resources/vmlinux-4.20.0 \
-    --rootfs /ssd/ext4/python3.ext4 \
+    --kernel resources/images/vmlinux-4.20.0 \
+    --rootfs /ssd/rootfs/python3.ext4 \
     --appfs snapfaas-images/appfs/empty/output.ext2 \
     --network 'tap0/aa:bb:cc:dd:ff:00' \
     --mem_size 128 \
     --vcpu_count 1 \
-    --dump_dir /ssd/snapshots/python3
+    --dump_dir /ssd/snapshot/python3 \
+    --force_exit
 ```
 
 3. To generate a diff snapshot for a function, execute:
 
 ```bash
 # create the target snapshot directory
-mkdir /ssd/snapshots/diff/hello
+mkdir -p /ssd/snapshots/diff/hello-python3
 # generate the diff snapshot
 sudo target/release/fc_wrapper \
-    --kernel resources/vmlinux-4.20.0 \
-    --rootfs /ssd/ext4/python3.ext4 \
-    --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
+    --kernel resources/images/vmlinux-4.20.0 \
+    --rootfs /ssd/rootfs/python3.ext4 \
+    --appfs /ssd/appfs/hello-python3.ext2 \
     --network 'tap0/aa:bb:cc:dd:ff:00' \
     --mem_size 128 \
     --vcpu_count 1 \
-    --load_dir /ssd/snapshots/python3 \
-    --dump_dir /ssd/snapshots/diff/hello
+    --load_dir /ssd/snapshot/python3 \
+    --dump_dir /ssd/snapshot/diff/hello-python3 \
+    --force_exit
 ```
 
-4. To boot a VM from a snapshot, execute:
+4. To generate a working set for a function, excute:
+
+```bash
+sudo target/release/fc_wrapper \
+    --kernel resources/images/vmlinux-4.20.0 \
+    --rootfs /ssd/rootfs/python3.ext4 \
+    --appfs /ssd/appfs/hello-python3.ext2 \
+    --network 'tap0/aa:bb:cc:dd:ff:00' \
+    --mem_size 128 \
+    --vcpu_count 1 \
+    --load_dir /ssd/snapshot/python3 \
+    --diff_dirs /ssd/snapshot/diff/hello-python3 \
+    --dump_ws /ssd/snapshot/diff/hello-python3 \
+    < resources/requests/hello-python3.json
+```
+
+4. To boot a VM from a snapshot without the working set optimization, execute:
 
 ```bash
 # run hello function
 sudo target/release/fc_wrapper \
-    --kernel resources/vmlinux-4.20.0 \
-    --rootfs /ssd/ext4/python3.ext4 \
+    --kernel resources/images/vmlinux-4.20.0 \
+    --rootfs /ssd/rootfs/python3.ext4 \
     --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
     --network 'tap0/aa:bb:cc:dd:ff:00' \
     --mem_size 128 \
     --vcpu_count 1 \
-    --load_dir /ssd/snapshots/python3 \
-    --diff_dirs /ssd/snapshots/diff/hello < resources/hello.json
+    --load_dir /ssd/snapshot/python3 \
+    --diff_dirs /ssd/snapshot/diff/hello-python3 < resources/requests/hello-python3.json
+```
+
+4. To boot a VM from a snapshot with the working set optimization, execute:
+
+```bash
+# run hello function
+sudo target/release/fc_wrapper \
+    --kernel resources/images/vmlinux-4.20.0 \
+    --rootfs /ssd/rootfs/python3.ext4 \
+    --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
+    --network 'tap0/aa:bb:cc:dd:ff:00' \
+    --mem_size 128 \
+    --vcpu_count 1 \
+    --load_dir /ssd/snapshot/python3 \
+    --diff_dirs /ssd/snapshot/diff/hello-python3 \
+    --load_ws < resources/requests/hello-python3.json
 ```
 
 5. For debugging, one can turn on guest VM console allowing guest VM output,

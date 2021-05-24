@@ -41,7 +41,7 @@ pub struct OdirectOption {
 pub struct VmAppConfig {
     pub rootfs: String,
     pub appfs: String,
-    pub load_dir: Option<PathBuf>,
+    pub load_dir: Vec<PathBuf>,
     pub dump_dir: Option<PathBuf>,
 }
 
@@ -112,11 +112,17 @@ impl Vm {
         if let Some(dump_dir) = function_config.dump_dir.as_ref() {
             args.extend_from_slice(&["--dump_to", &dump_dir]);
         }
-        if let Some(diff_dirs) = function_config.diff_dirs.as_ref() {
-            args.extend_from_slice(&["--diff_dirs", &diff_dirs]);
-        }
+        //if let Some(diff_dirs) = function_config.diff_dirs.as_ref() {
+        //    args.extend_from_slice(&["--diff_dirs", &diff_dirs]);
+        //}
         if let Some(cmdline) = function_config.cmdline.as_ref() {
             args.extend_from_slice(&["--kernel_args", &cmdline]);
+        }
+        if function_config.dump_ws {
+            args.push("--dump_ws");
+        }
+        if function_config.load_ws {
+            args.push("--load_ws");
         }
         if function_config.copy_base {
             args.push("--copy_base");

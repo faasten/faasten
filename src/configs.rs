@@ -99,9 +99,9 @@ pub struct FunctionConfig {
     /// base snapshot
     #[serde(default)]
     pub load_dir: Option<String>,
-    /// comma-separated list of diff snapshot directories
-    #[serde(default)]
-    pub diff_dirs: Option<String>,
+    ///// comma-separated list of diff snapshot directories
+    //#[serde(default)]
+    //pub diff_dirs: Option<String>,
     /// copy base snapshot memory dump
     #[serde(default)]
     pub copy_base: bool,
@@ -120,6 +120,12 @@ pub struct FunctionConfig {
     /// `snapctr` set this field to None
     #[serde(default)]
     pub dump_dir: Option<String>,
+    /// directory to store the working set
+    #[serde(default)]
+    pub dump_ws: bool,
+    /// load the working set
+    #[serde(default)]
+    pub load_ws: bool,
 }
 
 impl Default for FunctionConfig {
@@ -133,11 +139,13 @@ impl Default for FunctionConfig {
             memory: 128,
             concurrency_limit: 1, // not in use
             load_dir: None,
-            diff_dirs: None,
+            //diff_dirs: None,
             copy_base: false,
             copy_diff: true,
             cmdline: None,
             dump_dir: None,
+            dump_ws: false,
+            load_ws: false,
         }
     }
 }

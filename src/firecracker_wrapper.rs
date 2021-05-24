@@ -150,10 +150,15 @@ impl VmmWrapper {
         self.request_vmm_action(action, sync_receiver)
     }
 
+    pub fn dump_working_set(&mut self) -> Result<VmmData, VmmError> {
+        let (sync_sender, sync_receiver) = oneshot::channel();
+        let action = VmmAction::DumpWorkingSet(sync_sender);
+        self.request_vmm_action(action, sync_receiver)
+    }
+
     pub fn join_vmm(self) {
         self.vmm_thread_handle.join().expect("Couldn't join on the VMM thread");
     }
-
 }
 
 //impl VmChannel {

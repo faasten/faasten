@@ -67,14 +67,14 @@ impl Controller {
                                 app.appfs.as_str()
                             ].iter().collect::<PathBuf>().to_str().unwrap().to_string();
                             // build full path to base snapshot
-                            app.load_dir = app.load_dir.map(|s|
-                                [ctr_config.get_snapshot_base().as_str(), s.as_str()].iter()
-                                    .collect::<PathBuf>().to_str().unwrap().to_string()
-                            );
-                            // build full paths to diff snapshots: comma-separated list
-                            app.diff_dirs = app.diff_dirs.map(|s| 
+                            //app.load_dir = app.load_dir.map(|s|
+                            //    [ctr_config.get_snapshot_base().as_str(), s.as_str()].iter()
+                            //        .collect::<PathBuf>().to_str().unwrap().to_string()
+                            //);
+                            //// build full paths to diff snapshots: comma-separated list
+                            app.load_dir = app.load_dir.map(|s| 
                                 s.split(',').collect::<Vec<&str>>().iter()
-                                    .map(|s| [ctr_config.get_snapshot_base().as_str(), "diff", s]
+                                    .map(|s| [ctr_config.get_snapshot_base().as_str(), s]
                                         .iter().collect::<PathBuf>().to_str().unwrap().to_string())
                                     .collect::<Vec<String>>().join(",")
                             );

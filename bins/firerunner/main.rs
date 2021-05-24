@@ -4,7 +4,7 @@ extern crate cgroups;
 
 use std::fs::File;
 use std::path::PathBuf;
-use std::io::BufReader;
+use std::io::{Write, BufReader};
 use std::time::Instant;
 
 use vmm::vmm_config::boot_source::BootSourceConfig;
@@ -110,14 +110,14 @@ fn main() {
                  .required(false)
                  .help("Restore base snapshot memory by copying")
         )
-        .arg(
-            Arg::with_name("diff_dirs")
-                 .long("diff_dirs")
-                 .value_name("DIFFDIRS")
-                 .takes_value(true)
-                 .required(false)
-                 .help("Comma-separated list of diff snapshots")
-        )
+        //.arg(
+        //    Arg::with_name("diff_dirs")
+        //         .long("diff_dirs")
+        //         .value_name("DIFFDIRS")
+        //         .takes_value(true)
+        //         .required(false)
+        //         .help("Comma-separated list of diff snapshots")
+        //)
         .arg(
             Arg::with_name("copy_diff_memory")
                  .long("copy_diff")
@@ -184,6 +184,22 @@ fn main() {
                 .required(false)
                 .help("If present, open appfs file without O_DIRECT")
         )
+        .arg(
+            Arg::with_name("dump working set")
+                .long("dump_ws")
+                .value_name("DUMP_WS")
+                .takes_value(false)
+                .required(false)
+                .help("If present, VMM will send `dump working set` action to the VM when the host signals through the unix socket connection")
+        )
+        .arg(
+            Arg::with_name("load working set")
+                .long("load_ws")
+                .value_name("LOAD_WS")
+                .takes_value(false)
+                .required(false)
+                .help("If present, VMM will load the regions contained in diff_dirs[0]/WS only effective when there is one diff snapshot.")
+        )
         .get_matches();
 
     // process command line arguments
@@ -212,9 +228,9 @@ fn main() {
 
     // optional arguments:
     let appfs = cmd_arguments.value_of("appfs").map(PathBuf::from);
-    let load_dir: Option<PathBuf> = cmd_arguments.value_of("load_dir").map(PathBuf::from);
+    //let load_dir: Option<PathBuf> = cmd_arguments.value_of("load_dir").map(PathBuf::from);
     let dump_dir: Option<PathBuf> = cmd_arguments.value_of("dump_dir").map(PathBuf::from);
-    let diff_dirs = cmd_arguments.value_of("diff_dirs").map_or(Vec::new(), |x| x.split(',').collect::<Vec<&str>>()
+    let load_dir = cmd_arguments.value_of("load_dir").map_or(Vec::new(), |x| x.split(',').collect::<Vec<&str>>()
         .iter().map(PathBuf::from).collect());
     let copy_base = cmd_arguments.is_present("copy_base_memory");
     let copy_diff = cmd_arguments.is_present("copy_diff_memory");
@@ -222,6 +238,7 @@ fn main() {
     let odirect_diff = !cmd_arguments.is_present("no odirect diff");
     let odirect_rootfs = !cmd_arguments.is_present("no odirect rootfs");
     let odirect_appfs = !cmd_arguments.is_present("no odirect appfs");
+    let load_ws = cmd_arguments.is_present("load working set");
     let mac = cmd_arguments.value_of("mac").map(|x| x.to_string());
     let tap_name = cmd_arguments.value_of("tap_name").map(|x| x.to_string());
     assert!(tap_name.is_none() == mac.is_none());
@@ -243,28 +260,28 @@ fn main() {
         std::process::exit(1);
     }
 
-    if load_dir.is_some() && !load_dir.as_ref().unwrap().exists(){
-        eprintln!("load directory not exist");
-        std::process::exit(1);
-    }
+    //if load_dir.is_some() && !load_dir.as_ref().unwrap().exists(){
+    //    eprintln!("load directory not exist");
+    //    std::process::exit(1);
+    //}
 
     if dump_dir.is_some() && !dump_dir.as_ref().unwrap().exists(){
         eprintln!("dump directory not exist");
         std::process::exit(1);
     }
 
-    for dir in &diff_dirs {
+    for dir in &load_dir {
         if !dir.exists() {
-            eprintln!("diff snapshot not exist");
+            eprintln!("{:?} snapshot not exist", dir);
             std::process::exit(1);
         }
     }
 
     ts_vec.push(Instant::now());
-    let json_dir = if let Some(dir) = diff_dirs.last() {
+    let json_dir = if let Some(dir) = load_dir.last() {
         Some(dir.clone())
-    } else if let Some(ref dir) = load_dir {
-        Some(dir.clone())
+    //} else if let Some(ref dir) = load_dir {
+    //    Some(dir.clone())
     } else {
         None
     };
@@ -275,7 +292,7 @@ fn main() {
     });
     ts_vec.push(Instant::now());
 
-    let from_snapshot = load_dir.is_some();
+    let from_snapshot = !load_dir.is_empty();
     let config = SnapFaaSConfig {
         parsed_json,
         load_dir,
@@ -283,10 +300,11 @@ fn main() {
         huge_page: false,
         base: MemoryFileOption { copy: copy_base, odirect: odirect_base},
         diff: MemoryFileOption { copy: copy_diff, odirect: odirect_diff},
-        diff_dirs,
+        //diff_dirs,
+        load_ws,
     };
     // Create vmm thread
-    let mut vmm = match VmmWrapper::new(instance_id, config) {
+    let mut vmm = match VmmWrapper::new(instance_id.clone(), config) {
         Ok(vmm) => vmm,
         Err(e) => {
             eprintln!("Vmm failed to start due to: {:?}", e);
@@ -324,12 +342,12 @@ fn main() {
     }
 
     let block_config = BlockDeviceConfig {
-	drive_id: String::from("rootfs"),
-	path_on_host: rootfs,
-	is_root_device: true,
-	is_read_only: true,
-	partuuid: None,
-	rate_limiter: None,
+        drive_id: String::from("rootfs"),
+        path_on_host: rootfs,
+        is_root_device: true,
+        is_read_only: true,
+        partuuid: None,
+        rate_limiter: None,
         odirect: odirect_rootfs,
     };
 
@@ -339,15 +357,15 @@ fn main() {
     }
 
     if let Some(appfs) = appfs {
-	let block_config = BlockDeviceConfig {
-	    drive_id: String::from("appfs"),
-	    path_on_host: appfs,
-	    is_root_device: false,
-	    is_read_only: true,
-	    partuuid: None,
-	    rate_limiter: None,
-            odirect: odirect_appfs,
-	};
+        let block_config = BlockDeviceConfig {
+            drive_id: String::from("appfs"),
+            path_on_host: appfs,
+            is_root_device: false,
+            is_read_only: true,
+            partuuid: None,
+            rate_limiter: None,
+                odirect: odirect_appfs,
+        };
         if let Err(e) = vmm.insert_block_device(block_config) {
             eprintln!("Vmm failed to insert appfs due to: {:?}", e);
             std::process::exit(1);
@@ -394,6 +412,31 @@ fn main() {
         eprintln!("Vmm failed to start instance due to: {:?}", e);
         std::process::exit(1);
     }
+
+    // listen for dump working set
+    if cmd_arguments.is_present("dump working set") {
+        let listener_port = format!("dump_ws-{}.sock", instance_id);
+        let unix_sock_listener = std::os::unix::net::UnixListener::bind(listener_port).expect("Failed to bind to unix listener");
+         match unix_sock_listener.accept() {
+            Ok((mut conn, _)) => match vmm.dump_working_set() {
+                Ok(_) => {
+                    println!("Dumped the working set.");
+                    if let Err(e) = conn.write(&[0u8;1]) {
+                        eprintln!("Vmm failed to write to the UNIX stream: {:?}", e);
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Vmm failed to dump a working set: {:?}", e);
+                    std::process::exit(1);
+                },
+            },
+            Err(e) => {
+                eprintln!("Vmm failed to dump a working set: {:?}", e);
+                std::process::exit(1);
+            }
+        }
+    };
 
     vmm.join_vmm();
     std::process::exit(0);

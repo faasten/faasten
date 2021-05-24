@@ -8,8 +8,8 @@ use snapfaas::vm::Vm;
 use snapfaas::request;
 use snapfaas::unlink_unix_sockets;
 use snapfaas::configs::FunctionConfig;
-use std::io::BufRead;
-use std::os::unix::net::UnixListener;
+use std::io::{Read, BufRead};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Instant;
 use log::debug;
 
@@ -104,14 +104,14 @@ fn main() {
                  .required(false)
                  .help("Restore base snapshot memory by copying")
         )
-        .arg(
-            Arg::with_name("diff_dirs")
-                 .long("diff_dirs")
-                 .value_name("DIFFDIRS")
-                 .takes_value(true)
-                 .required(false)
-                 .help("Comma-separated list of diff snapshots")
-        )
+        //.arg(
+        //    Arg::with_name("diff_dirs")
+        //         .long("diff_dirs")
+        //         .value_name("DIFFDIRS")
+        //         .takes_value(true)
+        //         .required(false)
+        //         .help("Comma-separated list of diff snapshots")
+        //)
         .arg(
             Arg::with_name("copy_diff_memory")
                  .long("copy_diff")
@@ -179,6 +179,22 @@ fn main() {
                 .required(false)
                 .help("If present, open appfs file without O_DIRECT")
         )
+        .arg(
+            Arg::with_name("dump working set")
+                .long("dump_ws")
+                .value_name("DUMP_WS")
+                .takes_value(false)
+                .required(false)
+                .help("If present, VMM will send `dump working set` action to the VM when the host signals through the unix socket connection. The value is the directory to put the working set in")
+        )
+        .arg(
+            Arg::with_name("load working set")
+                .long("load_ws")
+                .value_name("LOAD_WS")
+                .takes_value(false)
+                .required(false)
+                .help("If present, VMM will load the regions contained in diff_dirs[0]/WS only effective when there is one diff snapshot.")
+        )
         .get_matches();
 
     // Create a FunctionConfig value based on cmdline inputs
@@ -193,11 +209,13 @@ fn main() {
         concurrency_limit: 1,
         load_dir: cmd_arguments.value_of("load_dir").map(|s| s.to_string()),
         dump_dir: cmd_arguments.value_of("dump_dir").map(|s| s.to_string()),
-        diff_dirs: cmd_arguments.value_of("diff_dirs").map(|s| s.to_string()),
+        //diff_dirs: cmd_arguments.value_of("diff_dirs").map(|s| s.to_string()),
         copy_base: cmd_arguments.is_present("copy_base_memory"),
         copy_diff: cmd_arguments.is_present("copy_diff_memory"),
         kernel: cmd_arguments.value_of("kernel").expect("kernel").to_string(),
         cmdline: cmd_arguments.value_of("kernel_args").map(|s| s.to_string()),
+        dump_ws: cmd_arguments.is_present("dump working set"),
+        load_ws: cmd_arguments.is_present("load working set"),
     };
     let id: &str = cmd_arguments.value_of("id").expect("id");
     //println!("id: {}, function config: {:?}", id, vm_app_config);
@@ -250,6 +268,7 @@ fn main() {
     let mut num_rsp = 0;
 
     // Synchronously send the request to vm and wait for a response
+    let mut dump_working_set = true && cmd_arguments.is_present("dump working set");
     for req in requests {
         let t1 = Instant::now();
         match vm.process_req(req) {
@@ -262,6 +281,12 @@ fn main() {
             Err(e) => {
                 eprintln!("Request failed due to: {:?}", e);
             }
+        }
+        if dump_working_set {
+            let listener_port = format!("dump_ws_{}", id);
+            let mut conn = UnixStream::connect(listener_port).expect("Failed to connect to VMM UNIX listener");
+            conn.read_exact(&mut [0u8;1]).expect("Failed to read from the UNIX stream");
+            dump_working_set = false;
         }
     }
 
