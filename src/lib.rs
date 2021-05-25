@@ -35,6 +35,19 @@ pub fn unlink_unix_sockets() {
             }
         }
     }
+    
+    match glob::glob("dump_ws-*sock*") {
+        Err(_) => error!("Invalid file pattern"),
+        Ok(paths) => {
+            for entry in paths {
+                if let Ok(path) = entry {
+                    if let Err(e) = fs::remove_file(&path) {
+                        error!("Failed to unlink {}: {:?}", path.to_str().unwrap(), e);
+                    }
+                }
+            }
+        }
+    }
 }
 
 

@@ -4,8 +4,9 @@ extern crate cgroups;
 
 use std::fs::File;
 use std::path::PathBuf;
-use std::io::{Write, BufReader};
+use std::io::{BufReader};
 use std::time::Instant;
+use std::os::unix::net::{UnixListener, UnixStream};
 
 use vmm::vmm_config::boot_source::BootSourceConfig;
 use vmm::vmm_config::drive::BlockDeviceConfig;
@@ -286,6 +287,7 @@ fn main() {
         None
     };
     let parsed_json = json_dir.map(|mut dir| {
+        //println!("parsing meta data from {:?}", dir);
         dir.push("snapshot.json");
         let reader = BufReader::new(File::open(dir).expect("Failed to open snapshot.json"));
         serde_json::from_reader(reader).expect("Bad snapshot.json")
@@ -311,7 +313,6 @@ fn main() {
             std::process::exit(1);
         }
     };
-    ts_vec.push(Instant::now());
 
     // Configure vm through vmm thread
     // If any of the configuration actions fail, just exits the process with
@@ -403,10 +404,6 @@ fn main() {
     ts_vec.push(Instant::now());
     //TODO: Optionally add a logger
 
-    fc_util::fc_log!("firerunner: parsing command took: {} us", ts_vec[1].duration_since(ts_vec[0]).as_micros());
-    fc_util::fc_log!("firerunner: parsing Snapshot.json took: {} us", ts_vec[2].duration_since(ts_vec[1]).as_micros());
-    fc_util::fc_log!("firerunner: starting vmm thread took: {} us", ts_vec[3].duration_since(ts_vec[2]).as_micros());
-    fc_util::fc_log!("firerunner: configuring VM took: {} us", ts_vec[4].duration_since(ts_vec[3]).as_micros());
     // Launch vm
     if let Err(e) = vmm.start_instance() {
         eprintln!("Vmm failed to start instance due to: {:?}", e);
@@ -416,28 +413,29 @@ fn main() {
     // listen for dump working set
     if cmd_arguments.is_present("dump working set") {
         let listener_port = format!("dump_ws-{}.sock", instance_id);
-        let unix_sock_listener = std::os::unix::net::UnixListener::bind(listener_port).expect("Failed to bind to unix listener");
+        let unix_sock_listener = UnixListener::bind(listener_port).expect("Failed to bind to unix listener");
          match unix_sock_listener.accept() {
-            Ok((mut conn, _)) => match vmm.dump_working_set() {
+            Ok((_, _)) => match vmm.dump_working_set() {
                 Ok(_) => {
-                    println!("Dumped the working set.");
-                    if let Err(e) = conn.write(&[0u8;1]) {
-                        eprintln!("Vmm failed to write to the UNIX stream: {:?}", e);
-                        std::process::exit(1);
-                    }
+                    println!("VMM: dumped the working set.");
+                    let port = format!("dump_ws-{}.sock.back", instance_id);
+                    UnixStream::connect(port).expect("Failed to connect");
                 },
                 Err(e) => {
-                    eprintln!("Vmm failed to dump a working set: {:?}", e);
+                    eprintln!("VMM: failed to dump the working set: {:?}", e);
                     std::process::exit(1);
                 },
             },
             Err(e) => {
-                eprintln!("Vmm failed to dump a working set: {:?}", e);
+                eprintln!("VMM: failed to dump the working set: {:?}", e);
                 std::process::exit(1);
             }
         }
     };
-
+    let parse_time = ts_vec[2].duration_since(ts_vec[1]).as_micros();
+    println!("FR: Parse JSON: {} us\nFR: Preconfigure VM: {} us",
+             parse_time,
+             ts_vec[3].duration_since(ts_vec[0]).as_micros() - parse_time);
     vmm.join_vmm();
     std::process::exit(0);
 }

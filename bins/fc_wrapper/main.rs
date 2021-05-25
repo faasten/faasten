@@ -8,7 +8,7 @@ use snapfaas::vm::Vm;
 use snapfaas::request;
 use snapfaas::unlink_unix_sockets;
 use snapfaas::configs::FunctionConfig;
-use std::io::{Read, BufRead};
+use std::io::{BufRead};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Instant;
 use log::debug;
@@ -243,10 +243,10 @@ fn main() {
     };
     let t2 = Instant::now();
 
-    println!("fc_wrapper: Building command took: {} us", ts_vec[1].duration_since(ts_vec[0]).as_micros());
-    println!("fc_wrapper: Spawning the command took: {} us", ts_vec[2].duration_since(ts_vec[1]).as_micros());
-    println!("fc_wrapper: Waiting for guest connection took: {} us", ts_vec[3].duration_since(ts_vec[2]).as_micros());
-    println!("fc_wrapper: Vm creation took: {} us", t2.duration_since(t1).as_micros());
+    println!("FW: VM creation: {} us\nFW: Spawning VMM: {} us\nFW: Guest connected: {} us",
+             t2.duration_since(t1).as_micros(),
+             ts_vec[1].duration_since(ts_vec[0]).as_micros(),
+             ts_vec[2].duration_since(ts_vec[1]).as_micros());
 
     // create a vector of Request values from stdin
     let mut requests: Vec<request::Request> = Vec::new();
@@ -268,13 +268,13 @@ fn main() {
     let mut num_rsp = 0;
 
     // Synchronously send the request to vm and wait for a response
-    let mut dump_working_set = true && cmd_arguments.is_present("dump working set");
+    let dump_working_set = true && cmd_arguments.is_present("dump working set");
     for req in requests {
         let t1 = Instant::now();
         match vm.process_req(req) {
             Ok(_rsp) => {
                 let t2 = Instant::now();
-                println!("Request took: {} us", t2.duration_since(t1).as_micros());
+                println!("fc_wrapper: Request took: {} us", t2.duration_since(t1).as_micros());
                 debug!("Response: {:?}",_rsp);
                 num_rsp+=1;
             }
@@ -283,12 +283,15 @@ fn main() {
             }
         }
         if dump_working_set {
-            let listener_port = format!("dump_ws_{}", id);
-            let mut conn = UnixStream::connect(listener_port).expect("Failed to connect to VMM UNIX listener");
-            conn.read_exact(&mut [0u8;1]).expect("Failed to read from the UNIX stream");
-            dump_working_set = false;
+            let listener_port = format!("dump_ws-{}.sock", id);
+            UnixStream::connect(listener_port).expect("Failed to connect to VMM UNIX listener");
+            let port = format!("dump_ws-{}.sock.back", id);
+            let li = UnixListener::bind(port).expect("Failed to listen at the port");
+            li.accept().expect("Failed to accept a connection");
+            break;
         }
     }
+
 
     println!("***********************************************");
     println!("Total requests: {}, Total resposnes: {}", num_req, num_rsp);

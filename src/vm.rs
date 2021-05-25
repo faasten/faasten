@@ -156,7 +156,6 @@ impl Vm {
 
         info!("args: {:?}", args);
         let cmd = cmd.args(args);
-        ts_vec.push(Instant::now());
         let vm_process: Child = cmd.stdin(Stdio::null()).stderr(Stdio::piped())
             .spawn()
             .map_err(|e| Error::ProcessSpawn(e))?;
