@@ -57,10 +57,8 @@ esac
 startindex=$3
 endindex=$(($3 + $4 - 1))
 
-[ $(cat ./.stat | grep setup | wc -l) -ne 1 ] && echo 'Please run ./setup.sh before run this script.' && exit 1
-
-echo "Starting snapfaas $1 from $2..."
-outdir=snapfaas-$1-$2-out
+echo "Starting SNAPFAAS-REAP $1 from $2..."
+outdir=snapfaas-reap-$1-$2-out
 [ ! -d $outdir ] && mkdir $outdir
 for ((i=$startindex; i<=$endindex; i++))
 do
@@ -90,8 +88,8 @@ do
                 --firerunner $MEMBINDIR/firerunner \
                 --rootfs $rootfs \
                 --appfs $appfs \
-                --load_dir $MEMSNAPSHOTDIR/$runtime \
-                --diff_dirs $snapshot \
+                --load_dir $MEMSNAPSHOTDIR/$runtime,$snapshot \
+                --load_ws \
                 $mode $odirectFlag > $outdir/$app-$runtime.$i.txt
             [ $? -ne 0 ] && echo '!! failed' && exit 1
         done

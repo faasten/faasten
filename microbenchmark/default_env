@@ -1,3 +1,5 @@
+export RUNTIMES=(python3 nodejs java go)
+
 export MEMROOT=/tmp/snapfaas
 export MEMSNAPSHOTDIR=$MEMROOT/snapshots
 export MEMROOTFSDIR=$MEMROOT/rootfs
@@ -23,7 +25,3 @@ export KERNEL=$MEMROOT/kernel/vmlinux-4.20.0
 export NETDEV=tap0/aa:bb:cc:dd:ff:00
 
 export MEMBINDIR=$MEMROOT/release
-
-export RUNTIMES=(python3 nodejs)
-# if running microbenchmark one can comment out the line below
-export OTHER_RUNTIMES=(python3-exec nodejs-exec python3-threshold)

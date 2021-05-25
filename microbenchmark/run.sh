@@ -5,8 +5,11 @@ if [ $# -ne 2 ]; then
     exit 1
 fi
 
-run_scripts/run_diff.sh eager memmem $1 $2
-run_scripts/run_diff.sh ondemand memmem $1 $2
-run_scripts/run_fullapp.sh eager memmem $1 $2
-run_scripts/run_fullapp.sh ondemand memmem $1 $2
-run_scripts/run_regular.sh mem $1 $2
+# --load_dir base_dir,diff_dir
+run_scripts/run_snapfaas.sh eager ssd $1 $2
+# --load_dir base_dir,diff_dir --load_ws
+run_scripts/run_snapfaas_reap.sh ondemand ssd $1 $2
+# --load_dir base_dir
+run_scripts/run_seuss.sh ondemand ssd $1 $2
+# --laad_dir full_dir --load_ws
+run_scripts/run_reap.sh ondemand ssd $1 $2
