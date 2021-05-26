@@ -65,33 +65,31 @@ do
     echo "Round $i"
     # drop page cache
     echo 1 | sudo tee /proc/sys/vm/drop_caches &>/dev/null
-    for runtime in "${RUNTIMES[@]}"
+    for app in "${RUNAPPS[@]}"
     do
-        for app in $(ls ../snapfaas-images/appfs/$runtime)
-        do
-            echo "- $app-$runtime"
-            rootfs=$rootfsdir/$runtime.ext4
-            appfs=$appfsdir/$app-$runtime.ext2
-            snapshot=$snapshotdir/diff/$app-$runtime
-            [ ! -f $rootfs ] && echo $rootfs' does not exist' && exit 1
-            [ ! -f $appfs ] && echo $appfs' does not exist' && exit 1
-            if [ ! -d $snapshot ] || [ $(ls $snapshot | wc -l) -eq 0 ]; then
-                echo $snapshot' does not exist or is empty'
-                exit 1
-            fi
-	    cat ../resources/requests/$app-$runtime.json | head -1 | \
-            taskset -c 0 sudo $MEMBINDIR/fc_wrapper \
-                --vcpu_count 1 \
-                --mem_size 128 \
-                --kernel $KERNEL \
-                --network $NETDEV \
-                --firerunner $MEMBINDIR/firerunner \
-                --rootfs $rootfs \
-                --appfs $appfs \
-                --load_dir $MEMSNAPSHOTDIR/$runtime,$snapshot \
-                --load_ws \
-                $mode $odirectFlag > $outdir/$app-$runtime.$i.txt
-            [ $? -ne 0 ] && echo '!! failed' && exit 1
-        done
+        echo "- $app"
+        runtime=$(echo $app | grep -o '[^-]*$')
+        rootfs=$rootfsdir/$runtime.ext4
+        appfs=$appfsdir/$app.ext2
+        snapshot=$snapshotdir/diff/$app
+        [ ! -f $rootfs ] && echo $rootfs' does not exist' && exit 1
+        [ ! -f $appfs ] && echo $appfs' does not exist' && exit 1
+        if [ ! -d $snapshot ] || [ $(ls $snapshot | wc -l) -eq 0 ]; then
+            echo $snapshot' does not exist or is empty'
+            exit 1
+        fi
+        cat ../resources/requests/$app.json | head -1 | \
+        taskset -c 0 sudo $MEMBINDIR/fc_wrapper \
+            --vcpu_count 1 \
+            --mem_size 128 \
+            --kernel $KERNEL \
+            --network $NETDEV \
+            --firerunner $MEMBINDIR/firerunner \
+            --rootfs $rootfs \
+            --appfs $appfs \
+            --load_dir $MEMSNAPSHOTDIR/$runtime,$snapshot \
+            --load_ws \
+            $mode $odirectFlag > $outdir/$app.$i.txt
+        [ $? -ne 0 ] && echo '!! failed' && exit 1
     done
 done

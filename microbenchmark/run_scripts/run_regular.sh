@@ -38,23 +38,21 @@ outdir=regular-$1-out
 for ((i=$startindex; i<=$endindex; i++))
 do
     echo "Round $i"
-    for runtime in "${RUNTIMES[@]}"
+    for app in "${RUNAPPS[@]}"
     do
-        for app in $(ls ../snapfaas-images/appfs/$runtime)
-        do
-            echo "- $app-$runtime"
-            rootfs=$rootfsdir/$app-$runtime.ext4
-            [ ! -f $rootfs ] && echo $rootfs' does not exist' && exit 1
-	    cat ../resources/requests/$app-$runtime.json | head -1 | \
-            taskset -c 0 sudo $MEMBINDIR/fc_wrapper \
-                --vcpu_count 1 \
-                --mem_size 128 \
-                --kernel $KERNEL \
-                --network $NETDEV \
-                --firerunner $MEMBINDIR/firerunner \
-                --rootfs $rootfs \
-                $odirectFlag > $outdir/$app-$runtime.$i.txt
-            [ $? -ne 0 ] && echo '!! failed' && exit 1
-        done
+        echo "- $app"
+        runtime=$(echo $app | grep -o '[^-]*$')
+        rootfs=$rootfsdir/$app.ext4
+        [ ! -f $rootfs ] && echo $rootfs' does not exist' && exit 1
+        cat ../resources/requests/$app.json | head -1 | \
+        taskset -c 0 sudo $MEMBINDIR/fc_wrapper \
+            --vcpu_count 1 \
+            --mem_size 128 \
+            --kernel $KERNEL \
+            --network $NETDEV \
+            --firerunner $MEMBINDIR/firerunner \
+            --rootfs $rootfs \
+            $odirectFlag > $outdir/$app.$i.txt
+        [ $? -ne 0 ] && echo '!! failed' && exit 1
     done
 done

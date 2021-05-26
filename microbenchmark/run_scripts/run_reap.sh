@@ -59,30 +59,28 @@ do
     echo "Round $i"
     # drop page cache
     echo 1 | sudo tee /proc/sys/vm/drop_caches &>/dev/null
-    for runtime in "${RUNTIMES[@]}"
+    for app in "${RUNAPPS[@]}"
     do
-        for app in $(ls ../snapfaas-images/appfs/$runtime)
-        do
-            echo "- $app-$runtime"
-            rootfs=$rootfsdir/$app-$runtime.ext4
-            snapshot=$snapshotdir/$app-$runtime
-            [ ! -f $rootfs ] && echo $rootfs' does not exist' && exit 1
-            if [ ! -d $snapshot ] || [ $(ls $snapshot | wc -l) -eq 0 ]; then
-                echo $snapshot' does not exist or is empty'
-                exit 1
-            fi
-	    cat ../resources/requests/$app-$runtime.json | head -1 | \
-            taskset -c 0 sudo $MEMBINDIR/fc_wrapper \
-                --vcpu_count 1 \
-                --mem_size 128 \
-                --kernel $KERNEL \
-                --network $NETDEV \
-                --firerunner $MEMBINDIR/firerunner \
-                --rootfs $rootfs \
-                --load_dir $snapshot \
-                --load_ws \
-                $mode $odirectFlag > $outdir/$app-$runtime.$i.txt
-            [ $? -ne 0 ] && echo '!! failed' && exit 1
-        done
+        echo "- $app"
+        runtime=$(echo $app | grep -o '[^-]*$')
+        rootfs=$rootfsdir/$app.ext4
+        snapshot=$snapshotdir/$app
+        [ ! -f $rootfs ] && echo $rootfs' does not exist' && exit 1
+        if [ ! -d $snapshot ] || [ $(ls $snapshot | wc -l) -eq 0 ]; then
+            echo $snapshot' does not exist or is empty'
+            exit 1
+        fi
+        cat ../resources/requests/$app.json | head -1 | \
+        taskset -c 0 sudo $MEMBINDIR/fc_wrapper \
+            --vcpu_count 1 \
+            --mem_size 128 \
+            --kernel $KERNEL \
+            --network $NETDEV \
+            --firerunner $MEMBINDIR/firerunner \
+            --rootfs $rootfs \
+            --load_dir $snapshot \
+            --load_ws \
+            $mode $odirectFlag > $outdir/$app.$i.txt
+        [ $? -ne 0 ] && echo '!! failed' && exit 1
     done
 done

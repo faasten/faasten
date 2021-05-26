@@ -1,4 +1,6 @@
-export RUNTIMES=(python3 nodejs java go)
+export RUNTIMES=(java)
+#export RUNAPPS=(alexa-door-nodejs alexa-reminder-nodejs img-resize-nodejs lorem-nodejs ocr-nodejs audio-fingerprint-python3 lorem-python3 sentiment-analysis-python3 thumbnail-python3 matmul-java thumbnail-java tpcc-java lorem-go sentiment-analysis-go)
+export RUNAPPS=(tpcc-java)
 
 export MEMROOT=/tmp/snapfaas
 export MEMSNAPSHOTDIR=$MEMROOT/snapshots

@@ -274,7 +274,7 @@ fn main() {
         match vm.process_req(req) {
             Ok(_rsp) => {
                 let t2 = Instant::now();
-                println!("fc_wrapper: Request took: {} us", t2.duration_since(t1).as_micros());
+                println!("FW: Request took: {} us", t2.duration_since(t1).as_micros());
                 debug!("Response: {:?}",_rsp);
                 num_rsp+=1;
             }
