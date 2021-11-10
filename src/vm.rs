@@ -16,6 +16,7 @@ use crate::configs::FunctionConfig;
 #[cfg(not(test))]
 use crate::{request};
 use crate::request::Request;
+use crate::syscalls;
 
 #[derive(Debug)]
 pub enum Error {
@@ -204,6 +205,51 @@ impl Vm {
             }
             Err(e) => {
                 Err(Error::VmRead(e))
+            }
+        }
+    }
+
+    pub fn process_syscall(&mut self) -> Result<(), std::io::Error> {
+        use std::io::{Read, Write};
+        use prost::Message;
+        use syscalls::Syscall;
+        use syscalls::syscall::Syscall as SC;
+        use lmdb::{Transaction, WriteFlags};
+
+        let dbenv = lmdb::Environment::new().open(std::path::Path::new("storage")).unwrap();
+        let default_db = dbenv.open_db(None).unwrap();
+
+        loop {
+            let buf = {
+                let mut lenbuf = [0;4];
+                let mut conn = std::io::BufReader::new(&self.conn);
+                conn.read_exact(&mut lenbuf)?;
+                let size = u32::from_be_bytes(lenbuf);
+                let mut buf = vec![0u8; size as usize];
+                conn.read_exact(&mut buf)?;
+                buf
+            };
+            match Syscall::decode(buf.as_ref())?.syscall {
+                Some(SC::Response(_)) => {},
+                Some(SC::ReadKey(s)) => {
+                    let txn = dbenv.begin_ro_txn().unwrap();
+                    let result = syscalls::ReadKeyResponse {
+                        value: txn.get(default_db, &s).ok().map(Vec::from)
+                    };
+                    let _ = txn.commit();
+                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes())?;
+                    self.conn.write_all(result.encode_to_vec().as_ref())?;
+                },
+                Some(SC::WriteKey(wk)) => {
+                    let mut txn = dbenv.begin_rw_txn().unwrap();
+                    let result = syscalls::WriteKeyResponse {
+                        success: txn.put(default_db, &wk.key, &wk.value, WriteFlags::empty()).is_ok(),
+                    };
+                    let _ = txn.commit();
+                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes())?;
+                    self.conn.write_all(result.encode_to_vec().as_ref())?;
+                },
+                None => {},
             }
         }
     }
