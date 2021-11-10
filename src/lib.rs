@@ -8,6 +8,7 @@ pub mod gateway;
 pub mod configs;
 pub mod controller;
 pub mod vm;
+pub mod syscalls;
 pub mod metrics;
 pub mod firecracker_wrapper;
 

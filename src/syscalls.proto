@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package snapfaas.syscalls;
+
+message Request {
+  string payload = 1;
+}
+
+message Response {
+  string payload = 1;
+}
+
+message ReadKey {
+  bytes key = 1;
+}
+
+message ReadKeyResponse {
+  optional bytes value = 1;
+}
+
+message WriteKey {
+  bytes key = 1;
+  bytes  value = 2;
+}
+
+message WriteKeyResponse {
+  bool success = 1;
+}
+
+message Syscall {
+  oneof syscall {
+    Response response = 1;
+    ReadKey readKey = 2;
+    WriteKey writeKey = 3;
+  }
+}
