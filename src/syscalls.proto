@@ -3,10 +3,15 @@ syntax = "proto3";
 package snapfaas.syscalls;
 
 message Request {
-    int64 time = 1;
-    int64 user_id = 2;
-    string function = 3;
-    string payload = 4;
+  string payload = 1;
+}
+
+message Response {
+  string payload = 1;
+}
+
+message ReadKey {
+  bytes key = 1;
 }
 
 message ReadKeyResponse {
@@ -24,8 +29,8 @@ message WriteKeyResponse {
 
 message Syscall {
   oneof syscall {
-    string response = 1;
-    bytes readKey = 2;
+    Response response = 1;
+    ReadKey readKey = 2;
     WriteKey writeKey = 3;
   }
 }

@@ -14,7 +14,6 @@ use log::{info, error};
 #[cfg(not(test))]
 use crate::configs::FunctionConfig;
 #[cfg(not(test))]
-use crate::{request};
 use crate::request::Request;
 use crate::syscalls;
 
@@ -24,6 +23,7 @@ pub enum Error {
     //VmTimeout(RecvTimeoutError),
     VmWrite(std::io::Error),
     VmRead(std::io::Error),
+    SyscallError(std::io::Error),
     KernelNotExist,
     RootfsNotExist,
     AppfsNotExist,
@@ -187,29 +187,24 @@ impl Vm {
 
     /// Send request to vm and wait for its response
     pub fn process_req(&mut self, req: Request) -> Result<String, Error> {
-        let req_str = req.payload_as_string();
+        use prost::Message;
+        use std::io::Write;
 
-        let buf = req_str.as_bytes();
+        let sys_req = syscalls::Request {
+            payload: req.payload_as_string()
+        }.encode_to_vec();
 
-        request::write_u8_vm(&buf, &mut self.conn).map_err(|e| {
+        self.conn.write_all(&(sys_req.len() as u32).to_be_bytes()).map_err(|e| {
+            Error::VmWrite(e)
+        })?;
+        self.conn.write_all(sys_req.as_ref()).map_err(|e| {
             Error::VmWrite(e)
         })?;
 
-        // This is a blocking call
-        // TODO: add a timeout for this read (maybe ~15 minutes)
-        match request::read_u8_vm(&mut self.conn) {
-            Ok(rsp_buf) => {
-                String::from_utf8(rsp_buf).map_err(|e| {
-                    Error::NotString(e)
-                })
-            }
-            Err(e) => {
-                Err(Error::VmRead(e))
-            }
-        }
+        self.process_syscall().map_err(|e| Error::SyscallError(e))
     }
 
-    pub fn process_syscall(&mut self) -> Result<(), std::io::Error> {
+    pub fn process_syscall(&mut self) -> Result<String, std::io::Error> {
         use std::io::{Read, Write};
         use prost::Message;
         use syscalls::Syscall;
@@ -222,19 +217,20 @@ impl Vm {
         loop {
             let buf = {
                 let mut lenbuf = [0;4];
-                let mut conn = std::io::BufReader::new(&self.conn);
-                conn.read_exact(&mut lenbuf)?;
+                self.conn.read_exact(&mut lenbuf)?;
                 let size = u32::from_be_bytes(lenbuf);
                 let mut buf = vec![0u8; size as usize];
-                conn.read_exact(&mut buf)?;
+                self.conn.read_exact(&mut buf)?;
                 buf
             };
             match Syscall::decode(buf.as_ref())?.syscall {
-                Some(SC::Response(_)) => {},
-                Some(SC::ReadKey(s)) => {
+                Some(SC::Response(r)) => {
+                    return Ok(r.payload);
+                },
+                Some(SC::ReadKey(rk)) => {
                     let txn = dbenv.begin_ro_txn().unwrap();
                     let result = syscalls::ReadKeyResponse {
-                        value: txn.get(default_db, &s).ok().map(Vec::from)
+                        value: txn.get(default_db, &rk.key).ok().map(Vec::from)
                     };
                     let _ = txn.commit();
                     self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes())?;
@@ -249,7 +245,9 @@ impl Vm {
                     self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes())?;
                     self.conn.write_all(result.encode_to_vec().as_ref())?;
                 },
-                None => {},
+                None => {
+                    // Should never happen, so just ignore??
+                },
             }
         }
     }
