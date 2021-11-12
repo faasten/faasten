@@ -1,3 +1,5 @@
+extern crate reqwest;
+
 use std::path::PathBuf;
 use std::string::String;
 #[cfg(not(test))]
@@ -10,7 +12,6 @@ use std::os::unix::net::{UnixStream, UnixListener};
 use std::time::Instant;
 #[cfg(not(test))]
 use log::{info, error};
-
 #[cfg(not(test))]
 use crate::configs::FunctionConfig;
 #[cfg(not(test))]
@@ -23,7 +24,10 @@ pub enum Error {
     //VmTimeout(RecvTimeoutError),
     VmWrite(std::io::Error),
     VmRead(std::io::Error),
-    SyscallError(std::io::Error),
+    URLInvalid(reqwest::UrlError),
+    Rpc(prost::DecodeError),
+    Vsock(std::io::Error),
+    HttpReq(reqwest::Error),
     KernelNotExist,
     RootfsNotExist,
     AppfsNotExist,
@@ -201,10 +205,16 @@ impl Vm {
             Error::VmWrite(e)
         })?;
 
-        self.process_syscall().map_err(|e| Error::SyscallError(e))
+        self.process_syscall()
     }
 
-    pub fn process_syscall(&mut self) -> Result<String, std::io::Error> {
+    fn construct_url(endpoint: &str, route: &str) -> Result<reqwest::Url, Error> {
+        let mut url = reqwest::Url::parse(endpoint).map_err(|e| Error::URLInvalid(e))?;
+        url.set_path(route);
+        Ok(url)
+    }
+
+    pub fn process_syscall(&mut self) -> Result<String, Error> {
         use std::io::{Read, Write};
         use prost::Message;
         use syscalls::Syscall;
@@ -217,14 +227,16 @@ impl Vm {
         loop {
             let buf = {
                 let mut lenbuf = [0;4];
-                self.conn.read_exact(&mut lenbuf)?;
+                self.conn.read_exact(&mut lenbuf).map_err(|e| Error::Vsock(e))?;
                 let size = u32::from_be_bytes(lenbuf);
                 let mut buf = vec![0u8; size as usize];
-                self.conn.read_exact(&mut buf)?;
+                self.conn.read_exact(&mut buf).map_err(|e| Error::Vsock(e))?;
                 buf
             };
-            match Syscall::decode(buf.as_ref())?.syscall {
+            //println!("VM.RS: received a syscall");
+            match Syscall::decode(buf.as_ref()).map_err(|e| Error::Rpc(e))?.syscall {
                 Some(SC::Response(r)) => {
+                    //println!("VS.RS: received response");
                     return Ok(r.payload);
                 },
                 Some(SC::ReadKey(rk)) => {
@@ -233,8 +245,8 @@ impl Vm {
                         value: txn.get(default_db, &rk.key).ok().map(Vec::from)
                     };
                     let _ = txn.commit();
-                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes())?;
-                    self.conn.write_all(result.encode_to_vec().as_ref())?;
+                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::Vsock(e))?;
+                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::Vsock(e))?;
                 },
                 Some(SC::WriteKey(wk)) => {
                     let mut txn = dbenv.begin_rw_txn().unwrap();
@@ -242,11 +254,31 @@ impl Vm {
                         success: txn.put(default_db, &wk.key, &wk.value, WriteFlags::empty()).is_ok(),
                     };
                     let _ = txn.commit();
-                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes())?;
-                    self.conn.write_all(result.encode_to_vec().as_ref())?;
+                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::Vsock(e))?;
+                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::Vsock(e))?;
+                },
+                Some(SC::HttpGet(get)) => {
+                    //TODO: currently every time a query comes in a new client is created.
+                    // Ideally, there should be just one client per machine reused across queries.
+                    let result: String = match get.host.as_str() {
+                        "github" => {
+                            let client = reqwest::Client::new();
+                            client.get(Vm::construct_url(&get.endpoint, &get.route)?)
+                                .header(reqwest::header::ACCEPT, "application/vnd.github.v3+json")
+                                .send().map_err(|e| Error::HttpReq(e))?
+                                .text().map_err(|e| Error::HttpReq(e))?
+                        },
+                        _ => {
+                           format!("`{:?}` not supported", get.host)
+                        }
+                    };
+                    //println!("VM.RS: {:?}", result);
+                    self.conn.write_all(&(result.as_bytes().len() as u32).to_be_bytes()).map_err(|e| Error::Vsock(e))?;
+                    self.conn.write_all(result.as_bytes()).map_err(|e| Error::Vsock(e))?;
                 },
                 None => {
                     // Should never happen, so just ignore??
+                    println!("VM.RS: received an unknown syscall");
                 },
             }
         }
