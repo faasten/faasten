@@ -17,6 +17,9 @@ use crate::configs::FunctionConfig;
 use crate::request::Request;
 use crate::syscalls;
 
+use labeled::Label;
+use labeled::dclabel::{DCLabel, Clause, Component};
+
 #[derive(Debug)]
 pub enum Error {
     ProcessSpawn(std::io::Error),
@@ -55,6 +58,7 @@ pub struct Vm {
     //vsock_stream: VsockStream,
     conn: UnixStream,
     process: Child,
+    current_label: DCLabel,
     /*
     pub process: Pid,
     cgroup_name: PathBuf,
@@ -182,6 +186,7 @@ impl Vm {
             memory: function_config.memory,
             conn,
             process: vm_process,
+            current_label: DCLabel::public(),
         }, ts_vec));
     }
 
@@ -242,6 +247,53 @@ impl Vm {
                         success: txn.put(default_db, &wk.key, &wk.value, WriteFlags::empty()).is_ok(),
                     };
                     let _ = txn.commit();
+                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes())?;
+                    self.conn.write_all(result.encode_to_vec().as_ref())?;
+                },
+                Some(SC::GetCurrentLabel(_)) => {
+                    let result = syscalls::DcLabel {
+                        secrecy: match &self.current_label.secrecy {
+                            Component::DCFalse => None,
+                            Component::DCFormula(set) => Some(syscalls::Component {
+                                clauses: set.iter().map(|clause| syscalls::Clause { principals: clause.0.iter().map(Clone::clone).collect() }).collect(),
+                            }),
+                        },
+                        integrity: match &self.current_label.integrity {
+                            Component::DCFalse => None,
+                            Component::DCFormula(set) => Some(syscalls::Component {
+                                clauses: set.iter().map(|clause| syscalls::Clause { principals: clause.0.iter().map(Clone::clone).collect() }).collect(),
+                            }),
+                        },
+                    };
+                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes())?;
+                    self.conn.write_all(result.encode_to_vec().as_ref())?;
+                },
+                Some(SC::TaintWithLabel(label)) => {
+                    let dclabel = DCLabel {
+                        secrecy: match label.secrecy {
+                            None => Component::DCFalse,
+                            Some(set) => Component::DCFormula(set.clauses.iter().map(|c| Clause(c.principals.iter().map(Clone::clone).collect())).collect()),
+                        },
+                        integrity: match label.integrity {
+                            None => Component::DCFalse,
+                            Some(set) => Component::DCFormula(set.clauses.iter().map(|c| Clause(c.principals.iter().map(Clone::clone).collect())).collect()),
+                        },
+                    };
+                    self.current_label = self.current_label.clone().lub(dclabel);
+                    let result = syscalls::DcLabel {
+                        secrecy: match &self.current_label.secrecy {
+                            Component::DCFalse => None,
+                            Component::DCFormula(set) => Some(syscalls::Component {
+                                clauses: set.iter().map(|clause| syscalls::Clause { principals: clause.0.iter().map(Clone::clone).collect() }).collect(),
+                            }),
+                        },
+                        integrity: match &self.current_label.integrity {
+                            Component::DCFalse => None,
+                            Component::DCFormula(set) => Some(syscalls::Component {
+                                clauses: set.iter().map(|clause| syscalls::Clause { principals: clause.0.iter().map(Clone::clone).collect() }).collect(),
+                            }),
+                        },
+                    };
                     self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes())?;
                     self.conn.write_all(result.encode_to_vec().as_ref())?;
                 },

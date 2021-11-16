@@ -2,6 +2,19 @@ syntax = "proto3";
 
 package snapfaas.syscalls;
 
+message Clause {
+  repeated string principals = 1;
+}
+
+message Component {
+  repeated Clause clauses = 1;
+}
+
+message DcLabel {
+  optional Component secrecy = 1;
+  optional Component integrity = 2;
+}
+
 message Request {
   string payload = 1;
 }
@@ -27,10 +40,15 @@ message WriteKeyResponse {
   bool success = 1;
 }
 
+message GetCurrentLabel {
+}
+
 message Syscall {
   oneof syscall {
     Response response = 1;
     ReadKey readKey = 2;
     WriteKey writeKey = 3;
+    GetCurrentLabel getCurrentLabel = 4;
+    DcLabel taintWithLabel = 5;
   }
 }
