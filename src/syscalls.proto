@@ -3,15 +3,19 @@ syntax = "proto3";
 package snapfaas.syscalls;
 
 message Clause {
+  // A disjuction of principals
   repeated string principals = 1;
 }
 
 message Component {
+  // A conjunction of clauses
   repeated Clause clauses = 1;
 }
 
 message DcLabel {
+  // None means DcFalse, empty clauses means DcTrue, otherwise DcFormula
   optional Component secrecy = 1;
+  // None means DcFalse, empty clauses means DcTrue, otherwise DcFormula
   optional Component integrity = 2;
 }
 
@@ -52,3 +56,4 @@ message Syscall {
     DcLabel taintWithLabel = 5;
   }
 }
+
