@@ -193,7 +193,8 @@ impl Vm {
                 process: vm_process,
                 // We should also probably have a clearance to mitigate side channel attacks, but
                 // meh for now...
-                current_label: DCLabel::public(),
+                /// Starting label with public secrecy and integrity has app-name
+                current_label: DCLabel::new(false, [[function_config.name.clone()]]),
             },
             ts_vec,
         ));
