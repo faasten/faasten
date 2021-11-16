@@ -360,6 +360,7 @@ dependencies = [
 [[package]]
 name = "labeled"
 version = "0.1.0"
+source = "git+git://github.com/alevy/labeled#22960c4497852fcd64d6827eafafd759e36a5fab"
 
 [[package]]
 name = "lazy_static"

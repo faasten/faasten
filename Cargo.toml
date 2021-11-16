@@ -27,7 +27,7 @@ path = "bins/fc_wrapper/main.rs"
 [lib]
 
 [dependencies]
-labeled = { path = "/home/alevy/hack/labeled" }
+labeled = { git = "git://github.com/alevy/labeled" }
 bytes = "1.1.0"
 prost = "0.9.0"
 lmdb-rkv = "0.14.0"
