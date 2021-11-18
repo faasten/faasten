@@ -1,21 +1,24 @@
-use std::path::PathBuf;
-use std::string::String;
 #[cfg(not(test))]
-use std::process::{Child, Command, Stdio};
+use log::{error, info};
 #[cfg(not(test))]
 use std::net::Shutdown;
 #[cfg(not(test))]
-use std::os::unix::net::{UnixStream, UnixListener};
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::PathBuf;
+#[cfg(not(test))]
+use std::process::{Child, Command, Stdio};
+use std::string::String;
 #[cfg(not(test))]
 use std::time::Instant;
-#[cfg(not(test))]
-use log::{info, error};
 
 #[cfg(not(test))]
 use crate::configs::FunctionConfig;
 #[cfg(not(test))]
 use crate::request::Request;
 use crate::syscalls;
+
+use labeled::dclabel::{Clause, Component, DCLabel};
+use labeled::Label;
 
 #[derive(Debug)]
 pub enum Error {
@@ -55,6 +58,7 @@ pub struct Vm {
     //vsock_stream: VsockStream,
     conn: UnixStream,
     process: Child,
+    current_label: DCLabel,
     /*
     pub process: Pid,
     cgroup_name: PathBuf,
@@ -90,18 +94,18 @@ impl Vm {
         let vcpu_str = function_config.vcpus.to_string();
         let cid_str = cid.to_string();
         let mut args = vec![
-                "--id",
-                id,
-                "--kernel",
-                &function_config.kernel,
-                "--mem_size",
-                &mem_str,
-                "--vcpu_count",
-                &vcpu_str,
-                "--rootfs",
-                &function_config.runtimefs,
-                "--cid",
-                &cid_str,
+            "--id",
+            id,
+            "--kernel",
+            &function_config.kernel,
+            "--mem_size",
+            &mem_str,
+            "--vcpu_count",
+            &vcpu_str,
+            "--rootfs",
+            &function_config.runtimefs,
+            "--cid",
+            &cid_str,
         ];
 
         if function_config.appfs != "" {
@@ -157,13 +161,17 @@ impl Vm {
 
         info!("args: {:?}", args);
         let cmd = cmd.args(args);
-        let vm_process: Child = cmd.stdin(Stdio::null()).stderr(Stdio::piped())
+        let vm_process: Child = cmd
+            .stdin(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| Error::ProcessSpawn(e))?;
         ts_vec.push(Instant::now());
 
         if force_exit {
-            let output = vm_process.wait_with_output().expect("failed to wait on child");
+            let output = vm_process
+                .wait_with_output()
+                .expect("failed to wait on child");
             let mut status = 0;
             if !output.status.success() {
                 eprintln!("{:?}", String::from_utf8_lossy(&output.stderr));
@@ -176,13 +184,20 @@ impl Vm {
         let (conn, _) = vm_listener.accept().unwrap();
         ts_vec.push(Instant::now());
 
-        return Ok((Vm {
-            id: id.parse::<usize>().expect("vm id not int"),
-            function_name: function_config.name.clone(),
-            memory: function_config.memory,
-            conn,
-            process: vm_process,
-        }, ts_vec));
+        return Ok((
+            Vm {
+                id: id.parse::<usize>().expect("vm id not int"),
+                function_name: function_config.name.clone(),
+                memory: function_config.memory,
+                conn,
+                process: vm_process,
+                // We should also probably have a clearance to mitigate side channel attacks, but
+                // meh for now...
+                /// Starting label with public secrecy and integrity has app-name
+                current_label: DCLabel::new(false, [[function_config.name.clone()]]),
+            },
+            ts_vec,
+        ));
     }
 
     /// Send request to vm and wait for its response
@@ -191,32 +206,35 @@ impl Vm {
         use std::io::Write;
 
         let sys_req = syscalls::Request {
-            payload: req.payload_as_string()
-        }.encode_to_vec();
+            payload: req.payload_as_string(),
+        }
+        .encode_to_vec();
 
-        self.conn.write_all(&(sys_req.len() as u32).to_be_bytes()).map_err(|e| {
-            Error::VmWrite(e)
-        })?;
-        self.conn.write_all(sys_req.as_ref()).map_err(|e| {
-            Error::VmWrite(e)
-        })?;
+        self.conn
+            .write_all(&(sys_req.len() as u32).to_be_bytes())
+            .map_err(|e| Error::VmWrite(e))?;
+        self.conn
+            .write_all(sys_req.as_ref())
+            .map_err(|e| Error::VmWrite(e))?;
 
         self.process_syscall().map_err(|e| Error::SyscallError(e))
     }
 
     pub fn process_syscall(&mut self) -> Result<String, std::io::Error> {
-        use std::io::{Read, Write};
-        use prost::Message;
-        use syscalls::Syscall;
-        use syscalls::syscall::Syscall as SC;
         use lmdb::{Transaction, WriteFlags};
+        use prost::Message;
+        use std::io::{Read, Write};
+        use syscalls::syscall::Syscall as SC;
+        use syscalls::Syscall;
 
-        let dbenv = lmdb::Environment::new().open(std::path::Path::new("storage")).unwrap();
+        let dbenv = lmdb::Environment::new()
+            .open(std::path::Path::new("storage"))
+            .unwrap();
         let default_db = dbenv.open_db(None).unwrap();
 
         loop {
             let buf = {
-                let mut lenbuf = [0;4];
+                let mut lenbuf = [0; 4];
                 self.conn.read_exact(&mut lenbuf)?;
                 let size = u32::from_be_bytes(lenbuf);
                 let mut buf = vec![0u8; size as usize];
@@ -226,28 +244,115 @@ impl Vm {
             match Syscall::decode(buf.as_ref())?.syscall {
                 Some(SC::Response(r)) => {
                     return Ok(r.payload);
-                },
+                }
                 Some(SC::ReadKey(rk)) => {
                     let txn = dbenv.begin_ro_txn().unwrap();
                     let result = syscalls::ReadKeyResponse {
-                        value: txn.get(default_db, &rk.key).ok().map(Vec::from)
+                        value: txn.get(default_db, &rk.key).ok().map(Vec::from),
                     };
                     let _ = txn.commit();
-                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes())?;
+                    self.conn
+                        .write_all(&(result.encoded_len() as u32).to_be_bytes())?;
                     self.conn.write_all(result.encode_to_vec().as_ref())?;
-                },
+                }
                 Some(SC::WriteKey(wk)) => {
                     let mut txn = dbenv.begin_rw_txn().unwrap();
                     let result = syscalls::WriteKeyResponse {
-                        success: txn.put(default_db, &wk.key, &wk.value, WriteFlags::empty()).is_ok(),
+                        success: txn
+                            .put(default_db, &wk.key, &wk.value, WriteFlags::empty())
+                            .is_ok(),
                     };
                     let _ = txn.commit();
-                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes())?;
+                    self.conn
+                        .write_all(&(result.encoded_len() as u32).to_be_bytes())?;
                     self.conn.write_all(result.encode_to_vec().as_ref())?;
-                },
+                }
+                Some(SC::GetCurrentLabel(_)) => {
+                    let result = syscalls::DcLabel {
+                        secrecy: match &self.current_label.secrecy {
+                            Component::DCFalse => None,
+                            Component::DCFormula(set) => Some(syscalls::Component {
+                                clauses: set
+                                    .iter()
+                                    .map(|clause| syscalls::Clause {
+                                        principals: clause.0.iter().map(Clone::clone).collect(),
+                                    })
+                                    .collect(),
+                            }),
+                        },
+                        integrity: match &self.current_label.integrity {
+                            Component::DCFalse => None,
+                            Component::DCFormula(set) => Some(syscalls::Component {
+                                clauses: set
+                                    .iter()
+                                    .map(|clause| syscalls::Clause {
+                                        principals: clause.0.iter().map(Clone::clone).collect(),
+                                    })
+                                    .collect(),
+                            }),
+                        },
+                    };
+                    self.conn
+                        .write_all(&(result.encoded_len() as u32).to_be_bytes())?;
+                    self.conn.write_all(result.encode_to_vec().as_ref())?;
+                }
+                Some(SC::TaintWithLabel(label)) => {
+                    let dclabel = DCLabel {
+                        secrecy: match label.secrecy {
+                            None => Component::DCFalse,
+                            Some(set) => Component::DCFormula(
+                                set.clauses
+                                    .iter()
+                                    .map(|c| {
+                                        Clause(c.principals.iter().map(Clone::clone).collect())
+                                    })
+                                    .collect(),
+                            ),
+                        },
+                        integrity: match label.integrity {
+                            None => Component::DCFalse,
+                            Some(set) => Component::DCFormula(
+                                set.clauses
+                                    .iter()
+                                    .map(|c| {
+                                        Clause(c.principals.iter().map(Clone::clone).collect())
+                                    })
+                                    .collect(),
+                            ),
+                        },
+                    };
+                    self.current_label = self.current_label.clone().lub(dclabel);
+                    let result = syscalls::DcLabel {
+                        secrecy: match &self.current_label.secrecy {
+                            Component::DCFalse => None,
+                            Component::DCFormula(set) => Some(syscalls::Component {
+                                clauses: set
+                                    .iter()
+                                    .map(|clause| syscalls::Clause {
+                                        principals: clause.0.iter().map(Clone::clone).collect(),
+                                    })
+                                    .collect(),
+                            }),
+                        },
+                        integrity: match &self.current_label.integrity {
+                            Component::DCFalse => None,
+                            Component::DCFormula(set) => Some(syscalls::Component {
+                                clauses: set
+                                    .iter()
+                                    .map(|clause| syscalls::Clause {
+                                        principals: clause.0.iter().map(Clone::clone).collect(),
+                                    })
+                                    .collect(),
+                            }),
+                        },
+                    };
+                    self.conn
+                        .write_all(&(result.encoded_len() as u32).to_be_bytes())?;
+                    self.conn.write_all(result.encode_to_vec().as_ref())?;
+                }
                 None => {
                     // Should never happen, so just ignore??
-                },
+                }
             }
         }
     }
@@ -281,16 +386,12 @@ pub struct Vm {
 impl Vm {
     /// Create a dummy VM for controller tests
     pub fn new_dummy(memory: usize) -> Self {
-        Vm {
-            id: 0,
-            memory,
-        }
+        Vm { id: 0, memory }
     }
 
     pub fn process_req(&mut self, _: Request) -> Result<String, Error> {
         Ok(String::new())
     }
 
-    pub fn shutdown(&mut self) {
-    }
+    pub fn shutdown(&mut self) {}
 }
