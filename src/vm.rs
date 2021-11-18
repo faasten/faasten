@@ -1,5 +1,7 @@
 extern crate reqwest;
+extern crate url;
 
+use std::env;
 use std::path::PathBuf;
 use std::string::String;
 #[cfg(not(test))]
@@ -18,16 +20,22 @@ use crate::configs::FunctionConfig;
 use crate::request::Request;
 use crate::syscalls;
 
+const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
+const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
+const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
+
 #[derive(Debug)]
 pub enum Error {
     ProcessSpawn(std::io::Error),
     //VmTimeout(RecvTimeoutError),
     VmWrite(std::io::Error),
     VmRead(std::io::Error),
-    URLInvalid(reqwest::UrlError),
+    URLInvalid(url::ParseError),
     Rpc(prost::DecodeError),
     Vsock(std::io::Error),
     HttpReq(reqwest::Error),
+    AuthTokenInvalid,
+    AuthTokenNotExist,
     KernelNotExist,
     RootfsNotExist,
     AppfsNotExist,
@@ -58,6 +66,9 @@ pub struct Vm {
     pub function_name: String,
     //vsock_stream: VsockStream,
     conn: UnixStream,
+    //TODO: currently every VM instance opens a connection to the REST server
+    // Having a pool of connections is more ideal.
+    rest_client: reqwest::blocking::Client,
     process: Child,
     /*
     pub process: Pid,
@@ -180,11 +191,14 @@ impl Vm {
         let (conn, _) = vm_listener.accept().unwrap();
         ts_vec.push(Instant::now());
 
+        let rest_client = reqwest::blocking::Client::new();
+
         return Ok((Vm {
             id: id.parse::<usize>().expect("vm id not int"),
             function_name: function_config.name.clone(),
             memory: function_config.memory,
             conn,
+            rest_client,
             process: vm_process,
         }, ts_vec));
     }
@@ -208,10 +222,59 @@ impl Vm {
         self.process_syscall()
     }
 
-    fn construct_url(endpoint: &str, route: &str) -> Result<reqwest::Url, Error> {
-        let mut url = reqwest::Url::parse(endpoint).map_err(|e| Error::URLInvalid(e))?;
-        url.set_path(route);
-        Ok(url)
+    /// Send a HTTP GET request no matter if an authentication token is present
+    fn http_get(&self, sc_req: &syscalls::GithubRest) -> Result<String, Error> {
+        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
+        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
+        url.set_path(&sc_req.route);
+        let req = self.rest_client.get(url)
+            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER);
+        match env::var_os(GITHUB_AUTH_TOKEN) {
+            Some(t_osstr) => {
+                match t_osstr.into_string() {
+                    Ok(t_str) => {
+                        req.bearer_auth(t_str)
+                            .send().map_err(|e| Error::HttpReq(e))?
+                            .text().map_err(|e| Error::HttpReq(e))
+                    },
+                    Err(_) => {
+                        req.send().map_err(|e| Error::HttpReq(e))?
+                            .text().map_err(|e| Error::HttpReq(e))
+                    },
+                }
+            }
+            None => {
+                req.send().map_err(|e| Error::HttpReq(e))?
+                    .text().map_err(|e| Error::HttpReq(e))
+            }
+        }
+    }
+
+    /// Send a HTTP POST or PUT request only if an authentication token is present
+    fn http_post_put(&self, sc_req: &syscalls::GithubRest) -> Result<String, Error> {
+        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
+        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
+        url.set_path(&sc_req.route);
+        let req = if syscalls::HttpVerb::from_i32(sc_req.verb).unwrap() == syscalls::HttpVerb::Post {
+            self.rest_client.post(url)
+        } else {
+            self.rest_client.put(url)
+        };
+        match env::var_os(GITHUB_AUTH_TOKEN) {
+            Some(t_osstr) => {
+                match t_osstr.into_string() {
+                    Ok(t_str) => {
+                        req.header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
+                            .body(std::string::String::from(sc_req.body.as_ref().unwrap()))
+                            .bearer_auth(t_str)
+                            .send().map_err(|e| Error::HttpReq(e))?
+                            .text().map_err(|e| Error::HttpReq(e))
+                    },
+                    Err(_) => Err(Error::AuthTokenInvalid),
+                }
+            }
+            None => Err(Error::AuthTokenNotExist),
+        }
     }
 
     pub fn process_syscall(&mut self) -> Result<String, Error> {
@@ -257,24 +320,21 @@ impl Vm {
                     self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::Vsock(e))?;
                     self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::Vsock(e))?;
                 },
-                Some(SC::HttpGet(get)) => {
-                    //TODO: currently every time a query comes in a new client is created.
-                    // Ideally, there should be just one client per machine reused across queries.
-                    let result: String = match get.host.as_str() {
-                        "github" => {
-                            let client = reqwest::Client::new();
-                            client.get(Vm::construct_url(&get.endpoint, &get.route)?)
-                                .header(reqwest::header::ACCEPT, "application/vnd.github.v3+json")
-                                .send().map_err(|e| Error::HttpReq(e))?
-                                .text().map_err(|e| Error::HttpReq(e))?
+                Some(SC::GithubRest(req)) => {
+                    let response = match syscalls::HttpVerb::from_i32(req.verb) {
+                        Some(syscalls::HttpVerb::Get) => {
+                            self.http_get(&req)?
                         },
-                        _ => {
-                           format!("`{:?}` not supported", get.host)
+                        Some(syscalls::HttpVerb::Post | syscalls::HttpVerb::Put) => {
+                            self.http_post_put(&req)?
+                        },
+                        None => {
+                           format!("`{:?}` not supported", req.verb)
                         }
                     };
                     //println!("VM.RS: {:?}", result);
-                    self.conn.write_all(&(result.as_bytes().len() as u32).to_be_bytes()).map_err(|e| Error::Vsock(e))?;
-                    self.conn.write_all(result.as_bytes()).map_err(|e| Error::Vsock(e))?;
+                    self.conn.write_all(&(response.as_bytes().len() as u32).to_be_bytes()).map_err(|e| Error::Vsock(e))?;
+                    self.conn.write_all(response.as_bytes()).map_err(|e| Error::Vsock(e))?;
                 },
                 None => {
                     // Should never happen, so just ignore??

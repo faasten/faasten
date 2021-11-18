@@ -27,13 +27,19 @@ message WriteKeyResponse {
   bool success = 1;
 }
 
-message HttpGet {
-  string host = 1;
-  string endpoint = 2;
-  string route = 3;
+enum HttpVerb {
+  GET = 0;
+  POST = 1;
+  PUT = 2;
 }
 
-message HttpGetReponse {
+message GithubRest {
+  HttpVerb verb = 1;
+  string route = 2;
+  optional string body = 3;
+}
+
+message GithubRestResponse {
   string data = 1;
 }
 
@@ -42,6 +48,6 @@ message Syscall {
     Response response = 1;
     ReadKey readKey = 2;
     WriteKey writeKey = 3;
-    HttpGet httpGet = 4;
+    GithubRest githubRest = 4;
   }
 }
