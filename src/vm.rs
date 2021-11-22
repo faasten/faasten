@@ -13,7 +13,7 @@ use std::os::unix::net::{UnixStream, UnixListener};
 #[cfg(not(test))]
 use std::time::Instant;
 #[cfg(not(test))]
-use log::{info, error};
+use log::{info, error, debug};
 #[cfg(not(test))]
 use crate::configs::FunctionConfig;
 #[cfg(not(test))]
@@ -23,6 +23,7 @@ use crate::syscalls;
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
 const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
 const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
+const USER_AGENT: &str = "snapfaas";
 
 #[derive(Debug)]
 pub enum Error {
@@ -30,9 +31,9 @@ pub enum Error {
     //VmTimeout(RecvTimeoutError),
     VmWrite(std::io::Error),
     VmRead(std::io::Error),
-    URLInvalid(url::ParseError),
     Rpc(prost::DecodeError),
-    Vsock(std::io::Error),
+    VsockWrite(std::io::Error),
+    VsockRead(std::io::Error),
     HttpReq(reqwest::Error),
     AuthTokenInvalid,
     AuthTokenNotExist,
@@ -212,63 +213,47 @@ impl Vm {
             payload: req.payload_as_string()
         }.encode_to_vec();
 
-        self.conn.write_all(&(sys_req.len() as u32).to_be_bytes()).map_err(|e| {
-            Error::VmWrite(e)
-        })?;
-        self.conn.write_all(sys_req.as_ref()).map_err(|e| {
-            Error::VmWrite(e)
-        })?;
+        self.conn.write_all(&(sys_req.len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
+        self.conn.write_all(sys_req.as_ref()).map_err(|e| Error::VsockWrite(e))?;
 
         self.process_syscall()
     }
 
     /// Send a HTTP GET request no matter if an authentication token is present
-    fn http_get(&self, sc_req: &syscalls::GithubRest) -> Result<String, Error> {
+    fn http_get(&self, sc_req: &syscalls::GithubRest) -> Result<reqwest::blocking::Response, Error> {
         // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
         let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
         url.set_path(&sc_req.route);
-        let req = self.rest_client.get(url)
-            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER);
-        match env::var_os(GITHUB_AUTH_TOKEN) {
+        let mut req = self.rest_client.get(url)
+            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
+            .header(reqwest::header::USER_AGENT, USER_AGENT);
+        req = match env::var_os(GITHUB_AUTH_TOKEN) {
             Some(t_osstr) => {
                 match t_osstr.into_string() {
-                    Ok(t_str) => {
-                        req.bearer_auth(t_str)
-                            .send().map_err(|e| Error::HttpReq(e))?
-                            .text().map_err(|e| Error::HttpReq(e))
-                    },
-                    Err(_) => {
-                        req.send().map_err(|e| Error::HttpReq(e))?
-                            .text().map_err(|e| Error::HttpReq(e))
-                    },
+                    Ok(t_str) => req.bearer_auth(t_str),
+                    Err(_) => req,
                 }
-            }
-            None => {
-                req.send().map_err(|e| Error::HttpReq(e))?
-                    .text().map_err(|e| Error::HttpReq(e))
-            }
-        }
+            },
+            None => req
+        };
+        req.send().map_err(|e| Error::HttpReq(e))
     }
 
-    /// Send a HTTP POST or PUT request only if an authentication token is present
-    fn http_post_put(&self, sc_req: &syscalls::GithubRest) -> Result<String, Error> {
+    /// Send a HTTP POST request only if an authentication token is present
+    fn http_post(&self, sc_req: &syscalls::GithubRest) -> Result<reqwest::blocking::Response, Error> {
         // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
         let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
         url.set_path(&sc_req.route);
-        let req = if syscalls::HttpVerb::from_i32(sc_req.verb).unwrap() == syscalls::HttpVerb::Post {
-            self.rest_client.post(url)
-        } else {
-            self.rest_client.put(url)
-        };
         match env::var_os(GITHUB_AUTH_TOKEN) {
             Some(t_osstr) => {
                 match t_osstr.into_string() {
                     Ok(t_str) => {
-                        req.header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
+                        self.rest_client.post(url)
+                            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
+                            .header(reqwest::header::USER_AGENT, USER_AGENT)
                             .body(std::string::String::from(sc_req.body.as_ref().unwrap()))
                             .bearer_auth(t_str)
-                            .send().map_err(|e| Error::HttpReq(e))?
-                            .text().map_err(|e| Error::HttpReq(e))
+                            .send().map_err(|e| Error::HttpReq(e))
                     },
                     Err(_) => Err(Error::AuthTokenInvalid),
                 }
@@ -288,12 +273,19 @@ impl Vm {
         let default_db = dbenv.open_db(None).unwrap();
 
         loop {
+            debug!("reading...");
             let buf = {
                 let mut lenbuf = [0;4];
-                self.conn.read_exact(&mut lenbuf).map_err(|e| Error::Vsock(e))?;
+                self.conn.read_exact(&mut lenbuf).map_err(|e| {
+                    if let Ok(Some(socke)) = self.conn.take_error() {
+                        debug!("socket error: {:?} occurred", socke);
+                    }
+                    Error::VsockRead(e)
+                })?;
                 let size = u32::from_be_bytes(lenbuf);
+                debug!("incoming data len: {}", size);
                 let mut buf = vec![0u8; size as usize];
-                self.conn.read_exact(&mut buf).map_err(|e| Error::Vsock(e))?;
+                self.conn.read_exact(&mut buf).map_err(|e| Error::VsockRead(e))?;
                 buf
             };
             //println!("VM.RS: received a syscall");
@@ -308,8 +300,8 @@ impl Vm {
                         value: txn.get(default_db, &rk.key).ok().map(Vec::from)
                     };
                     let _ = txn.commit();
-                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::Vsock(e))?;
-                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::Vsock(e))?;
+                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
+                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
                 },
                 Some(SC::WriteKey(wk)) => {
                     let mut txn = dbenv.begin_rw_txn().unwrap();
@@ -317,28 +309,29 @@ impl Vm {
                         success: txn.put(default_db, &wk.key, &wk.value, WriteFlags::empty()).is_ok(),
                     };
                     let _ = txn.commit();
-                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::Vsock(e))?;
-                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::Vsock(e))?;
+                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
+                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
                 },
                 Some(SC::GithubRest(req)) => {
-                    let response = match syscalls::HttpVerb::from_i32(req.verb) {
-                        Some(syscalls::HttpVerb::Get) => {
-                            self.http_get(&req)?
+                    let response = syscalls::GithubRestResponse{
+                        data: match syscalls::HttpVerb::from_i32(req.verb) {
+                            Some(syscalls::HttpVerb::Get) => {
+                                self.http_get(&req)?.text().map_err(|e| Error::HttpReq(e))?
+                            },
+                            Some(syscalls::HttpVerb::Post) => {
+                                self.http_post(&req)?.text().map_err(|e| Error::HttpReq(e))?
+                            },
+                            None => {
+                               format!("`{:?}` not supported", req.verb)
+                            }
                         },
-                        Some(syscalls::HttpVerb::Post | syscalls::HttpVerb::Put) => {
-                            self.http_post_put(&req)?
-                        },
-                        None => {
-                           format!("`{:?}` not supported", req.verb)
-                        }
                     };
-                    //println!("VM.RS: {:?}", result);
-                    self.conn.write_all(&(response.as_bytes().len() as u32).to_be_bytes()).map_err(|e| Error::Vsock(e))?;
-                    self.conn.write_all(response.as_bytes()).map_err(|e| Error::Vsock(e))?;
+                    self.conn.write_all(&(response.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
+                    self.conn.write(response.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
                 },
                 None => {
                     // Should never happen, so just ignore??
-                    println!("VM.RS: received an unknown syscall");
+                    eprintln!("received an unknown syscall");
                 },
             }
         }
