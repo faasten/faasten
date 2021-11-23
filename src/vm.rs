@@ -1,5 +1,8 @@
+extern crate reqwest;
+extern crate url;
+
 #[cfg(not(test))]
-use log::{error, info};
+use std::env;
 #[cfg(not(test))]
 use std::net::Shutdown;
 #[cfg(not(test))]
@@ -9,6 +12,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::string::String;
 #[cfg(not(test))]
+use log::{info, error, debug};
 use std::time::Instant;
 
 #[cfg(not(test))]
@@ -16,6 +20,11 @@ use crate::configs::FunctionConfig;
 #[cfg(not(test))]
 use crate::request::Request;
 use crate::syscalls;
+
+const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
+const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
+const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
+const USER_AGENT: &str = "snapfaas";
 
 use labeled::dclabel::{Clause, Component, DCLabel};
 use labeled::Label;
@@ -26,7 +35,12 @@ pub enum Error {
     //VmTimeout(RecvTimeoutError),
     VmWrite(std::io::Error),
     VmRead(std::io::Error),
-    SyscallError(std::io::Error),
+    Rpc(prost::DecodeError),
+    VsockWrite(std::io::Error),
+    VsockRead(std::io::Error),
+    HttpReq(reqwest::Error),
+    AuthTokenInvalid,
+    AuthTokenNotExist,
     KernelNotExist,
     RootfsNotExist,
     AppfsNotExist,
@@ -57,6 +71,9 @@ pub struct Vm {
     pub function_name: String,
     //vsock_stream: VsockStream,
     conn: UnixStream,
+    //TODO: currently every VM instance opens a connection to the REST server
+    // Having a pool of connections is more ideal.
+    rest_client: reqwest::blocking::Client,
     process: Child,
     current_label: DCLabel,
     /*
@@ -184,12 +201,15 @@ impl Vm {
         let (conn, _) = vm_listener.accept().unwrap();
         ts_vec.push(Instant::now());
 
+        let rest_client = reqwest::blocking::Client::new();
+
         return Ok((
             Vm {
                 id: id.parse::<usize>().expect("vm id not int"),
                 function_name: function_config.name.clone(),
                 memory: function_config.memory,
                 conn,
+                rest_client,
                 process: vm_process,
                 // We should also probably have a clearance to mitigate side channel attacks, but
                 // meh for now...
@@ -210,17 +230,56 @@ impl Vm {
         }
         .encode_to_vec();
 
-        self.conn
-            .write_all(&(sys_req.len() as u32).to_be_bytes())
-            .map_err(|e| Error::VmWrite(e))?;
-        self.conn
-            .write_all(sys_req.as_ref())
-            .map_err(|e| Error::VmWrite(e))?;
+        self.conn.write_all(&(sys_req.len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
+        self.conn.write_all(sys_req.as_ref()).map_err(|e| Error::VsockWrite(e))?;
 
-        self.process_syscall().map_err(|e| Error::SyscallError(e))
+        self.process_syscall()
     }
 
-    pub fn process_syscall(&mut self) -> Result<String, std::io::Error> {
+    /// Send a HTTP GET request no matter if an authentication token is present
+    fn http_get(&self, sc_req: &syscalls::GithubRest) -> Result<reqwest::blocking::Response, Error> {
+        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
+        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
+        url.set_path(&sc_req.route);
+        let mut req = self.rest_client.get(url)
+            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
+            .header(reqwest::header::USER_AGENT, USER_AGENT);
+        req = match env::var_os(GITHUB_AUTH_TOKEN) {
+            Some(t_osstr) => {
+                match t_osstr.into_string() {
+                    Ok(t_str) => req.bearer_auth(t_str),
+                    Err(_) => req,
+                }
+            },
+            None => req
+        };
+        req.send().map_err(|e| Error::HttpReq(e))
+    }
+
+    /// Send a HTTP POST request only if an authentication token is present
+    fn http_post(&self, sc_req: &syscalls::GithubRest) -> Result<reqwest::blocking::Response, Error> {
+        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
+        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
+        url.set_path(&sc_req.route);
+        match env::var_os(GITHUB_AUTH_TOKEN) {
+            Some(t_osstr) => {
+                match t_osstr.into_string() {
+                    Ok(t_str) => {
+                        self.rest_client.post(url)
+                            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
+                            .header(reqwest::header::USER_AGENT, USER_AGENT)
+                            .body(std::string::String::from(sc_req.body.as_ref().unwrap()))
+                            .bearer_auth(t_str)
+                            .send().map_err(|e| Error::HttpReq(e))
+                    },
+                    Err(_) => Err(Error::AuthTokenInvalid),
+                }
+            }
+            None => Err(Error::AuthTokenNotExist),
+        }
+    }
+
+    pub fn process_syscall(&mut self) -> Result<String, Error> {
         use lmdb::{Transaction, WriteFlags};
         use prost::Message;
         use std::io::{Read, Write};
@@ -233,16 +292,20 @@ impl Vm {
         let default_db = dbenv.open_db(None).unwrap();
 
         loop {
+            debug!("reading...");
             let buf = {
-                let mut lenbuf = [0; 4];
-                self.conn.read_exact(&mut lenbuf)?;
+                let mut lenbuf = [0;4];
+                self.conn.read_exact(&mut lenbuf).map_err(|e| Error::VsockRead(e))?;
                 let size = u32::from_be_bytes(lenbuf);
+                debug!("incoming data len: {}", size);
                 let mut buf = vec![0u8; size as usize];
-                self.conn.read_exact(&mut buf)?;
+                self.conn.read_exact(&mut buf).map_err(|e| Error::VsockRead(e))?;
                 buf
             };
-            match Syscall::decode(buf.as_ref())?.syscall {
+            //println!("VM.RS: received a syscall");
+            match Syscall::decode(buf.as_ref()).map_err(|e| Error::Rpc(e))?.syscall {
                 Some(SC::Response(r)) => {
+                    //println!("VS.RS: received response");
                     return Ok(r.payload);
                 }
                 Some(SC::ReadKey(rk)) => {
@@ -251,10 +314,9 @@ impl Vm {
                         value: txn.get(default_db, &rk.key).ok().map(Vec::from),
                     };
                     let _ = txn.commit();
-                    self.conn
-                        .write_all(&(result.encoded_len() as u32).to_be_bytes())?;
-                    self.conn.write_all(result.encode_to_vec().as_ref())?;
-                }
+                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
+                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
+                },
                 Some(SC::WriteKey(wk)) => {
                     let mut txn = dbenv.begin_rw_txn().unwrap();
                     let result = syscalls::WriteKeyResponse {
@@ -263,10 +325,26 @@ impl Vm {
                             .is_ok(),
                     };
                     let _ = txn.commit();
-                    self.conn
-                        .write_all(&(result.encoded_len() as u32).to_be_bytes())?;
-                    self.conn.write_all(result.encode_to_vec().as_ref())?;
-                }
+                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
+                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
+                },
+                Some(SC::GithubRest(req)) => {
+                    let response = syscalls::GithubRestResponse{
+                        data: match syscalls::HttpVerb::from_i32(req.verb) {
+                            Some(syscalls::HttpVerb::Get) => {
+                                self.http_get(&req)?.text().map_err(|e| Error::HttpReq(e))?
+                            },
+                            Some(syscalls::HttpVerb::Post) => {
+                                self.http_post(&req)?.text().map_err(|e| Error::HttpReq(e))?
+                            },
+                            None => {
+                               format!("`{:?}` not supported", req.verb)
+                            }
+                        },
+                    };
+                    self.conn.write_all(&(response.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
+                    self.conn.write(response.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
+                },
                 Some(SC::GetCurrentLabel(_)) => {
                     let result = syscalls::DcLabel {
                         secrecy: match &self.current_label.secrecy {
@@ -293,8 +371,8 @@ impl Vm {
                         },
                     };
                     self.conn
-                        .write_all(&(result.encoded_len() as u32).to_be_bytes())?;
-                    self.conn.write_all(result.encode_to_vec().as_ref())?;
+                        .write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
+                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
                 }
                 Some(SC::TaintWithLabel(label)) => {
                     let dclabel = DCLabel {
@@ -347,12 +425,13 @@ impl Vm {
                         },
                     };
                     self.conn
-                        .write_all(&(result.encoded_len() as u32).to_be_bytes())?;
-                    self.conn.write_all(result.encode_to_vec().as_ref())?;
+                        .write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
+                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
                 }
                 None => {
                     // Should never happen, so just ignore??
-                }
+                    eprintln!("received an unknown syscall");
+                },
             }
         }
     }
