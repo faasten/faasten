@@ -11,7 +11,6 @@ use std::net::{TcpStream};
 
 use log::error;
 
-//use crate::vsock::*;
 use crate::worker::Worker;
 use crate::request::Request;
 use crate::message::Message;
@@ -32,20 +31,21 @@ impl WorkerPool {
 
         let pool_size = controller.total_mem/128;
         let mut pool = Vec::with_capacity(pool_size);
-        //let mut vsock_stream_senders = HashMap::with_capacity(pool_size);
 
         for i in 0..pool_size {
-            //let (sender, receiver) = mpsc::channel();
             let cid = i as u32 + 100;
             pool.push(Worker::new(rx.clone(), controller.clone(), cid));
-            //vsock_stream_senders.insert(cid, sender);
         }
 
         WorkerPool {
-            pool: pool,
+            pool,
             req_sender: tx,
-            controller: controller,
+            controller,
         }
+    }
+
+    pub fn get_sender(&self) -> Sender<Message> {
+        self.req_sender.clone()
     }
 
     pub fn send_req(&self, req: Request, rsp_sender: Sender<Message>) {
@@ -80,5 +80,6 @@ impl WorkerPool {
                 error!("worker thread {:?} panicked {:?}", id, e);
             }
         }
+
     }
 }

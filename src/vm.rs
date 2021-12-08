@@ -1,3 +1,5 @@
+//! Host-side VM handle that transfer data in and out of the VM through VSOCK socket and
+//! implements syscall API
 extern crate reqwest;
 extern crate url;
 
@@ -69,24 +71,12 @@ pub struct Vm {
     pub id: usize,
     pub memory: usize, // MB
     pub function_name: String,
-    //vsock_stream: VsockStream,
     conn: UnixStream,
     //TODO: currently every VM instance opens a connection to the REST server
     // Having a pool of connections is more ideal.
     rest_client: reqwest::blocking::Client,
     process: Child,
     current_label: DCLabel,
-    /*
-    pub process: Pid,
-    cgroup_name: PathBuf,
-    pub cpu_share: usize,
-    pub vcpu_count: usize,
-    pub kernel: String,
-    pub kernel_args: String,
-    pub ready_notifier: File, // Vm writes to this File when setup finishes
-
-    pub app_config: VmAppConfig,
-    */
 }
 
 #[cfg(not(test))]

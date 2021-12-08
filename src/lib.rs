@@ -11,6 +11,8 @@ pub mod vm;
 pub mod syscalls;
 pub mod metrics;
 pub mod firecracker_wrapper;
+pub mod server;
+pub mod app;
 
 use std::string::String;
 use std::fs::{self, File};
