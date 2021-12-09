@@ -199,9 +199,8 @@ fn main() {
 
     // Create a FunctionConfig value based on cmdline inputs
     let vm_app_config = FunctionConfig {
-        name: "app".to_string(), //dummy value
         runtimefs: cmd_arguments.value_of("rootfs").expect("rootfs").to_string(),
-        appfs: cmd_arguments.value_of("appfs").unwrap_or_default().to_string(),
+        appfs: cmd_arguments.value_of("appfs").map(|s| s.to_string()),
         vcpus: cmd_arguments.value_of("vcpu_count").expect("vcpu")
                             .parse::<u64>().expect("vcpu not int"),
         memory: cmd_arguments.value_of("mem_size").expect("mem_size")
@@ -209,7 +208,6 @@ fn main() {
         concurrency_limit: 1,
         load_dir: cmd_arguments.value_of("load_dir").map(|s| s.to_string()),
         dump_dir: cmd_arguments.value_of("dump_dir").map(|s| s.to_string()),
-        //diff_dirs: cmd_arguments.value_of("diff_dirs").map(|s| s.to_string()),
         copy_base: cmd_arguments.is_present("copy_base_memory"),
         copy_diff: cmd_arguments.is_present("copy_diff_memory"),
         kernel: cmd_arguments.value_of("kernel").expect("kernel").to_string(),
@@ -231,7 +229,7 @@ fn main() {
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
     let firerunner = cmd_arguments.value_of("firerunner").unwrap();
-    let (mut vm, ts_vec) = match Vm::new(id, &vm_app_config, &vm_listener, CID,
+    let (mut vm, ts_vec) = match Vm::new(id, "myapp", &vm_app_config, &vm_listener, CID,
         cmd_arguments.value_of("network"), firerunner, cmd_arguments.is_present("force exit"), Some(odirect))
     {
         Ok(vm) => vm,

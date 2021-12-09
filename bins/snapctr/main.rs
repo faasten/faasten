@@ -73,7 +73,7 @@ fn main() {
     let ctr_config = configs::ControllerConfig::new(config_path);
 
     // create a controller object
-    let mut controller = Controller::new(ctr_config).expect("Cannot create controller");
+    let mut controller = Controller::new(ctr_config);
 
     // set total memory
     let total_mem = matches.value_of("total memory").unwrap()

@@ -168,13 +168,13 @@ fn acquire_vm(
     // evict to create a new VM, we want this sequence of functions to return quickly and the
     // worker to return "Resource exhaustion" quickly.
     let vm = ctr
-        .get_idle_vm(&function_name)
+        .get_idle_vm(function_name)
         .or_else(|e| {
             match e {
                // No Idle vm for this function. Try to allocatea new vm.
                 controller::Error::NoIdleVm => {
                     let t1 = precise_time_ns();
-                    let ret = ctr.allocate(func_config, vm_listener, cid, network);
+                    let ret = ctr.allocate(function_name, vm_listener, cid, network);
                     let t2 = precise_time_ns();
 
                     if let Ok(vm) = ret.as_ref() {
@@ -182,7 +182,7 @@ fn acquire_vm(
                         let mem_size = vm.memory;
                         stat.vm_mem_size.insert(id, mem_size);
                         stat.boot_tsp.insert(id, vec![t1, t2]);
-                        info!("[Worker {:?}] Allocated new VM. ID: {:?}, App: {:?}", thread_id, id, func_config.name);
+                        info!("[Worker {:?}] Allocated new VM. ID: {:?}, App: {:?}", thread_id, id, function_name);
                     }
                     return ret;
                 }
@@ -221,7 +221,7 @@ fn acquire_vm(
                     // freed and used it for their requests.
                     if freed >= func_config.memory {
                         let t1 = precise_time_ns();
-                        let ret = ctr.allocate(func_config, vm_listener, cid, network);
+                        let ret = ctr.allocate(function_name, vm_listener, cid, network);
                         let t2 = precise_time_ns();
                         if let Ok(vm) = ret.as_ref() {
                             let id = vm.id;

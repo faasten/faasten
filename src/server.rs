@@ -114,16 +114,16 @@ pub struct Server<H> {
 
 impl<H> Server<H> {
     pub fn new(total_mem: usize, config_path: &str, listen_addr: &str, handler: H) -> Self {
-        let listener = TcpListener::bind(listen_addr).unwrap();
-        trace!("listening on {}", listen_addr);
-
         use crate::{configs, controller, workerpool};
         // create a controller object
         let config = configs::ControllerConfig::new(config_path);
-        let mut controller = controller::Controller::new(config).expect("Cannot create controller");
+        let mut controller = controller::Controller::new(config);
         controller.set_total_mem(total_mem);
         let controller = std::sync::Arc::new(controller);
         trace!("{:?}", controller);
+
+        let listener = TcpListener::bind(listen_addr).unwrap();
+        trace!("listening on {}", listen_addr);
 
         // worker pool
         let wp = workerpool::WorkerPool::new(controller.clone());

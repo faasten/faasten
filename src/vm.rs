@@ -86,6 +86,7 @@ impl Vm {
     /// to accept requests.
     pub fn new(
         id: &str,
+        function_name: &str,
         function_config: &FunctionConfig,
         vm_listener: &UnixListener,
         cid: u32,
@@ -115,20 +116,17 @@ impl Vm {
             &cid_str,
         ];
 
-        if function_config.appfs != "" {
-            args.extend_from_slice(&["--appfs", &function_config.appfs]);
+        if let Some(f) = function_config.appfs.as_ref() {
+            args.extend_from_slice(&["--appfs", f]);
         }
         if let Some(load_dir) = function_config.load_dir.as_ref() {
-            args.extend_from_slice(&["--load_from", &load_dir]);
+            args.extend_from_slice(&["--load_from", load_dir]);
         }
         if let Some(dump_dir) = function_config.dump_dir.as_ref() {
-            args.extend_from_slice(&["--dump_to", &dump_dir]);
+            args.extend_from_slice(&["--dump_to", dump_dir]);
         }
-        //if let Some(diff_dirs) = function_config.diff_dirs.as_ref() {
-        //    args.extend_from_slice(&["--diff_dirs", &diff_dirs]);
-        //}
         if let Some(cmdline) = function_config.cmdline.as_ref() {
-            args.extend_from_slice(&["--kernel_args", &cmdline]);
+            args.extend_from_slice(&["--kernel_args", cmdline]);
         }
         if function_config.dump_ws {
             args.push("--dump_ws");
@@ -190,13 +188,14 @@ impl Vm {
 
         let (conn, _) = vm_listener.accept().unwrap();
         ts_vec.push(Instant::now());
+        info!("{}", "VM is now connected to the host");
 
         let rest_client = reqwest::blocking::Client::new();
 
         return Ok((
             Vm {
                 id: id.parse::<usize>().expect("vm id not int"),
-                function_name: function_config.name.clone(),
+                function_name: function_name.to_string(),
                 memory: function_config.memory,
                 conn,
                 rest_client,
@@ -204,7 +203,7 @@ impl Vm {
                 // We should also probably have a clearance to mitigate side channel attacks, but
                 // meh for now...
                 /// Starting label with public secrecy and integrity has app-name
-                current_label: DCLabel::new(false, [[function_config.name.clone()]]),
+                current_label: DCLabel::new(false, [[function_name.to_string()]]),
             },
             ts_vec,
         ));
@@ -443,6 +442,9 @@ impl Vm {
         }
     }
 }
+
+#[cfg(test)]
+use crate::request::Request;
 
 #[derive(Debug)]
 #[cfg(test)]

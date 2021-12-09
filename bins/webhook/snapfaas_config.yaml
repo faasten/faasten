@@ -1,8 +1,9 @@
+---
 firerunner_path: "./target/release/firerunner"
 kernel_path: "./resources/images/vmlinux-4.20.0"
 runtimefs_dir: "./"
 functions:
-  - name: "build_tarball"
+  build_tarball:
     runtimefs: "python3_build_tarball.ext4"
     vcpus: 1
     memory: 128 

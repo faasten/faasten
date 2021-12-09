@@ -1,6 +1,10 @@
+---
 firerunner_path: "./target/release/firerunner"
 kernel_path: "./resources/images/vmlinux-4.20.0"
-runtimefs_dir: "./resources/images/runtimefs/"
-appfs_dir: "./resources/images/appfs/"
-snapshot_dir: "./resources/images/snapshot/"
-function_config: "./resources/example-function-configs.yaml"
+runtimefs_dir: "./"
+functions:
+  hello:
+    runtimefs: "hello.ext4"
+    vcpus: 1
+    memory: 128
+    concurrency_limit: 600

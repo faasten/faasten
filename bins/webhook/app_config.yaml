@@ -1,11 +1,11 @@
+---
 repos:
-  # Site 1 is in a public repo
-  site1:
+  princeton-sns/snapfaas:
     organization: princeton-sns
-    full_name: princeton-sns/snapfaas
+    token: BBBBBBBBBBBBBBBBB
     secret: mysecretkey1
-  # Site 2 is in a private repo, so it needs a token to access
-  site2:
-    full_name: myuser/mysite2
-    token: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-    secret: mysecretkey2
+  mysite:
+    organization:
+    token:
+    secret: mysecret 
+
