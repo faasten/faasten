@@ -18,7 +18,7 @@ use clap::{App, Arg};
 const CID: u32 = 124;
 
 fn main() {
-    simple_logger::init().expect("simple_logger init failed");
+    env_logger::init();
     let cmd_arguments = App::new("fireruner wrapper")
         .version(crate_version!())
         .author(crate_authors!())

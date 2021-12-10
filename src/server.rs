@@ -1,7 +1,7 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use http;
 use httparse;
-use log::trace;
+use log::{trace, info, warn, error};
 
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
@@ -123,13 +123,43 @@ impl<H> Server<H> {
         trace!("{:?}", controller);
 
         let listener = TcpListener::bind(listen_addr).unwrap();
-        trace!("listening on {}", listen_addr);
+        warn!("listening on {}", listen_addr);
 
         // worker pool
         let wp = workerpool::WorkerPool::new(controller.clone());
-        trace!("# workers: {:?}", wp.pool_size());
+        info!("# workers: {:?}", wp.pool_size());
 
+        
         Server { wp, listener, handler }
+    }
+
+    /// Use Ctrl-C to shut down the server
+    pub fn set_ctrlc_handler(&self) {
+        let controller = self.wp.get_controller();
+        let sender = self.wp.get_sender();
+        let pool_size = self.wp.pool_size();
+        ctrlc::set_handler(move || { 
+            warn!("{}", "Handling Ctrl-C. Shutting down...");
+            // Shutdown all idle VMs
+            controller.shutdown();
+            // Shutdown all workers:
+            // first, sending Shutdown message to each thread in the pool
+            // second, wait for ack messages from all workers
+            let (tx, rx) = mpsc::channel(); 
+            for _ in 0..pool_size {
+                sender.send(Message::Shutdown(tx.clone())).expect("failed to shutdown workers");
+            }
+            // Worker threads may have exited while we try receiving from the channel causing
+            // recv errors. We simply ignore errors.
+            for _ in 0..pool_size {
+                match rx.recv() {
+                    Ok(_) => (),
+                    Err(_) => (),
+                }
+            }
+            crate::unlink_unix_sockets();
+            std::process::exit(0);
+        }).expect("Error setting Ctrl-C handler");
     }
 }
 
@@ -144,7 +174,7 @@ impl<H: 'static + Handler + Send + Clone> Server<H> {
                 loop {
                     if let Err(r) = request_helper(&mut client, &mut handler, &sender) {
                         if r.kind() != std::io::ErrorKind::UnexpectedEof {
-                            eprintln!("{}", r);
+                            error!("{}", r);
                         }
                         break;
                     }

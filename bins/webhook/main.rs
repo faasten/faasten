@@ -5,7 +5,7 @@ mod app;
 mod config;
 
 fn main() -> Result<(), std::io::Error> {
-    simple_logger::init().expect("simple_logger init failed");
+    env_logger::init();
 
     let matches = App::new("webhook server")
         .arg(
@@ -36,6 +36,7 @@ fn main() -> Result<(), std::io::Error> {
         .arg(Arg::with_name("total memory")
                 .long("mem")
                 .takes_value(true)
+                .value_name("MB")
                 .required(true)
                 .help("Total memory available for all VMs")
         )
@@ -48,5 +49,6 @@ fn main() -> Result<(), std::io::Error> {
         matches.value_of("listen").unwrap(),
         app
     );
+    server.set_ctrlc_handler();
     server.run()
 }

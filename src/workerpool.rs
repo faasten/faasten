@@ -9,8 +9,6 @@ use std::sync::Mutex;
 use std::sync::mpsc::Sender;
 use std::net::{TcpStream};
 
-use log::error;
-
 use crate::worker::Worker;
 use crate::request::Request;
 use crate::message::Message;
@@ -43,6 +41,10 @@ impl WorkerPool {
             controller,
         }
     }
+    
+    pub fn get_controller(&self) -> Arc<Controller> {
+        self.controller.clone()
+    }
 
     pub fn get_sender(&self) -> Sender<Message> {
         self.req_sender.clone()
@@ -63,23 +65,24 @@ impl WorkerPool {
         self.pool.len()
     }
     
-    /// shutdown the workerpool
-    /// This involves
-    /// 1. sending Shutdown message to each thread in the pool
-    /// 2. wait for all threads in the pool to terminate
     pub fn shutdown(self) {
-        // shutdown all idle VMs
+        // Shutdown all idle VMs
         self.controller.shutdown();
-        // shutdown all workers
-        for _ in &self.pool {
-            self.req_sender.send(Message::Shutdown).expect("failed to shutdown workers");
+        // Shutdown all workers:
+        // first, sending Shutdown message to each thread in the pool
+        // second, wait for ack messages from all workers
+        let (tx, rx) = mpsc::channel(); 
+        for _ in 0..self.pool_size() {
+            self.req_sender.send(Message::Shutdown(tx.clone())).expect("failed to shutdown workers");
         }
-        for w in self.pool {
-            let id = w.thread.thread().id();
-            if let Err(e) = w.thread.join() {
-                error!("worker thread {:?} panicked {:?}", id, e);
+        // Worker threads may have exited while we try receiving from the channel causing
+        // recv errors. We simply ignore errors.
+        for _ in 0..self.pool_size() {
+            match rx.recv() {
+                Ok(_) => (),
+                Err(_) => (),
             }
         }
-
+        crate::unlink_unix_sockets();
     }
 }

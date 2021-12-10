@@ -85,13 +85,22 @@ impl Worker {
                         }
                     }
                     // To shutdown, dump collected statistics and then terminate
-                    Message::Shutdown => {
+                    Message::Shutdown(ack_sender) => {
                         warn!("[Worker {:?}] shutdown received", id);
-                        let output_file = std::fs::File::create(format!("out/thread-{:?}.stat", id))
-                                              .expect("output file failed to create");
-                        if let Err(e) = serde_json::to_writer_pretty(output_file, &stat.to_json()) {
-                            error!("failed to write measurement results as json: {:?}", e);
+                        if let Err(e) = std::fs::create_dir_all("./out") {
+                            error!("Cannot create stats folder ./out: {:?}", e);
+                        } else {
+                            match std::fs::File::create(format!("out/thread-{:?}.stat", id)) {
+                                Ok(output_file) =>
+                                    if let Err(e) = serde_json::to_writer_pretty(output_file, &stat.to_json()) {
+                                        error!("failed to write measurement results as json: {:?}", e);
+                                    },
+                                Err(e) => {
+                                    error!("Cannot create stat file out/thread-{:?}.stat: {:?}", id, e);
+                                },
+                            }
                         }
+                        ack_sender.send(Message::ShutdownAck).expect("Failed to ack shutdown");
                         return;
                     }
                     Message::Request(req, rsp_sender) => {

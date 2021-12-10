@@ -9,7 +9,9 @@ use crate::request::Request;
 #[derive(Debug)]
 pub enum Message {
     HTTPRequest(Request, Sender<Result<(), StatusCode>>),
-    Shutdown,
+    Shutdown(Sender<Message>),
+    ShutdownAck,
+    NoAckShutdown,
     Request(Request, Sender<Message>),
     RequestTcp(Request, Arc<Mutex<TcpStream>>),
     Response(String),

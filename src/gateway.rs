@@ -65,7 +65,7 @@ impl FileGateway {
                     Ok(msg) => {
                         match msg {
                             Message::Response(rsp) => warn!("{:?}", rsp),
-                            Message::Shutdown => return,
+                            Message::NoAckShutdown => return,
                             _ => error!("Reponse serializer received a non-response"),
                         }
                     },
@@ -77,7 +77,7 @@ impl FileGateway {
     }
 
     pub fn shutdown(self) {
-        self.rsp_sender.send(Message::Shutdown).expect("Couldn't send the shutdown message");
+        self.rsp_sender.send(Message::NoAckShutdown).expect("Couldn't send the shutdown message");
         self.rsp_serializer.join().expect("Couldn't join on response serializer thread");
     }
 

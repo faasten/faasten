@@ -24,7 +24,7 @@ use signal_hook::{iterator::Signals, SIGINT};
 use crossbeam_channel::bounded;
 
 fn main() {
-    simple_logger::init().expect("simple_logger init failed");
+    env_logger::init();
 
     let matches = App::new("SnapFaaS controller")
         .version("1.0")
