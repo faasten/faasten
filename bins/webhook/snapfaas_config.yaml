@@ -1,10 +1,12 @@
 ---
-firerunner_path: "./target/release/firerunner"
+allow_network: false
+firerunner_path: "./target/debug/firerunner"
 kernel_path: "./resources/images/vmlinux-4.20.0"
 runtimefs_dir: "./"
 functions:
   build_tarball:
-    runtimefs: "python3_build_tarball.ext4"
+    network: false
+    runtimefs: "list_tarball.ext4"
     vcpus: 1
     memory: 128 
     concurrency_limit: 600

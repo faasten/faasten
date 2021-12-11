@@ -2,6 +2,7 @@ use github_types::PushEvent;
 use bytes::Bytes;
 use http::status::StatusCode;
 use serde::Serialize;
+use log::debug;
 
 use std::time::Instant;
 
@@ -23,8 +24,10 @@ pub struct App {
 
 impl App {
     pub fn new(config_path: &str) -> Self {
+        let config = Config::new(config_path);
+        debug!("App config: {:?}", config);
         App {
-            config: Config::new(config_path),
+            config,
             uptime : Instant::now(),
         }
     }
@@ -32,10 +35,10 @@ impl App {
     // download the tarball of a repository from GitHub
     fn get_github_tarball(&self, event_body: &PushEvent) -> Vec<u8> {
         use url::Url;
-        let tarball_url = Url::parse("https://api.github.com/repos").unwrap();
-        let tarball_url = tarball_url.join(&event_body.repository.full_name).unwrap();
-        let tarball_url = tarball_url.join("tarball").unwrap();
-        let tarball_url = tarball_url.join(&event_body.git_ref).unwrap();
+        let tarball_url = format!("https://api.github.com/repos/{}/tarball/{}",
+                                  &event_body.repository.full_name, &event_body.after);
+        let tarball_url = Url::parse(&tarball_url).unwrap();
+        debug!("Archive URL: {:?}", tarball_url);
         
         use curl::easy::{Easy, List};
         let mut easy = Easy::new();
@@ -57,6 +60,27 @@ impl App {
             }).unwrap();
             transfer.perform().unwrap();
         }
+
+        {
+            use log::{log_enabled, Level};
+            if log_enabled!(Level::Debug) {
+                use flate2::read::GzDecoder;
+                use tar::Archive;
+                let tar = GzDecoder::new(&buf[..]);
+                let mut archive = Archive::new(tar);
+                if let Ok(entries) = archive.entries() {
+                    for entry in entries {
+                        match entry {
+                            Ok(ent) => debug!("{:?}", ent.path()),
+                            Err(err) => debug!("Invalid Entry: {:?}", err),
+                        }
+                    }
+                } else {
+                    debug!("Bad gzip format: {:?}", archive.entries().err().unwrap());
+                }
+            }
+        }
+
         buf
     }
 }
@@ -64,42 +88,47 @@ impl App {
 type AppResult<T> = Result<T, StatusCode>;
 
 impl app::Handler for App {
-    fn handle_request(&mut self, request: &http::Request<Bytes>) -> AppResult<request::Request> {
-        let path = request.uri().path();
-        let repo = self
-            .config
-            .repos
-            .get(&path[1..].to_string())
-            .ok_or(StatusCode::NOT_FOUND)?;
-
-        verify_github_request(
-            &repo.secret,
-            &request.body(),
-            request
-                .headers()
-                .get("x-hub-signature")
-                .map(|v| v.as_bytes()),
-        )?;
-
+    fn handle_request(&mut self, request: &http::Request<Bytes>) -> AppResult<Option<request::Request>> {
         let event_type = request
             .headers()
             .get("x-github-event")
             .ok_or(StatusCode::BAD_REQUEST)?;
         match event_type.as_bytes() {
+            b"ping" => {
+                debug!("GitHub pinged.");
+                Ok(None)
+            }
             b"push" => {
+                debug!("Push event.");
                 let event_body: PushEvent =
                     serde_yaml::from_slice(request.body().as_ref()).or(Err(StatusCode::BAD_REQUEST))?;
+
+                let name = &event_body.repository.full_name;
+                let repo = self
+                    .config
+                    .repos
+                    .get(name)
+                    .ok_or(StatusCode::NOT_FOUND)?;
+                verify_github_request(
+                    &repo.secret,
+                    &request.body(),
+                    request
+                        .headers()
+                        .get("x-hub-signature")
+                        .map(|v| v.as_bytes()),
+                )?;
+
                 let tarball = self.get_github_tarball(&event_body);
 
                 use std::hash::{Hash, Hasher};
                 let mut s = std::collections::hash_map::DefaultHasher::new();
                 event_body.repository.full_name.hash(&mut s);
-                Ok(request::Request {
+                Ok(Some(request::Request {
                     time: Instant::now().duration_since(self.uptime).as_millis() as u64,
                     user_id: s.finish(),
                     function: "build_tarball".to_string(),
                     payload: serde_json::to_value(Payload{ tarball }).unwrap(),
-                })
+                }))
             },
             _ => Err(StatusCode::BAD_REQUEST)
         }

@@ -9,6 +9,8 @@ use std::sync::Mutex;
 use std::sync::mpsc::Sender;
 use std::net::{TcpStream};
 
+use log::info;
+
 use crate::worker::Worker;
 use crate::request::Request;
 use crate::message::Message;
@@ -29,6 +31,7 @@ impl WorkerPool {
 
         let pool_size = controller.total_mem/128;
         let mut pool = Vec::with_capacity(pool_size);
+        info!("# workers: {:?}", pool_size);
 
         for i in 0..pool_size {
             let cid = i as u32 + 100;

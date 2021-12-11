@@ -1,9 +1,11 @@
+allow_network: false
 kernel_path: "./resources/images/vmlinux-4.20.0"
 runtimefs_dir: "./resources/images/runtimefs/"
 appfs_dir: "./resources/images/appfs/"
 snapshot_dir: "./resources/images/snapshot/"
 functions:
   hello:
+    network: false
     runtimefs: "python3.ext4"
     appfs: "hello.ext2"
     vcpus: 1

@@ -4,8 +4,8 @@ repos:
     organization: princeton-sns
     token: BBBBBBBBBBBBBBBBB
     secret: mysecretkey1
-  mysite:
+  tan-yue/hello-world-go:
     organization:
-    token:
-    secret: mysecret 
+    token: AAAAA 
+    secret: myscretkey2
 

@@ -25,7 +25,6 @@ use crate::metrics::Metrics;
 use crate::request;
 
 const EVICTION_TIMEOUT: Duration = Duration::from_secs(2);
-const MACPREFIX: &str = "AA:BB:CC:DD";
 
 #[derive(Debug)]
 pub struct Worker {
@@ -56,7 +55,6 @@ impl Worker {
             Err(e) => panic!("Failed to clone unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
         };
 
-        let network = format!("tap{}/{}:{:02X}:{:02X}", (cid-100), MACPREFIX, ((cid-100)&0xff00)>>8, (cid-100)&0xff);
         let handle = thread::spawn(move || {
             let id = thread::current().id();
             let mut stat: Metrics = Metrics::new();
@@ -67,12 +65,11 @@ impl Worker {
                 match msg {
                     Message::HTTPRequest(req, rsp_sender) => {
                         let function_name = req.function.clone();
-                        match acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid, &network)
+                        match acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid)
                             .and_then(|vm| process_req(req, vm, &mut stat)) {
-                            Ok(_) => {
-                                //TODO: rsp string from VM is currently being ignored
+                            Ok(rsp) => {
                                 trace!("[Worker {:?}] finished processing {}", id, function_name);
-                                if let Err(e) = rsp_sender.send(Ok(())) {
+                                if let Err(e) = rsp_sender.send(Ok(rsp)) {
                                     error!("[Worker {:?}] response failed to send: {:?}", id, e);
                                 }
                             }
@@ -105,7 +102,7 @@ impl Worker {
                     }
                     Message::Request(req, rsp_sender) => {
                         let function_name = req.function.clone();
-                        match acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid, &network)
+                        match acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid)
                                   .and_then(|vm| process_req(req, vm, &mut stat)) {
                             Ok(rsp) => {
                                 trace!("[Worker {:?}] finished processing {}", id, function_name);
@@ -118,7 +115,7 @@ impl Worker {
                     }
                     Message::RequestTcp(req, rsp_sender) => {
                         let function_name = req.function.clone();
-                        match acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid, &network)
+                        match acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid)
                                   .and_then(|vm| process_req(req, vm, &mut stat)) {
                             Ok(rsp) => {
                                 trace!("[Worker {:?}] finished processing {}", id, function_name);
@@ -167,7 +164,6 @@ fn acquire_vm(
     stat: &mut Metrics,
     vm_listener: &UnixListener,
     cid: u32,
-    network: &str,
 )-> Result<Vm, controller::Error> {
     let thread_id = thread::current().id();
     let func_config = ctr.get_function_config(function_name).ok_or(controller::Error::FunctionNotExist)?;
@@ -183,7 +179,7 @@ fn acquire_vm(
                // No Idle vm for this function. Try to allocatea new vm.
                 controller::Error::NoIdleVm => {
                     let t1 = precise_time_ns();
-                    let ret = ctr.allocate(function_name, vm_listener, cid, network);
+                    let ret = ctr.allocate(function_name, vm_listener, cid);
                     let t2 = precise_time_ns();
 
                     if let Ok(vm) = ret.as_ref() {
@@ -230,7 +226,7 @@ fn acquire_vm(
                     // freed and used it for their requests.
                     if freed >= func_config.memory {
                         let t1 = precise_time_ns();
-                        let ret = ctr.allocate(function_name, vm_listener, cid, network);
+                        let ret = ctr.allocate(function_name, vm_listener, cid);
                         let t2 = precise_time_ns();
                         if let Ok(vm) = ret.as_ref() {
                             let id = vm.id;

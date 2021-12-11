@@ -9,12 +9,11 @@ use std::env;
 use std::net::Shutdown;
 #[cfg(not(test))]
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
 #[cfg(not(test))]
 use std::process::{Child, Command, Stdio};
 use std::string::String;
 #[cfg(not(test))]
-use log::{info, error, debug};
+use log::{info, error};
 use std::time::Instant;
 
 #[cfg(not(test))]
@@ -23,6 +22,7 @@ use crate::configs::FunctionConfig;
 use crate::request::Request;
 use crate::syscalls;
 
+const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
 const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
 const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
@@ -58,14 +58,6 @@ pub struct OdirectOption {
 }
 
 #[derive(Debug)]
-pub struct VmAppConfig {
-    pub rootfs: String,
-    pub appfs: String,
-    pub load_dir: Vec<PathBuf>,
-    pub dump_dir: Option<PathBuf>,
-}
-
-#[derive(Debug)]
 #[cfg(not(test))]
 pub struct Vm {
     pub id: usize,
@@ -90,7 +82,7 @@ impl Vm {
         function_config: &FunctionConfig,
         vm_listener: &UnixListener,
         cid: u32,
-        network: Option<&str>,
+        allow_network: bool,
         firerunner: &str,
         force_exit: bool,
         odirect: Option<OdirectOption>,
@@ -142,10 +134,11 @@ impl Vm {
         }
 
         // network config should be of the format <TAP-Name>/<MAC Address>
-        if let Some(network) = network {
-            let v: Vec<&str> = network.split('/').collect();
-            args.extend_from_slice(&["--tap_name", v[0]]);
-            args.extend_from_slice(&["--mac", v[1]]);
+        let tap_name = format!("tap{}", cid-100);
+        let mac_addr = format!("{}:{:02X}:{:02X}", MACPREFIX, ((cid-100)&0xff00)>>8, (cid-100)&0xff);
+        if function_config.network && allow_network {
+            args.extend_from_slice(&["--tap_name", &tap_name]);
+            args.extend_from_slice(&["--mac", &mac_addr]);
         }
 
         // odirect
@@ -281,12 +274,10 @@ impl Vm {
         let default_db = dbenv.open_db(None).unwrap();
 
         loop {
-            debug!("reading...");
             let buf = {
                 let mut lenbuf = [0;4];
                 self.conn.read_exact(&mut lenbuf).map_err(|e| Error::VsockRead(e))?;
                 let size = u32::from_be_bytes(lenbuf);
-                debug!("incoming data len: {}", size);
                 let mut buf = vec![0u8; size as usize];
                 self.conn.read_exact(&mut buf).map_err(|e| Error::VsockRead(e))?;
                 buf

@@ -1,7 +1,7 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use http;
 use httparse;
-use log::{trace, info, warn, error};
+use log::{warn, error, debug};
 
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
@@ -37,7 +37,15 @@ impl Client {
             buf.put(&lowbuf[..len]);
             let mut headers = [httparse::EMPTY_HEADER; 100];
             let mut req = httparse::Request::new(&mut headers);
-            let res = req.parse(buf.as_ref()).unwrap();
+            let res = req.parse(buf.as_ref());
+            if let Err(e) = res {
+                error!("Failed to parse HTTP request: {:?}", e);
+                return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "Parse error",
+                        ));
+            }
+            let res = res.unwrap();
             if let httparse::Status::Complete(len) = res {
                 let method = req
                     .method
@@ -120,15 +128,12 @@ impl<H> Server<H> {
         let mut controller = controller::Controller::new(config);
         controller.set_total_mem(total_mem);
         let controller = std::sync::Arc::new(controller);
-        trace!("{:?}", controller);
 
         let listener = TcpListener::bind(listen_addr).unwrap();
-        warn!("listening on {}", listen_addr);
+        warn!("Listening on {}", listen_addr);
 
         // worker pool
         let wp = workerpool::WorkerPool::new(controller.clone());
-        info!("# workers: {:?}", wp.pool_size());
-
         
         Server { wp, listener, handler }
     }
@@ -139,6 +144,7 @@ impl<H> Server<H> {
         let sender = self.wp.get_sender();
         let pool_size = self.wp.pool_size();
         ctrlc::set_handler(move || { 
+            println!("");
             warn!("{}", "Handling Ctrl-C. Shutting down...");
             // Shutdown all idle VMs
             controller.shutdown();
@@ -190,14 +196,22 @@ fn request_helper(client: &mut Client, handler: &mut dyn Handler, sender: &Sende
     let request = client.read()?;
 
     match handler.handle_request(&request) {
-        Ok(req) => {
-            let (tx, rx) = mpsc::channel();
-            sender.send(Message::HTTPRequest(req, tx))
-                .expect("failed to send HTTP-sourced request");
-            
-            match rx.recv().expect("failed to receive worker response") {
-                Ok(_) => client.write_response(&Response::builder().body(request.body().clone()).unwrap()),
-                Err(c) => client.write_response(&Response::builder().status(c).body(Bytes::new()).unwrap()),
+        Ok(maybe_req) => {
+            if let Some(req) = maybe_req {
+                let (tx, rx) = mpsc::channel();
+                sender.send(Message::HTTPRequest(req, tx))
+                    .expect("failed to send HTTP-sourced request");
+                
+                match rx.recv().expect("failed to receive worker response") {
+                    Ok(resp) => {
+                        debug!("Response: {:?}", resp);
+                        client.write_response(&Response::builder().body(request.body().clone()).unwrap())
+                    },
+                    Err(c) => client.write_response(&Response::builder().status(c).body(Bytes::new()).unwrap()),
+                }
+            } else {
+                debug!("Ping GitHub.");
+                client.write_response(&Response::builder().body(Bytes::new()).unwrap())
             }
         },
         Err(c) => client.write_response(&Response::builder().status(c).body(Bytes::new()).unwrap()),

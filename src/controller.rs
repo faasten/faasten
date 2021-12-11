@@ -100,7 +100,6 @@ impl Controller {
         function_name: &str,
         _vm_listener: &UnixListener,
         _cid: u32,
-        _network: &str,
     ) -> Result<Vm, Error> {
         let function_config = self.config.functions.get(function_name).ok_or(Error::FunctionNotExist)?;
         match self.free_mem.fetch_update(
@@ -116,7 +115,7 @@ impl Controller {
                 trace!("Allocating new VM. ID: {:?}, App: {:?}", id, function_name);
 
                 #[cfg(not(test))]
-                return Vm::new(&id.to_string(), function_name, function_config, _vm_listener, _cid, Some(_network), &self.config.firerunner_path, false, None)
+                return Vm::new(&id.to_string(), function_name, function_config, _vm_listener, _cid, self.config.allow_network, &self.config.firerunner_path, false, None)
                     .map_err(|e| {
                         // Make sure to "unreserve" the resource by incrementing
                         // `Controller::free_mem`

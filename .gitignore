@@ -2,3 +2,5 @@ target
 out
 tmp
 storage/
+*secret*
+*\.ext4

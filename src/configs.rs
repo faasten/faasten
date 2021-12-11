@@ -4,7 +4,7 @@
 use serde::Deserialize;
 use serde_yaml;
 use url::Url;
-use log::info;
+use log::{info, debug};
 
 use std::fs::File;
 use std::collections::BTreeMap;
@@ -14,6 +14,7 @@ use crate::convert_fs_path_to_url;
 
 #[derive(Deserialize, Debug, Default)]
 pub struct ControllerConfig {
+    pub allow_network: bool,
     pub firerunner_path: String,
     pub kernel_path: String,
     pub runtimefs_dir: String,
@@ -42,7 +43,7 @@ impl ControllerConfig {
                 if let Ok(mut config) = config {
                     ControllerConfig::convert_to_url(&mut config);
                     ControllerConfig::build_full_path_fs_images(&mut config);
-                    info!("config: {:?}", config);
+                    debug!("Controller config: {:?}", config);
                     config
                 } else {
                     panic!("Invalid YAML file");
@@ -110,6 +111,9 @@ impl ControllerConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct FunctionConfig {
+    /// enable network
+    #[serde(default)]
+    pub network: bool,
     /// path to runtimefs
     pub runtimefs: String,
     /// path to appfs
@@ -152,6 +156,7 @@ pub struct FunctionConfig {
 impl Default for FunctionConfig {
     fn default() -> Self {
         FunctionConfig {
+            network: false,
             kernel: String::new(),
             runtimefs: String::new(),
             appfs: None,

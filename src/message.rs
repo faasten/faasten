@@ -8,7 +8,7 @@ use crate::request::Request;
 
 #[derive(Debug)]
 pub enum Message {
-    HTTPRequest(Request, Sender<Result<(), StatusCode>>),
+    HTTPRequest(Request, Sender<Result<String, StatusCode>>),
     Shutdown(Sender<Message>),
     ShutdownAck,
     NoAckShutdown,
