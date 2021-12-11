@@ -1,16 +1,30 @@
-# snapfaas as a library
+# Snapfaas as a Library
 ## API
-1. Developers must implement trait app::Handle to process a HTTP request and return a SnapFaaS request
-on success for push event and `None` for ping event and HTTP status code on error.
+1. App's logic goes into its trait `snapfaas::app::Handle` implementation.
 ```rust
-app::Handler::handle_request(&mut self, request: &http::Request<Bytes>) -> Result<request::Request, http::StatusCode>
+pub struct App {
+  internal_state: SomeState,
+}
+
+impl App {
+  pub fn new() {
+    // initialization code
+  }
+}
+
+impl snapfaas::app::Handler for App {
+  pub fn handle_request(&mut self, request: &http::Request<Bytes>) -> Result<request::Request, http::StatusCode> {
+    //app's logic...
+  }
+}
 ```
-1. An example webhook server is in `bins/webhook`.
+2. To create a server
 ```rust
 # create a new server of certain memory for running VMs and listening at `listen_addr` with configuration
 # at path `config_path`.
-# The server runs application `handler` which implements the `snapfaas::app::Handler` trait
-use snapfaas::server::Server;
+let handler = App::new();
 let s = Server::new(total_mem, config_path, listen_addr, handler);
 s.run()
 ```
+## Example
+An example webhook server is in `bins/webhook`.
