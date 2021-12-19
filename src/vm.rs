@@ -10,7 +10,8 @@ use std::net::Shutdown;
 #[cfg(not(test))]
 use std::os::unix::net::{UnixListener, UnixStream};
 #[cfg(not(test))]
-use std::process::{Child, Command, Stdio};
+use tokio::process::{Child, Command};
+use std::process::Stdio;
 use std::string::String;
 #[cfg(not(test))]
 use log::{info, error};
@@ -38,6 +39,7 @@ pub enum Error {
     VmWrite(std::io::Error),
     VmRead(std::io::Error),
     Rpc(prost::DecodeError),
+    VsockListen(std::io::Error),
     VsockWrite(std::io::Error),
     VsockRead(std::io::Error),
     HttpReq(reqwest::Error),
@@ -80,7 +82,7 @@ impl Vm {
         id: &str,
         function_name: &str,
         function_config: &FunctionConfig,
-        vm_listener: &UnixListener,
+        vm_listener: UnixListener,
         cid: u32,
         allow_network: bool,
         firerunner: &str,
@@ -89,7 +91,6 @@ impl Vm {
     ) -> Result<(Vm, Vec<Instant>), Error> {
         let mut ts_vec = Vec::with_capacity(10);
         ts_vec.push(Instant::now());
-        let mut cmd = Command::new(firerunner);
         let mem_str = function_config.memory.to_string();
         let vcpu_str = function_config.vcpus.to_string();
         let cid_str = cid.to_string();
@@ -157,29 +158,42 @@ impl Vm {
             }
         }
 
-        info!("args: {:?}", args);
-        let cmd = cmd.args(args);
-        let vm_process: Child = cmd
-            .stdin(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| Error::ProcessSpawn(e))?;
-        ts_vec.push(Instant::now());
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_io().build().unwrap();
+        let (conn, vm_process) = runtime.block_on(async {
+            info!("args: {:?}", args);
+            let mut vm_process = Command::new(firerunner).args(args).kill_on_drop(true)
+                .stdin(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| Error::ProcessSpawn(e))?;
+            ts_vec.push(Instant::now());
 
-        if force_exit {
-            let output = vm_process
-                .wait_with_output()
-                .expect("failed to wait on child");
-            let mut status = 0;
-            if !output.status.success() {
-                eprintln!("{:?}", String::from_utf8_lossy(&output.stderr));
-                status = 1;
+
+            if force_exit {
+                let output = vm_process .wait_with_output().await
+                    .expect("failed to wait on child");
+                let mut status = 0;
+                if !output.status.success() {
+                    eprintln!("{:?}", String::from_utf8_lossy(&output.stderr));
+                    status = 1;
+                }
+                crate::unlink_unix_sockets();
+                std::process::exit(status);
             }
-            crate::unlink_unix_sockets();
-            std::process::exit(status);
-        }
 
-        let (conn, _) = vm_listener.accept().unwrap();
+            let vm_listener = tokio::net::UnixListener::from_std(vm_listener).expect("convert from UnixListener std");
+            let conn = tokio::select! {
+                res = vm_listener.accept() => {
+                    res.unwrap().0.into_std().unwrap()
+                },
+                _ = vm_process.wait() => {
+                    crate::unlink_unix_sockets();
+                    std::process::exit(1);
+                }
+            };
+            conn.set_nonblocking(false).map_err(|e| Error::VsockListen(e))?;
+            Ok((conn, vm_process))
+        })?;
         ts_vec.push(Instant::now());
         info!("{}", "VM is now connected to the host");
 
@@ -415,21 +429,13 @@ impl Vm {
             }
         }
     }
+}
 
+impl Drop for Vm {
     /// shutdown this vm
-    pub fn shutdown(&mut self) {
-        // TODO: not sure if kill() waits for the child process to terminate
-        // before returning. This is relevant for shutdown latency measurement.
-        // TODO: std::process::Child.kill() is equivalent to sending a SIGKILL
-        // on unix platforms which means the child process won't be able to run
-        // its clean up process. Previously, we shutdown VMs through SIGTERM
-        // which does allow a shutdown process. We need to make sure using
-        // SIGKILL won't create any issues with vms.
+    fn drop(&mut self) {
         if let Err(e) = self.conn.shutdown(Shutdown::Both) {
             error!("Failed to shut down unix connection: {:?}", e);
-        }
-        if let Err(e) = self.process.kill() {
-            error!("VM already exited: {:?}", e);
         }
     }
 }

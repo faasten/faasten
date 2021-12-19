@@ -67,7 +67,7 @@ impl Controller {
             let vmlist = self.idle.get(key).unwrap();
             vmlist.list.lock().map(|mut l| {
                 for vm in l.iter_mut() {
-                    vm.shutdown();
+                    drop(vm); // Just being explicit here, not strictly necessary
                 }
             }).expect("poisoned lock");
         }
@@ -98,7 +98,7 @@ impl Controller {
     pub fn allocate(
         &self,
         function_name: &str,
-        _vm_listener: &UnixListener,
+        _vm_listener: UnixListener,
         _cid: u32,
     ) -> Result<Vm, Error> {
         let function_config = self.config.functions.get(function_name).ok_or(Error::FunctionNotExist)?;
@@ -144,10 +144,10 @@ impl Controller {
                 // instead of evicting from the first non-empty list in the map,
                 // collect some function popularity data and evict based on that.
                 // This is where some policies can be implemented.
-                if let Some(mut vm) = vmlist.try_pop() {
-                    vm.shutdown();
+                if let Some(vm) = vmlist.try_pop() {
                     self.free_mem.fetch_add(vm.memory, Ordering::Relaxed);
                     freed = freed + vm.memory;
+                    drop(vm); // Just being explicit here, not strictly necessary
                 }
             }
         }

@@ -29,7 +29,6 @@ const EVICTION_TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Debug)]
 pub struct Worker {
     pub thread: JoinHandle<()>,
-    vm_listener: UnixListener,
 }
 
 #[derive(Debug)]
@@ -46,19 +45,20 @@ impl Worker {
         ctr: Arc<Controller>,
         cid: u32,
     ) -> Worker {
-        let vm_listener = match UnixListener::bind(format!("worker-{}.sock_1234", cid)) {
-            Ok(listener) => listener,
-            Err(e) => panic!("Failed to bind to unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
-        };
-        let vm_listener_dup = match vm_listener.try_clone() {
-            Ok(listener) => listener,
-            Err(e) => panic!("Failed to clone unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
-        };
-
         let handle = thread::spawn(move || {
             let id = thread::current().id();
             let mut stat: Metrics = Metrics::new();
+
+            let vm_listener = match UnixListener::bind(format!("worker-{}.sock_1234", cid)) {
+                Ok(listener) => listener,
+                Err(e) => panic!("Failed to bind to unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
+            };
+
             loop {
+                let vm_listener_dup = match vm_listener.try_clone() {
+                    Ok(listener) => listener,
+                    Err(e) => panic!("Failed to clone unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
+                };
                 let msg: Message = receiver.lock().unwrap().recv().unwrap();
                 trace!("[Worker {:?}] task received: {:?}", id, msg);
 
@@ -102,8 +102,9 @@ impl Worker {
                     }
                     Message::Request(req, rsp_sender) => {
                         let function_name = req.function.clone();
-                        match acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid)
+                        match acquire_vm(&function_name, &ctr, &mut stat, vm_listener_dup, cid)
                                   .and_then(|vm| process_req(req, vm, &mut stat)) {
+
                             Ok(rsp) => {
                                 trace!("[Worker {:?}] finished processing {}", id, function_name);
                                 if let Err(e) = rsp_sender.send(Message::Response(rsp)) {
@@ -116,8 +117,9 @@ impl Worker {
                     Message::RequestTcp(req, rsp_sender) => {
                         let function_name = req.function.clone();
                         let user_id = req.user_id;
-                        match acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid)
+                        match acquire_vm(&function_name, &ctr, &mut stat, vm_listener_dup, cid)
                                   .and_then(|vm| process_req(req, vm, &mut stat)) {
+
                             Ok(rsp) => {
                                 trace!("[Worker {:?}] finished processing {}", id, function_name);
                                 {
@@ -152,7 +154,7 @@ impl Worker {
             }
         });
 
-        Worker { thread: handle, vm_listener }
+        Worker { thread: handle }
     }
 }
 
@@ -168,7 +170,7 @@ fn acquire_vm(
     function_name: &str,
     ctr: &Arc<Controller>,
     stat: &mut Metrics,
-    vm_listener: &UnixListener,
+    vm_listener: UnixListener,
     cid: u32,
 )-> Result<Vm, controller::Error> {
     let thread_id = thread::current().id();
@@ -196,25 +198,16 @@ fn acquire_vm(
                         info!("[Worker {:?}] Allocated new VM. ID: {:?}, App: {:?}", thread_id, id, function_name);
                     }
                     return ret;
-                }
-                // Just forward all other errors to the next `or_else`.
-                _ => {
-                    return Err(e);
-                }
-            }
-        })
-        .or_else(|e| {
-            match e {
+                },
                 // Not enough free memory to allocate. Try eviction
                 controller::Error::LowMemory(_) => {
                     let mut freed: usize = 0;
                     let start = Instant::now();
 
                     while freed < func_config.memory && start.elapsed() < EVICTION_TIMEOUT {
-                        if let Ok(mut vm) = ctr.find_evict_candidate(&function_name) {
+                        if let Ok(vm) = ctr.find_evict_candidate(&function_name) {
                             info!("evicting vm: {:?}", vm);
                             let t1 = precise_time_ns();
-                            vm.shutdown();
                             let t2 = precise_time_ns();
 
                             ctr.free_mem.fetch_add(vm.memory, Ordering::Relaxed);
@@ -222,6 +215,7 @@ fn acquire_vm(
 
                             stat.evict_tsp.insert(vm.id, vec![t1, t2]);
                             stat.num_evict = stat.num_evict + 1;
+                            drop(vm)
                         }
                     }
 
@@ -263,7 +257,6 @@ fn process_req(req: Request, mut vm: Vm, stat: &mut Metrics) -> Result<String, c
         stat.num_complete = stat.num_complete + 1;
         stat.req_rsp_tsp.entry(vm.id).or_insert(vec![]).append(&mut vec![t1,t2]);
     }
-
     Ok(serde_json::to_string(&request::Response {
         user_id,
         payload: serde_json::from_str(&rsp?).unwrap()
