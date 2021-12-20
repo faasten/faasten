@@ -22,16 +22,8 @@ pub struct VmmWrapper {
     event_fd: Rc<EventFd>,
 }
 
-//#[derive(Debug)]
-//pub struct VmChannel {
-//    request_sender: File,
-//    response_receiver: File,
-//    status_receiver: File,
-//}
-
 #[derive(Debug)]
 pub enum VmmError {
-    PipeCreate(nix::Error),
     EventFd(io::Error),
     ActionError(VmmActionError),
     ActionSender(mpsc::SendError<Box<VmmAction>>),
@@ -40,12 +32,6 @@ pub enum VmmError {
 
 impl VmmWrapper {
     pub fn new(id: String, config: SnapFaaSConfig) -> Result<VmmWrapper, VmmError> {
-
-        // unix pipes for communicating with the vm
-        //let (request_receiver, request_sender) = nix::unistd::pipe().map_err(|e| VmmError::PipeCreate(e))?;
-        //let (response_receiver, response_sender) = nix::unistd::pipe().map_err(|e| VmmError::PipeCreate(e))?;
-        //let (status_receiver, status_sender) = nix::unistd::pipe().map_err(|e| VmmError::PipeCreate(e))?;
-        // mpsc channel for Box<VmmAction> with the vmm thread
         let (vmm_action_sender, vmm_action_receiver) = channel();
 
         let shared_info = Arc::new(RwLock::new(InstanceInfo {
@@ -71,12 +57,6 @@ impl VmmWrapper {
             vmm_action_sender: vmm_action_sender,
             event_fd: event_fd,
         };
-        
-        //let vm_wrapper = VmChannel {
-        //    request_sender: unsafe { File::from_raw_fd(request_sender) },
-        //    response_receiver: unsafe { File::from_raw_fd(response_receiver) },
-        //    status_receiver: unsafe { File::from_raw_fd(status_receiver) },
-        //};
 
         return Ok(vmm_wrapper);
     }
@@ -160,30 +140,3 @@ impl VmmWrapper {
         self.vmm_thread_handle.join().expect("Couldn't join on the VMM thread");
     }
 }
-
-//impl VmChannel {
-//    /// TODO: Add a timeout to this read
-//    /// Read ready signal from the vm
-//    pub fn recv_status(&mut self) -> Result<[u8;4], std::io::Error> {
-//        let data = &mut[0u8; 4];
-//        self.status_receiver.read_exact(data)?;
-//        return Ok(*data);
-//    }
-//
-//    /// Send a request to vm
-//    pub fn send_request_u8(&mut self, req: &[u8]) -> Result<(), std::io::Error> {
-//        self.request_sender.write_all(req)
-//    }
-//
-//    pub fn recv_response_string(&mut self) -> Result<String, std::io::Error> {
-//        let mut lens = [0; 4];
-//        self.response_receiver.read_exact(&mut lens)?;
-//        let len = u32::from_be_bytes(lens);
-//
-//        let mut response = vec![0; len as usize];
-//        self.response_receiver.read_exact(response.as_mut_slice())?;
-//
-//        return String::from_utf8(response)
-//                 .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData,"Not UTF8"));
-//    }
-//}

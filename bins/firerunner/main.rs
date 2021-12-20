@@ -111,14 +111,6 @@ fn main() {
                  .required(false)
                  .help("Restore base snapshot memory by copying")
         )
-        //.arg(
-        //    Arg::with_name("diff_dirs")
-        //         .long("diff_dirs")
-        //         .value_name("DIFFDIRS")
-        //         .takes_value(true)
-        //         .required(false)
-        //         .help("Comma-separated list of diff snapshots")
-        //)
         .arg(
             Arg::with_name("copy_diff_memory")
                  .long("copy_diff")
@@ -203,6 +195,7 @@ fn main() {
         )
         .get_matches();
 
+    eprintln!("Hello");
     // process command line arguments
     let instance_id = cmd_arguments.value_of("id").expect("id doesn't exist").to_string();
     let kernel = cmd_arguments
@@ -229,7 +222,6 @@ fn main() {
 
     // optional arguments:
     let appfs = cmd_arguments.value_of("appfs").map(PathBuf::from);
-    //let load_dir: Option<PathBuf> = cmd_arguments.value_of("load_dir").map(PathBuf::from);
     let dump_dir: Option<PathBuf> = cmd_arguments.value_of("dump_dir").map(PathBuf::from);
     let load_dir = cmd_arguments.value_of("load_dir").map_or(Vec::new(), |x| x.split(',').collect::<Vec<&str>>()
         .iter().map(PathBuf::from).collect());
@@ -261,11 +253,6 @@ fn main() {
         std::process::exit(1);
     }
 
-    //if load_dir.is_some() && !load_dir.as_ref().unwrap().exists(){
-    //    eprintln!("load directory not exist");
-    //    std::process::exit(1);
-    //}
-
     if dump_dir.is_some() && !dump_dir.as_ref().unwrap().exists(){
         eprintln!("dump directory not exist");
         std::process::exit(1);
@@ -281,8 +268,6 @@ fn main() {
     ts_vec.push(Instant::now());
     let json_dir = if let Some(dir) = load_dir.last() {
         Some(dir.clone())
-    //} else if let Some(ref dir) = load_dir {
-    //    Some(dir.clone())
     } else {
         None
     };
@@ -302,7 +287,6 @@ fn main() {
         huge_page: false,
         base: MemoryFileOption { copy: copy_base, odirect: odirect_base},
         diff: MemoryFileOption { copy: copy_diff, odirect: odirect_diff},
-        //diff_dirs,
         load_ws,
     };
     // Create vmm thread
@@ -320,9 +304,9 @@ fn main() {
     // is listening on the stdout of this process for a ready signal will
     // receive 0.
     let machine_config = VmConfig{
-	vcpu_count: Some(vcpu_count as u8),
-	mem_size_mib: Some(mem_size_mib),
-	..Default::default()
+        vcpu_count: Some(vcpu_count as u8),
+        mem_size_mib: Some(mem_size_mib),
+        ..Default::default()
     };
 
     if let Err(e) = vmm.set_configuration(machine_config) {

@@ -2,3 +2,6 @@ target
 out
 tmp
 storage/
+*secret*
+*tmux*
+*\.ext4

@@ -9,9 +9,8 @@ use std::sync::Mutex;
 use std::sync::mpsc::Sender;
 use std::net::{TcpStream};
 
-use log::error;
+use log::info;
 
-//use crate::vsock::*;
 use crate::worker::Worker;
 use crate::request::Request;
 use crate::message::Message;
@@ -32,20 +31,26 @@ impl WorkerPool {
 
         let pool_size = controller.total_mem/128;
         let mut pool = Vec::with_capacity(pool_size);
-        //let mut vsock_stream_senders = HashMap::with_capacity(pool_size);
+        info!("# workers: {:?}", pool_size);
 
         for i in 0..pool_size {
-            //let (sender, receiver) = mpsc::channel();
             let cid = i as u32 + 100;
             pool.push(Worker::new(rx.clone(), controller.clone(), cid));
-            //vsock_stream_senders.insert(cid, sender);
         }
 
         WorkerPool {
-            pool: pool,
+            pool,
             req_sender: tx,
-            controller: controller,
+            controller,
         }
+    }
+    
+    pub fn get_controller(&self) -> Arc<Controller> {
+        self.controller.clone()
+    }
+
+    pub fn get_sender(&self) -> Sender<Message> {
+        self.req_sender.clone()
     }
 
     pub fn send_req(&self, req: Request, rsp_sender: Sender<Message>) {
@@ -63,22 +68,24 @@ impl WorkerPool {
         self.pool.len()
     }
     
-    /// shutdown the workerpool
-    /// This involves
-    /// 1. sending Shutdown message to each thread in the pool
-    /// 2. wait for all threads in the pool to terminate
     pub fn shutdown(self) {
-        // shutdown all idle VMs
+        // Shutdown all idle VMs
         self.controller.shutdown();
-        // shutdown all workers
-        for _ in &self.pool {
-            self.req_sender.send(Message::Shutdown).expect("failed to shutdown workers");
+        // Shutdown all workers:
+        // first, sending Shutdown message to each thread in the pool
+        // second, wait for ack messages from all workers
+        let (tx, rx) = mpsc::channel(); 
+        for _ in 0..self.pool_size() {
+            self.req_sender.send(Message::Shutdown(tx.clone())).expect("failed to shutdown workers");
         }
-        for w in self.pool {
-            let id = w.thread.thread().id();
-            if let Err(e) = w.thread.join() {
-                error!("worker thread {:?} panicked {:?}", id, e);
+        // Worker threads may have exited while we try receiving from the channel causing
+        // recv errors. We simply ignore errors.
+        for _ in 0..self.pool_size() {
+            match rx.recv() {
+                Ok(_) => (),
+                Err(_) => (),
             }
         }
+        crate::unlink_unix_sockets();
     }
 }

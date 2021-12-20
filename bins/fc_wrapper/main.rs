@@ -15,10 +15,10 @@ use log::debug;
 
 use clap::{App, Arg};
 
-const CID: u32 = 124;
+const CID: u32 = 100;
 
 fn main() {
-    simple_logger::init().expect("simple_logger init failed");
+    env_logger::init();
     let cmd_arguments = App::new("fireruner wrapper")
         .version(crate_version!())
         .author(crate_authors!())
@@ -104,34 +104,24 @@ fn main() {
                  .required(false)
                  .help("Restore base snapshot memory by copying")
         )
-        //.arg(
-        //    Arg::with_name("diff_dirs")
-        //         .long("diff_dirs")
-        //         .value_name("DIFFDIRS")
-        //         .takes_value(true)
-        //         .required(false)
-        //         .help("Comma-separated list of diff snapshots")
-        //)
         .arg(
             Arg::with_name("copy_diff_memory")
                  .long("copy_diff")
-                 .value_name("COPYDIFF")
                  .takes_value(false)
                  .required(false)
                  .help("If a diff snapshot is provided, restore its memory by copying")
         )
         .arg(
-            Arg::with_name("network")
+            Arg::with_name("enable network")
                 .long("network")
-                .value_name("NETWORK")
-                .takes_value(true)
+                .takes_value(false)
                 .required(false)
-                .help("newtork device of format TAP_NAME/MAC_ADDRESS")
+                .help("enable newtork through tap device `tap0`")
         )
         .arg(
             Arg::with_name("firerunner")
                 .long("firerunner")
-                .value_name("FIRERUNNER")
+                .value_name("FIRERUNNER PATH")
                 .takes_value(true)
                 .required(true)
                 .default_value("target/release/firerunner")
@@ -197,11 +187,16 @@ fn main() {
         )
         .get_matches();
 
+    if cmd_arguments.is_present("enable network") {
+        // warn if tap0 is missing the program will hang
+        log::warn!("Network turned on. Tap device `tap0` must be present.");
+    }
+
     // Create a FunctionConfig value based on cmdline inputs
     let vm_app_config = FunctionConfig {
-        name: "app".to_string(), //dummy value
+        network: cmd_arguments.is_present("enable network"),
         runtimefs: cmd_arguments.value_of("rootfs").expect("rootfs").to_string(),
-        appfs: cmd_arguments.value_of("appfs").unwrap_or_default().to_string(),
+        appfs: cmd_arguments.value_of("appfs").map(|s| s.to_string()),
         vcpus: cmd_arguments.value_of("vcpu_count").expect("vcpu")
                             .parse::<u64>().expect("vcpu not int"),
         memory: cmd_arguments.value_of("mem_size").expect("mem_size")
@@ -209,7 +204,6 @@ fn main() {
         concurrency_limit: 1,
         load_dir: cmd_arguments.value_of("load_dir").map(|s| s.to_string()),
         dump_dir: cmd_arguments.value_of("dump_dir").map(|s| s.to_string()),
-        //diff_dirs: cmd_arguments.value_of("diff_dirs").map(|s| s.to_string()),
         copy_base: cmd_arguments.is_present("copy_base_memory"),
         copy_diff: cmd_arguments.is_present("copy_diff_memory"),
         kernel: cmd_arguments.value_of("kernel").expect("kernel").to_string(),
@@ -231,8 +225,8 @@ fn main() {
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
     let firerunner = cmd_arguments.value_of("firerunner").unwrap();
-    let (mut vm, ts_vec) = match Vm::new(id, &vm_app_config, &vm_listener, CID,
-        cmd_arguments.value_of("network"), firerunner, cmd_arguments.is_present("force exit"), Some(odirect))
+    let (mut vm, ts_vec) = match Vm::new(id, "myapp", &vm_app_config, &vm_listener, CID,
+        cmd_arguments.is_present("enable network"), firerunner, cmd_arguments.is_present("force exit"), Some(odirect))
     {
         Ok(vm) => vm,
         Err(e) => {
@@ -271,6 +265,7 @@ fn main() {
     let dump_working_set = true && cmd_arguments.is_present("dump working set");
     for req in requests {
         let t1 = Instant::now();
+        debug!("req: {:?}", req);
         match vm.process_req(req) {
             Ok(_rsp) => {
                 let t2 = Instant::now();

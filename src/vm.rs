@@ -1,3 +1,5 @@
+//! Host-side VM handle that transfer data in and out of the VM through VSOCK socket and
+//! implements syscall API
 extern crate reqwest;
 extern crate url;
 
@@ -7,12 +9,11 @@ use std::env;
 use std::net::Shutdown;
 #[cfg(not(test))]
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
 #[cfg(not(test))]
 use std::process::{Child, Command, Stdio};
 use std::string::String;
 #[cfg(not(test))]
-use log::{info, error, debug};
+use log::{info, error};
 use std::time::Instant;
 
 #[cfg(not(test))]
@@ -21,6 +22,7 @@ use crate::configs::FunctionConfig;
 use crate::request::Request;
 use crate::syscalls;
 
+const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
 const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
 const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
@@ -56,37 +58,17 @@ pub struct OdirectOption {
 }
 
 #[derive(Debug)]
-pub struct VmAppConfig {
-    pub rootfs: String,
-    pub appfs: String,
-    pub load_dir: Vec<PathBuf>,
-    pub dump_dir: Option<PathBuf>,
-}
-
-#[derive(Debug)]
 #[cfg(not(test))]
 pub struct Vm {
     pub id: usize,
     pub memory: usize, // MB
     pub function_name: String,
-    //vsock_stream: VsockStream,
     conn: UnixStream,
     //TODO: currently every VM instance opens a connection to the REST server
     // Having a pool of connections is more ideal.
     rest_client: reqwest::blocking::Client,
     process: Child,
     current_label: DCLabel,
-    /*
-    pub process: Pid,
-    cgroup_name: PathBuf,
-    pub cpu_share: usize,
-    pub vcpu_count: usize,
-    pub kernel: String,
-    pub kernel_args: String,
-    pub ready_notifier: File, // Vm writes to this File when setup finishes
-
-    pub app_config: VmAppConfig,
-    */
 }
 
 #[cfg(not(test))]
@@ -96,10 +78,11 @@ impl Vm {
     /// to accept requests.
     pub fn new(
         id: &str,
+        function_name: &str,
         function_config: &FunctionConfig,
         vm_listener: &UnixListener,
         cid: u32,
-        network: Option<&str>,
+        allow_network: bool,
         firerunner: &str,
         force_exit: bool,
         odirect: Option<OdirectOption>,
@@ -125,20 +108,17 @@ impl Vm {
             &cid_str,
         ];
 
-        if function_config.appfs != "" {
-            args.extend_from_slice(&["--appfs", &function_config.appfs]);
+        if let Some(f) = function_config.appfs.as_ref() {
+            args.extend_from_slice(&["--appfs", f]);
         }
         if let Some(load_dir) = function_config.load_dir.as_ref() {
-            args.extend_from_slice(&["--load_from", &load_dir]);
+            args.extend_from_slice(&["--load_from", load_dir]);
         }
         if let Some(dump_dir) = function_config.dump_dir.as_ref() {
-            args.extend_from_slice(&["--dump_to", &dump_dir]);
+            args.extend_from_slice(&["--dump_to", dump_dir]);
         }
-        //if let Some(diff_dirs) = function_config.diff_dirs.as_ref() {
-        //    args.extend_from_slice(&["--diff_dirs", &diff_dirs]);
-        //}
         if let Some(cmdline) = function_config.cmdline.as_ref() {
-            args.extend_from_slice(&["--kernel_args", &cmdline]);
+            args.extend_from_slice(&["--kernel_args", cmdline]);
         }
         if function_config.dump_ws {
             args.push("--dump_ws");
@@ -154,10 +134,11 @@ impl Vm {
         }
 
         // network config should be of the format <TAP-Name>/<MAC Address>
-        if let Some(network) = network {
-            let v: Vec<&str> = network.split('/').collect();
-            args.extend_from_slice(&["--tap_name", v[0]]);
-            args.extend_from_slice(&["--mac", v[1]]);
+        let tap_name = format!("tap{}", cid-100);
+        let mac_addr = format!("{}:{:02X}:{:02X}", MACPREFIX, ((cid-100)&0xff00)>>8, (cid-100)&0xff);
+        if function_config.network && allow_network {
+            args.extend_from_slice(&["--tap_name", &tap_name]);
+            args.extend_from_slice(&["--mac", &mac_addr]);
         }
 
         // odirect
@@ -200,13 +181,14 @@ impl Vm {
 
         let (conn, _) = vm_listener.accept().unwrap();
         ts_vec.push(Instant::now());
+        info!("{}", "VM is now connected to the host");
 
         let rest_client = reqwest::blocking::Client::new();
 
         return Ok((
             Vm {
                 id: id.parse::<usize>().expect("vm id not int"),
-                function_name: function_config.name.clone(),
+                function_name: function_name.to_string(),
                 memory: function_config.memory,
                 conn,
                 rest_client,
@@ -214,7 +196,7 @@ impl Vm {
                 // We should also probably have a clearance to mitigate side channel attacks, but
                 // meh for now...
                 /// Starting label with public secrecy and integrity has app-name
-                current_label: DCLabel::new(false, [[function_config.name.clone()]]),
+                current_label: DCLabel::new(false, [[function_name.to_string()]]),
             },
             ts_vec,
         ));
@@ -292,12 +274,10 @@ impl Vm {
         let default_db = dbenv.open_db(None).unwrap();
 
         loop {
-            debug!("reading...");
             let buf = {
                 let mut lenbuf = [0;4];
                 self.conn.read_exact(&mut lenbuf).map_err(|e| Error::VsockRead(e))?;
                 let size = u32::from_be_bytes(lenbuf);
-                debug!("incoming data len: {}", size);
                 let mut buf = vec![0u8; size as usize];
                 self.conn.read_exact(&mut buf).map_err(|e| Error::VsockRead(e))?;
                 buf
@@ -332,13 +312,13 @@ impl Vm {
                     let response = syscalls::GithubRestResponse{
                         data: match syscalls::HttpVerb::from_i32(req.verb) {
                             Some(syscalls::HttpVerb::Get) => {
-                                self.http_get(&req)?.text().map_err(|e| Error::HttpReq(e))?
+                                self.http_get(&req)?.bytes().map_err(|e| Error::HttpReq(e))?.to_vec()
                             },
                             Some(syscalls::HttpVerb::Post) => {
-                                self.http_post(&req)?.text().map_err(|e| Error::HttpReq(e))?
+                                self.http_post(&req)?.bytes().map_err(|e| Error::HttpReq(e))?.to_vec()
                             },
                             None => {
-                               format!("`{:?}` not supported", req.verb)
+                               format!("`{:?}` not supported", req.verb).as_bytes().to_vec()
                             }
                         },
                     };
@@ -453,6 +433,9 @@ impl Vm {
         }
     }
 }
+
+#[cfg(test)]
+use crate::request::Request;
 
 #[derive(Debug)]
 #[cfg(test)]

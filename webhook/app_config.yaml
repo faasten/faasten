@@ -1,0 +1,11 @@
+---
+repos:
+  princeton-sns/snapfaas:
+    organization: princeton-sns
+    token: BBBBBBBBBBBBBBBBB
+    secret: mysecretkey1
+  tan-yue/hello-world-go:
+    organization:
+    token: AAAAA 
+    secret: myscretkey2
+

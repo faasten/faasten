@@ -1,13 +1,11 @@
 use std::result::Result;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use std::sync::Mutex;
 use std::os::unix::net::UnixListener;
-use std::path::PathBuf;
 
 use log::{error, trace};
-use serde_yaml;
 
 use crate::*;
 use crate::configs::{ControllerConfig, FunctionConfig};
@@ -24,8 +22,7 @@ pub struct VmList {
 
 #[derive(Debug)]
 pub struct Controller {
-    controller_config: ControllerConfig,
-    function_configs: BTreeMap<String, FunctionConfig>,
+    config: ControllerConfig,
     idle: HashMap<String, VmList>, // from function name to a vector of VMs
     pub total_num_vms: AtomicUsize, // total number of vms ever created
     pub total_mem: usize,
@@ -46,70 +43,20 @@ pub enum Error {
 impl Controller {
     /// create and return a Controller value
     /// The Controller value encapsulates the idle lists and function configs
-    pub fn new(ctr_config: ControllerConfig) -> Option<Controller> {
-        let mut function_configs = BTreeMap::<String, FunctionConfig>::new();
+    pub fn new(config: ControllerConfig) -> Controller {
         let mut idle = HashMap::<String, VmList>::new();
-        match open_url(&ctr_config.function_config) {
-            Ok(fd) => {
-                let apps: serde_yaml::Result<Vec<FunctionConfig>> = serde_yaml::from_reader(fd);
-                match apps {
-                    Ok(apps) => {
-                        for mut app in apps {
-                            let name = app.name.clone();
-                            // build full path to the runtimefs
-                            app.runtimefs = [
-                                ctr_config.get_runtimefs_base().as_str(),
-                                app.runtimefs.as_str()
-                            ].iter().collect::<PathBuf>().to_str().unwrap().to_string();
-                            // build full path to the appfs
-                            app.appfs = [
-                                ctr_config.get_appfs_base().as_str(),
-                                app.appfs.as_str()
-                            ].iter().collect::<PathBuf>().to_str().unwrap().to_string();
-                            // build full path to base snapshot
-                            //app.load_dir = app.load_dir.map(|s|
-                            //    [ctr_config.get_snapshot_base().as_str(), s.as_str()].iter()
-                            //        .collect::<PathBuf>().to_str().unwrap().to_string()
-                            //);
-                            //// build full paths to diff snapshots: comma-separated list
-                            app.load_dir = app.load_dir.map(|s| 
-                                s.split(',').collect::<Vec<&str>>().iter()
-                                    .map(|s| [ctr_config.get_snapshot_base().as_str(), s]
-                                        .iter().collect::<PathBuf>().to_str().unwrap().to_string())
-                                    .collect::<Vec<String>>().join(",")
-                            );
-                            // TODO: currently all apps use the same kernel
-                            app.kernel = Url::parse(&ctr_config.kernel_path)
-                                .expect("Bad kernel path URL").path().to_string();
-                            // use `firerunner`'s default DEFAULT_KERNEL_CMDLINE
-                            // defined in firecracker/vmm/lib.rs
-                            app.cmdline = None;
-                            // `snapctr` does not support generate snapshots
-                            app.dump_dir = None;
-
-                            function_configs.insert(name.clone(), app);
-                            idle.insert(name.clone(), VmList::new());
-                        }
-                        // set default total memory to free memory on the machine
-                        let total_mem = get_machine_memory();
-                        return Some(Controller {
-                            controller_config: ctr_config,
-                            function_configs: function_configs,
-                            idle: idle,
-                            total_num_vms: AtomicUsize::new(0),
-                            total_mem,
-                            free_mem: AtomicUsize::new(total_mem),
-                        });
-                    }
-                    Err(e) => error!("serde_yaml failed to parse function config file: {:?}", e)
-                }
-                return None;
-            }
-            Err(e) => {
-                error!("function config file failed to open: {:?}", e);
-                return None;
-            }
+        for (name, _) in &config.functions {
+            idle.insert(name.clone(), VmList::new());
         }
+        // set default total memory to free memory on the machine
+        let total_mem = get_machine_memory();
+        return Controller {
+            config,
+            idle,
+            total_num_vms: AtomicUsize::new(0),
+            total_mem,
+            free_mem: AtomicUsize::new(total_mem),
+        };
     }
 
     /// Shutdown the controller
@@ -150,11 +97,11 @@ impl Controller {
     ///    (Err(Error::StartVm(vm::Error)))
     pub fn allocate(
         &self,
-        function_config: &FunctionConfig,
+        function_name: &str,
         _vm_listener: &UnixListener,
         _cid: u32,
-        _network: &str,
     ) -> Result<Vm, Error> {
+        let function_config = self.config.functions.get(function_name).ok_or(Error::FunctionNotExist)?;
         match self.free_mem.fetch_update(
             Ordering::SeqCst,
             Ordering::SeqCst,
@@ -165,10 +112,10 @@ impl Controller {
         ) {
             Ok(_) => {
                 let id = self.total_num_vms.fetch_add(1, Ordering::Relaxed);
-                trace!("Allocating new VM. ID: {:?}, App: {:?}", id, function_config.name);
+                trace!("Allocating new VM. ID: {:?}, App: {:?}", id, function_name);
 
                 #[cfg(not(test))]
-                return Vm::new(&id.to_string(), function_config, _vm_listener, _cid, Some(_network), &self.controller_config.firerunner_path, false, None)
+                return Vm::new(&id.to_string(), function_name, function_config, _vm_listener, _cid, self.config.allow_network, &self.config.firerunner_path, false, None)
                     .map_err(|e| {
                         // Make sure to "unreserve" the resource by incrementing
                         // `Controller::free_mem`
@@ -226,19 +173,12 @@ impl Controller {
         return Err(Error::InsufficientEvict);
     }
 
-    //pub fn evict_and_allocate(&self, mem: usize, function_config: &FunctionConfig) -> Result<Vm, Error> {
-    //    if !self.evict(mem) {
-    //        return Err(Error::InsufficientEvict);
-    //    }
-    //    return self.allocate(function_config);
-    //}
-
     pub fn get_function_config(&self, function_name: &str) -> Option<&FunctionConfig> {
-        self.function_configs.get(function_name)
+        self.config.functions.get(function_name)
     }
 
     pub fn get_function_memory(&self, function_name: &str) -> Option<usize> {
-        self.function_configs.get(function_name).map(|f| f.memory)
+        self.config.functions.get(function_name).map(|f| f.memory)
     }
 
     /// should only be called once before Vms are launch. Not supporting
@@ -313,13 +253,19 @@ mod tests {
     use std::thread;
     use std::sync::Arc;
 
+    const DUMMY_APP_NAME: &str = "hello";
+
+    fn mock_unixlistener() -> UnixListener {
+        unsafe{ UnixListener::from_raw_fd(23425 as RawFd) }
+    }
+
     /// Helper function to create a Controller value with `mem` amount of memory
     /// If `mem` is set to 0, the amount of memory is set to the total memory
     /// of the machine.
     fn build_controller(mem: usize) -> Controller {
         let ctr_config = ControllerConfig::new("./resources/example-controller-config.yaml");
 
-        let mut ctr = Controller::new(ctr_config).unwrap();
+        let mut ctr = Controller::new(ctr_config);
         if mem != 0 {
             ctr.total_mem = mem;
             ctr.free_mem = AtomicUsize::new(mem);
@@ -331,14 +277,13 @@ mod tests {
     /// Allocate should correctly increment `total_num_vms` and decrement `free_mem`.
     fn test_allocate() {
         let controller = build_controller(0);
-        let lp_config = controller.get_function_config("hello").unwrap();
         let total_mem = controller.total_mem;
-        let num_vms = 100;
+        let num_vms = 10;
 
         for _ in 0..num_vms {
             controller.allocate(
-                lp_config,
-                unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                DUMMY_APP_NAME,
+                &mock_unixlistener(),
                 0,
                 "",
             ).unwrap();
@@ -356,7 +301,7 @@ mod tests {
     fn test_allocate_concurrent() {
         let controller = build_controller(0);
         let total_mem = controller.total_mem;
-        let num_vms = 123;
+        let num_vms = 10;
 
         let sctr = Arc::new(controller);
 
@@ -365,10 +310,9 @@ mod tests {
         for _ in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
-                let c = ctr.get_function_config("hello").unwrap();
                 ctr.allocate(
-                    c,
-                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    DUMMY_APP_NAME,
+                    &mock_unixlistener(),
                     0,
                     "",
                 ).unwrap();
@@ -392,12 +336,11 @@ mod tests {
     /// `total_num_vms` and `free_mem` should also be correct.
     fn test_allocate_resource_limit() {
         let controller = build_controller(1024);
-        let lp_config = controller.get_function_config("hello").unwrap();
 
         for _ in 0..8 {
             if let Err(_) = controller.allocate(
-                lp_config,
-                unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                DUMMY_APP_NAME,
+                &mock_unixlistener(),
                 0,
                 "",
             ) {
@@ -406,8 +349,8 @@ mod tests {
         }
 
         if let Ok(_) = controller.allocate(
-                lp_config,
-                unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                DUMMY_APP_NAME,
+                &mock_unixlistener(),
                 0,
                 "",
             ) {
@@ -426,17 +369,16 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let num_vms = total_mem / sctr.get_function_config("hello").unwrap().memory;
+        let num_vms = total_mem / sctr.get_function_config(DUMMY_APP_NAME).unwrap().memory;
 
         let mut handles = vec![];
 
         for _ in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
-                let c = ctr.get_function_config("hello").unwrap();
                 if let Err(_) = ctr.allocate(
-                        c,
-                        unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                        DUMMY_APP_NAME,
+                        &mock_unixlistener(),
                         0,
                         "",
                     ) {
@@ -450,11 +392,10 @@ mod tests {
             h.join().expect("Couldn't join on the thread");
         }
 
-        let c = sctr.get_function_config("hello").unwrap();
         for _ in 0..num_vms {
             if let Ok(_) = sctr.allocate(
-                    c,
-                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    DUMMY_APP_NAME,
+                    &mock_unixlistener(),
                     0,
                     "",
                 ) {
@@ -473,12 +414,11 @@ mod tests {
     /// release should add vm to its idle list and increment the list's `num_vms`
     fn test_release() {
         let controller = build_controller(1024);
-        let lp_config = controller.get_function_config("hello").unwrap();
 
         assert_eq!(
             controller
                 .idle
-                .get(&lp_config.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
@@ -487,7 +427,7 @@ mod tests {
         assert_eq!(
             controller
                 .idle
-                .get(&lp_config.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .list
                 .lock()
@@ -499,12 +439,12 @@ mod tests {
 
         for _ in 0..8 {
             match controller.allocate(
-                lp_config,
-                unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                DUMMY_APP_NAME,
+                &mock_unixlistener(),
                 0,
                 "",
             ) {
-                Ok(vm) => controller.release(&lp_config.name, vm),
+                Ok(vm) => controller.release(DUMMY_APP_NAME, vm),
                 Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
@@ -512,7 +452,7 @@ mod tests {
         assert_eq!(
             controller
                 .idle
-                .get(&lp_config.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
@@ -521,7 +461,7 @@ mod tests {
         assert_eq!(
             controller
                 .idle
-                .get(&lp_config.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .list
                 .lock()
@@ -539,19 +479,19 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("hello").unwrap();
+        let c = sctr.get_function_config(DUMMY_APP_NAME).unwrap();
         let num_vms = total_mem / c.memory;
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             0
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             0
         );
         assert_eq!(sctr.free_mem.load(Ordering::Relaxed), total_mem);
@@ -561,14 +501,13 @@ mod tests {
         for _ in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
-                let c = ctr.get_function_config("hello").unwrap();
                 match ctr.allocate(
-                        c,
-                        unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                        DUMMY_APP_NAME,
+                        &mock_unixlistener(),
                         0,
                         "",
                     ) {
-                    Ok(vm) => ctr.release(&c.name, vm),
+                    Ok(vm) => ctr.release(DUMMY_APP_NAME, vm),
                     Err(_) => panic!("allocate failed before exhausting resources"),
                 }
             });
@@ -579,11 +518,10 @@ mod tests {
             h.join().expect("Couldn't join on the thread");
         }
 
-        let c = sctr.get_function_config("hello").unwrap();
         for _ in 0..num_vms {
             if let Ok(_) = sctr.allocate(
-                    c,
-                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    DUMMY_APP_NAME,
+                    &mock_unixlistener(),
                     0,
                     "",
                 ) {
@@ -592,14 +530,14 @@ mod tests {
         }
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             num_vms
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             num_vms
         );
         assert_eq!(
@@ -616,67 +554,67 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("hello").unwrap();
+        let c = sctr.get_function_config(DUMMY_APP_NAME).unwrap();
         let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(
-                    c,
-                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    DUMMY_APP_NAME,
+                    &mock_unixlistener(),
                     0,
                     "",
                 ) {
-                Ok(vm) => sctr.release(&c.name, vm),
+                Ok(vm) => sctr.release(DUMMY_APP_NAME, vm),
                 Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             num_vms
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             num_vms
         );
 
         for _ in 0..num_vms {
-            if let Err(_) = sctr.get_idle_vm(&c.name) {
+            if let Err(_) = sctr.get_idle_vm(DUMMY_APP_NAME) {
                 panic!("idle list should not be empty")
             }
         }
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             0
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             0
         );
 
-        if let Ok(_) = sctr.get_idle_vm(&c.name) {
+        if let Ok(_) = sctr.get_idle_vm(DUMMY_APP_NAME) {
             panic!("idle list should be empty");
         }
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             0
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             0
         );
     }
@@ -689,31 +627,31 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("hello").unwrap();
+        let c = sctr.get_function_config(DUMMY_APP_NAME).unwrap();
         let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(
-                    c,
-                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    DUMMY_APP_NAME,
+                    &mock_unixlistener(),
                     0,
                     "",
                 ) {
-                Ok(vm) => sctr.release(&c.name, vm),
+                Ok(vm) => sctr.release(DUMMY_APP_NAME, vm),
                 Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             num_vms
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             num_vms
         );
 
@@ -722,8 +660,7 @@ mod tests {
         for _ in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
-                let c = ctr.get_function_config("hello").unwrap();
-                if let Err(_) = ctr.get_idle_vm(&c.name) {
+                if let Err(_) = ctr.get_idle_vm(DUMMY_APP_NAME) {
                     panic!("idle list should not be empty")
                 }
             });
@@ -736,31 +673,31 @@ mod tests {
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             0
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             0
         );
 
-        if let Ok(_) = sctr.get_idle_vm(&c.name) {
+        if let Ok(_) = sctr.get_idle_vm(DUMMY_APP_NAME) {
             panic!("idle list should be empty");
         }
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             0
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             0
         );
     }
@@ -772,31 +709,31 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("hello").unwrap();
+        let c = sctr.get_function_config(DUMMY_APP_NAME).unwrap();
         let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(
-                    c,
-                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    DUMMY_APP_NAME,
+                    &mock_unixlistener(),
                     0,
                     "",
                 ) {
-                Ok(vm) => sctr.release(&c.name, vm),
+                Ok(vm) => sctr.release(DUMMY_APP_NAME, vm),
                 Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             num_vms
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             num_vms
         );
         assert_eq!(
@@ -812,31 +749,31 @@ mod tests {
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             0
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             0
         );
 
-        if let Ok(_) = sctr.get_idle_vm(&c.name) {
+        if let Ok(_) = sctr.get_idle_vm(DUMMY_APP_NAME) {
             panic!("idle list should be empty");
         }
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             0
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             0
         );
     }
@@ -848,31 +785,31 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("hello").unwrap();
+        let c = sctr.get_function_config(DUMMY_APP_NAME).unwrap();
         let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(
-                    c,
-                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    DUMMY_APP_NAME,
+                    &mock_unixlistener(),
                     0,
                     "",
                 ) {
-                Ok(vm) => sctr.release(&c.name, vm),
+                Ok(vm) => sctr.release(DUMMY_APP_NAME, vm),
                 Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             num_vms
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             num_vms
         );
         assert_eq!(
@@ -885,7 +822,7 @@ mod tests {
         for _ in 0..num_vms {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
-                let c = ctr.get_function_config("hello").unwrap();
+                let c = ctr.get_function_config(DUMMY_APP_NAME).unwrap();
                 if !ctr.evict(c.memory) {
                     panic!("idle list should not be empty")
                 }
@@ -899,31 +836,31 @@ mod tests {
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             0
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             0
         );
 
-        if let Ok(_) = sctr.get_idle_vm(&c.name) {
+        if let Ok(_) = sctr.get_idle_vm(DUMMY_APP_NAME) {
             panic!("idle list should be empty");
         }
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             0
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             0
         );
     }
@@ -936,31 +873,31 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("hello").unwrap();
+        let c = sctr.get_function_config(DUMMY_APP_NAME).unwrap();
         let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(
-                    c,
-                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    DUMMY_APP_NAME,
+                    &mock_unixlistener(),
                     0,
                     "",
                 ) {
-                Ok(vm) => sctr.release(&c.name, vm),
+                Ok(vm) => sctr.release(DUMMY_APP_NAME, vm),
                 Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             num_vms
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             num_vms
         );
         assert_eq!(
@@ -978,14 +915,14 @@ mod tests {
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             num_vms - num_evict * 2
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             num_vms - num_evict * 2
         );
     }
@@ -996,31 +933,31 @@ mod tests {
         let total_mem = controller.total_mem;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("hello").unwrap();
+        let c = sctr.get_function_config(DUMMY_APP_NAME).unwrap();
         let num_vms = total_mem / c.memory;
 
         for _ in 0..num_vms {
             match sctr.allocate(
-                    c,
-                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    DUMMY_APP_NAME,
+                    &mock_unixlistener(),
                     0,
                     "",
                 ) {
-                Ok(vm) => sctr.release(&c.name, vm),
+                Ok(vm) => sctr.release(DUMMY_APP_NAME, vm),
                 Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             num_vms
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             num_vms
         );
         assert_eq!(
@@ -1034,7 +971,7 @@ mod tests {
         for _ in 0..num_evict {
             let ctr = sctr.clone();
             let h = thread::spawn(move || {
-                let c = ctr.get_function_config("hello").unwrap();
+                let c = ctr.get_function_config(DUMMY_APP_NAME).unwrap();
                 if !ctr.evict(c.memory * 2) {
                     panic!("idle list should not be empty")
                 }
@@ -1048,14 +985,14 @@ mod tests {
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             num_vms - num_evict * 2
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             num_vms - num_evict * 2
         );
     }
@@ -1067,30 +1004,30 @@ mod tests {
         let num_vms = 1;
 
         let sctr = Arc::new(controller);
-        let c = sctr.get_function_config("hello").unwrap();
+        let c = sctr.get_function_config(DUMMY_APP_NAME).unwrap();
 
         for _ in 0..num_vms {
             match sctr.allocate(
-                    c,
-                    unsafe{ &UnixListener::from_raw_fd(-1 as RawFd) },
+                    DUMMY_APP_NAME,
+                    &mock_unixlistener(),
                     0,
                     "",
                 ) {
-                Ok(vm) => sctr.release(&c.name, vm),
+                Ok(vm) => sctr.release(DUMMY_APP_NAME, vm),
                 Err(_) => panic!("allocate failed before exhausting resources"),
             }
         }
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             num_vms
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             num_vms
         );
         assert_eq!(
@@ -1104,14 +1041,14 @@ mod tests {
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             0
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             0
         );
 
@@ -1121,14 +1058,14 @@ mod tests {
 
         assert_eq!(
             sctr.idle
-                .get(&c.name)
+                .get(DUMMY_APP_NAME)
                 .unwrap()
                 .num_vms
                 .load(Ordering::Relaxed),
             0
         );
         assert_eq!(
-            sctr.idle.get(&c.name).unwrap().list.lock().unwrap().len(),
+            sctr.idle.get(DUMMY_APP_NAME).unwrap().list.lock().unwrap().len(),
             0
         );
     }

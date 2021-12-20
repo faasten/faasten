@@ -15,16 +15,15 @@ use snapfaas::configs;
 use snapfaas::controller::Controller;
 use snapfaas::gateway;
 use snapfaas::gateway::Gateway;
-use snapfaas::workerpool;
+use snapfaas::workerpool::WorkerPool;
+use snapfaas::message::Message;
 
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 
 use time::precise_time_ns;
-use signal_hook::{iterator::Signals, SIGINT};
-use crossbeam_channel::bounded;
 
 fn main() {
-    simple_logger::init().expect("simple_logger init failed");
+    env_logger::init();
 
     let matches = App::new("SnapFaaS controller")
         .version("1.0")
@@ -73,7 +72,7 @@ fn main() {
     let ctr_config = configs::ControllerConfig::new(config_path);
 
     // create a controller object
-    let mut controller = Controller::new(ctr_config).expect("Cannot create controller");
+    let mut controller = Controller::new(ctr_config);
 
     // set total memory
     let total_mem = matches.value_of("total memory").unwrap()
@@ -82,18 +81,19 @@ fn main() {
     let controller = Arc::new(controller);
     trace!("{:?}", controller);
 
-    let wp = workerpool::WorkerPool::new(controller.clone());
+    let wp = WorkerPool::new(controller.clone());
     trace!("# workers: {:?}", wp.pool_size());
 
     // register signal handler
-    let (sig_sender, sig_receiver) = bounded(100);
-    let signals = Signals::new(&[SIGINT]).expect("cannot create signals");
-    std::thread::spawn(move || {
-        for sig in signals.forever() {
-            warn!("Received signal {:?}", sig);
-            let _ = sig_sender.send(());
-        }
-    });
+    set_ctrlc_handler(&wp);
+    //let (sig_sender, sig_receiver) = bounded(100);
+    //let signals = Signals::new(&[SIGINT]).expect("cannot create signals");
+    //std::thread::spawn(move || {
+    //    for sig in signals.forever() {
+    //        warn!("Received signal {:?}", sig);
+    //        let _ = sig_sender.send(());
+    //    }
+    //});
 
 
     // File Gateway
@@ -126,12 +126,12 @@ fn main() {
                 }
             }
 
-            // check if received any signal
-            if let Ok(_) = sig_receiver.try_recv() {
-                warn!("snapctr shutdown received");
-                wp.shutdown();
-                std::process::exit(0);
-            }
+            //// check if received any signal
+            //if let Ok(_) = sig_receiver.try_recv() {
+            //    warn!("snapctr shutdown received");
+            //    wp.shutdown();
+            //    std::process::exit(0);
+            //}
             t2 = precise_time_ns();
             info!("schedule latency (t2-t1): {} ns", t2-t1);
         }
@@ -162,18 +162,48 @@ fn main() {
                     }
 
                     let (req, rsp_sender) = task.unwrap();
+                    info!("Request from {:?}", rsp_sender.lock().unwrap().peer_addr());
 
                     trace!("Gateway received request: {:?}. From: {:?}", req, rsp_sender);
                     wp.send_req_tcp(req, rsp_sender);
                 }
             }
 
-            // check if received any signal
-            if let Ok(_) = sig_receiver.try_recv() {
-                warn!("snapctr shutdown received");
-                wp.shutdown();
-                std::process::exit(0);
-            }
+            //// check if received any signal
+            //if let Ok(_) = sig_receiver.try_recv() {
+            //    warn!("snapctr shutdown received");
+            //    wp.shutdown();
+            //    std::process::exit(0);
+            //}
         }
     }
+}
+
+fn set_ctrlc_handler(wp: &WorkerPool) {
+    let controller = wp.get_controller();
+    let sender = wp.get_sender();
+    let pool_size = wp.pool_size();
+    ctrlc::set_handler(move || { 
+        println!("");
+        warn!("{}", "Handling Ctrl-C. Shutting down...");
+        // Shutdown all idle VMs
+        controller.shutdown();
+        // Shutdown all workers:
+        // first, sending Shutdown message to each thread in the pool
+        // second, wait for ack messages from all workers
+        let (tx, rx) = mpsc::channel(); 
+        for _ in 0..pool_size {
+            sender.send(Message::Shutdown(tx.clone())).expect("failed to shutdown workers");
+        }
+        // Worker threads may have exited while we try receiving from the channel causing
+        // recv errors. We simply ignore errors.
+        for _ in 0..pool_size {
+            match rx.recv() {
+                Ok(_) => (),
+                Err(_) => (),
+            }
+        }
+        snapfaas::unlink_unix_sockets();
+        std::process::exit(0);
+    }).expect("Error setting Ctrl-C handler");
 }

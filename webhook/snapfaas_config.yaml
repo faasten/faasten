@@ -1,16 +1,12 @@
 ---
 allow_network: false
-firerunner_path: "./target/release/firerunner"
+firerunner_path: "./target/debug/firerunner"
 kernel_path: "./resources/images/vmlinux-4.20.0"
 runtimefs_dir: "./"
 functions:
-  hello:
-    runtimefs: "hello.ext4"
-    vcpus: 1
-    memory: 128
-    concurrency_limit: 600
   build_tarball:
+    network: false
     runtimefs: "list_tarball.ext4"
     vcpus: 1
-    memory: 128
+    memory: 128 
     concurrency_limit: 600

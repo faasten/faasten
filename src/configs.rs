@@ -3,25 +3,29 @@
 //! function configurations
 use serde::Deserialize;
 use serde_yaml;
-use std::fs::File;
 use url::Url;
-use log::info;
-use crate::*;
+use log::{info, debug};
 
-pub const KERNEL_PATH: &str = "/etc/kernel/vmlinux-4.20.0";
+use std::fs::File;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
-#[derive(Deserialize, Debug)]
+use crate::convert_fs_path_to_url;
+
+#[derive(Deserialize, Debug, Default)]
 pub struct ControllerConfig {
+    pub allow_network: bool,
     pub firerunner_path: String,
     pub kernel_path: String,
     pub runtimefs_dir: String,
-    pub appfs_dir: String,
-    pub snapshot_dir: String,
-    pub function_config: String,
+    #[serde(default)]
+    pub appfs_dir: Option<String>,
+    #[serde(default)]
+    pub snapshot_dir: Option<String>,
+    pub functions: BTreeMap<String, FunctionConfig>,
 }
 
 impl ControllerConfig {
-
     /// Create in-memory ControllerConfig struct from a YAML file
     /// TODO: Currently only supports file://localhost urls
     pub fn new(path: &str) -> ControllerConfig {
@@ -34,20 +38,12 @@ impl ControllerConfig {
     fn initialize(config_url: &str) -> ControllerConfig {
         if let Ok(config_url) = Url::parse(config_url) {
             // populate a ControllerConfig struct from the yaml file
-            if let Ok(config) = File::open(config_url.path()) {
-                let config: serde_yaml::Result<ControllerConfig> = serde_yaml::from_reader(config);
+            if let Ok(f) = File::open(config_url.path()) {
+                let config: serde_yaml::Result<ControllerConfig> = serde_yaml::from_reader(f);
                 if let Ok(mut config) = config {
-                    config.kernel_path = convert_fs_path_to_url(&config.kernel_path)
-                        .expect("Invalid kernel path");
-                    config.runtimefs_dir = convert_fs_path_to_url(&config.runtimefs_dir)
-                        .expect("Invalid runtimefs directory");
-                    config.appfs_dir = convert_fs_path_to_url(&config.appfs_dir)
-                        .expect("Invalid appfs directory");
-                    config.snapshot_dir = convert_fs_path_to_url(&config.snapshot_dir)
-                        .expect("Invalid snapshot directory");
-                    config.function_config = convert_fs_path_to_url(&config.function_config)
-                        .expect("Invalid function configuration file path");
-                    info!("config: {:?}", config);
+                    ControllerConfig::convert_to_url(&mut config);
+                    ControllerConfig::build_full_path_fs_images(&mut config);
+                    debug!("Controller config: {:?}", config);
                     config
                 } else {
                     panic!("Invalid YAML file");
@@ -61,36 +57,68 @@ impl ControllerConfig {
         }
     }
 
-    //pub fn set_kernel_path(&mut self, path: &str) {
-    //    self.kernel_path = convert_fs_path_to_url(path);
-    //}
+    fn convert_to_url(config: &mut ControllerConfig) {
+        config.kernel_path = convert_fs_path_to_url(&config.kernel_path)
+            .expect("Invalid kernel path");
+        config.runtimefs_dir = convert_fs_path_to_url(&config.runtimefs_dir)
+            .expect("Invalid runtimefs directory");
+        config.appfs_dir = config.appfs_dir.as_ref().map(|dir| convert_fs_path_to_url(dir)
+            .expect("Invalid appfs directory"));
+        config.snapshot_dir = config.snapshot_dir.as_ref().map(|dir| convert_fs_path_to_url(dir)
+            .expect("Invalid snapshot directory"));
+    }
 
-    //pub fn set_kernel_boot_args(&mut self, args: &str) {
-    //    self.kernel_boot_args= args.to_string();
-    //}
+    fn build_full_path_fs_images(config: &mut ControllerConfig) {
+        let runtimefs_base = config.get_runtimefs_base();
+        let maybe_appfs_base = config.get_appfs_base();
+        let maybe_snapshot_base = config.get_snapshot_base();
+        let kernel_path = &config.kernel_path;
+        for app in config.functions.values_mut() {
+            // build full path to the runtimefs
+            app.runtimefs = [ &runtimefs_base, &app.runtimefs ]
+                .iter().collect::<PathBuf>().to_str().unwrap().to_string();
+            // build full path to the appfs
+            app.appfs = app.appfs.as_ref()
+                .map(|d| [ maybe_appfs_base.as_ref().expect("Appfs directory not specified"), d ]
+                     .iter().collect::<PathBuf>().to_str().unwrap().to_string());
+            app.load_dir = app.load_dir.as_ref().map(|s| s.split(',').collect::<Vec<&str>>().iter()
+                    .map(|s| [ maybe_snapshot_base.as_ref().expect("Snapshot directory not specified").as_str(), s ]
+                         .iter().collect::<PathBuf>().to_str().unwrap().to_string())
+                    .collect::<Vec<String>>().join(","));
+            // TODO: currently all apps use the same kernel
+            app.kernel = Url::parse(kernel_path)
+                .expect("Bad kernel path URL").path().to_string();
+            // use `firerunner`'s default DEFAULT_KERNEL_CMDLINE
+            // defined in firecracker/vmm/lib.rs
+            app.cmdline = None;
+            // `snapctr` does not support generate snapshots
+            app.dump_dir = None;
+        }
+    }
 
     pub fn get_runtimefs_base(&self) -> String {
         Url::parse(&self.runtimefs_dir).expect("invalid runtimefs dir from url").path().to_string()
     }
 
-    pub fn get_appfs_base(&self) -> String {
-        Url::parse(&self.appfs_dir).expect("invalid runtimefs dir from url").path().to_string()
+    pub fn get_appfs_base(&self) -> Option<String> {
+        self.appfs_dir.as_ref().map(|d| Url::parse(&d).expect("invalid runtimefs dir from url").path().to_string())
     }
 
-    pub fn get_snapshot_base(&self) -> String {
-        Url::parse(&self.snapshot_dir).expect("invalid snapshot dir from url").path().to_string()
+    pub fn get_snapshot_base(&self) -> Option<String> {
+        self.snapshot_dir.as_ref().map(|d| Url::parse(&d).expect("invalid snapshot dir from url").path().to_string())
     }
-
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct FunctionConfig {
-    /// function name used to distinguish functions
-    pub name: String,
+    /// enable network
+    #[serde(default)]
+    pub network: bool,
     /// path to runtimefs
     pub runtimefs: String,
     /// path to appfs
-    pub appfs: String,
+    #[serde(default)]
+    pub appfs: Option<String>,
     /// VM vcpu count
     pub vcpus: u64,
     /// VM memory size
@@ -99,9 +127,6 @@ pub struct FunctionConfig {
     /// base snapshot
     #[serde(default)]
     pub load_dir: Option<String>,
-    ///// comma-separated list of diff snapshot directories
-    //#[serde(default)]
-    //pub diff_dirs: Option<String>,
     /// copy base snapshot memory dump
     #[serde(default)]
     pub copy_base: bool,
@@ -131,10 +156,10 @@ pub struct FunctionConfig {
 impl Default for FunctionConfig {
     fn default() -> Self {
         FunctionConfig {
-            name: String::new(),
-            kernel: KERNEL_PATH.to_string(),
+            network: false,
+            kernel: String::new(),
             runtimefs: String::new(),
-            appfs: String::new(),
+            appfs: None,
             vcpus: 1,
             memory: 128,
             concurrency_limit: 1, // not in use
