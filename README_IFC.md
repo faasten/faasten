@@ -1,30 +1,31 @@
-# Snapfaas as a Library
-## API
-1. App's logic goes into its trait `snapfaas::app::Handle` implementation.
-```rust
-pub struct App {
-  internal_state: SomeState,
-}
-
-impl App {
-  pub fn new() {
-    // initialization code
-  }
-}
-
-impl snapfaas::app::Handler for App {
-  pub fn handle_request(&mut self, request: &http::Request<Bytes>) -> Result<request::Request, http::StatusCode> {
-    //app's logic...
-  }
-}
+# Webhook Server Frontend
+To build the frontend
+```shell
+cd webhook
+cargo build
 ```
-2. To create a server
-```rust
-# create a new server of certain memory for running VMs and listening at `listen_addr` with configuration
-# at path `config_path`.
-let handler = App::new();
-let s = Server::new(total_mem, config_path, listen_addr, handler);
-s.run()
+
+To start the frontend
+```shell
+# RUST_LOG=debug allows messages at or above debug level to be printed
+RUST_LOG=debug target/debug/webhook --listen IP:PORT --app_config app_config.yaml --snapfaas_address IP:PORT
 ```
-## Example
-An example webhook server is in `bins/webhook`.
+
+# Snapfaas backend
+1. To build the backend
+```shell
+cargo build --bin snapctr --bin firerunner
+```
+`snapctr` is the controller that accepts requests over TCP connections and executes requests through
+forking `firerunner`.
+
+Note: passing `--release` flag to build release builds.
+
+2. To start the backend
+```shell
+# GITHUB_AUTH_TOKEN environment variable allows the backend to access private github resources
+GITHUB_AUTH_TOKEN=YOURTOKEN RUST_LOG=debug target/debug/snapctr --config resources/example-controller-config.yaml --port PORT --mem 1024
+```
+
+3. Request and Response format
+See [src/request.rs](src/request.rs)
