@@ -13,7 +13,7 @@ use std::os::unix::net::UnixListener;
 
 use log::{error, warn, info, trace};
 use time::precise_time_ns;
-use http;
+use serde_json::json;
 
 use crate::controller::Controller;
 use crate::controller;
@@ -63,24 +63,24 @@ impl Worker {
                 trace!("[Worker {:?}] task received: {:?}", id, msg);
 
                 match msg {
-                    Message::HTTPRequest(req, rsp_sender) => {
-                        let function_name = req.function.clone();
-                        match acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid)
-                            .and_then(|vm| process_req(req, vm, &mut stat)) {
-                            Ok(rsp) => {
-                                trace!("[Worker {:?}] finished processing {}", id, function_name);
-                                if let Err(e) = rsp_sender.send(Ok(rsp)) {
-                                    error!("[Worker {:?}] response failed to send: {:?}", id, e);
-                                }
-                            }
-                            Err(e) => {
-                                handle_controller_error(e, &mut stat, &function_name);
-                                if let Err(e) = rsp_sender.send(Err(http::StatusCode::INTERNAL_SERVER_ERROR)) {
-                                    error!("[Worker {:?}] response failed to send: {:?}", id, e);
-                                }
-                            }
-                        }
-                    }
+                    //Message::HTTPRequest(req, rsp_sender) => {
+                    //    let function_name = req.function.clone();
+                    //    match acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid)
+                    //        .and_then(|vm| process_req(req, vm, &mut stat)) {
+                    //        Ok(rsp) => {
+                    //            trace!("[Worker {:?}] finished processing {}", id, function_name);
+                    //            if let Err(e) = rsp_sender.send(Ok(rsp)) {
+                    //                error!("[Worker {:?}] response failed to send: {:?}", id, e);
+                    //            }
+                    //        }
+                    //        Err(e) => {
+                    //            handle_controller_error(e, &mut stat, &function_name);
+                    //            if let Err(e) = rsp_sender.send(Err(http::StatusCode::INTERNAL_SERVER_ERROR)) {
+                    //                error!("[Worker {:?}] response failed to send: {:?}", id, e);
+                    //            }
+                    //        }
+                    //    }
+                    //}
                     // To shutdown, dump collected statistics and then terminate
                     Message::Shutdown(ack_sender) => {
                         warn!("[Worker {:?}] shutdown received", id);
@@ -115,6 +115,7 @@ impl Worker {
                     }
                     Message::RequestTcp(req, rsp_sender) => {
                         let function_name = req.function.clone();
+                        let user_id = req.user_id;
                         match acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid)
                                   .and_then(|vm| process_req(req, vm, &mut stat)) {
                             Ok(rsp) => {
@@ -127,14 +128,19 @@ impl Worker {
                                 }
                             }
                             Err(e) => {
+                                use log::debug;
+                                debug!("RequestTcp failed.");
+                                let err_msg = json!({
+                                    "user_id": user_id,
+                                    "payload": {
+                                        "error": format!("{:?}", e),
+                                    },
+                                });
                                 handle_controller_error(e, &mut stat, &function_name);
                                 // Return a error message
-                                {
-                                    let err_msg = "Request failed";
-                                    let mut s = rsp_sender.lock().expect("lock poisoned");
-                                    if let Err(e) = request::write_u8(err_msg.as_bytes(), &mut s) {
-                                        error!("[thread: {:?}] response failed to send: {:?}", id, e);
-                                    }
+                                let mut s = rsp_sender.lock().expect("lock poisoned");
+                                if let Err(e) = request::write_u8(err_msg.to_string().as_bytes(), &mut s) {
+                                    error!("[thread: {:?}] response failed to send: {:?}", id, e);
                                 }
                             }
                         }
@@ -249,6 +255,7 @@ fn acquire_vm(
 
 fn process_req(req: Request, mut vm: Vm, stat: &mut Metrics) -> Result<String, controller::Error> {
     let t1 = precise_time_ns();
+    let user_id = req.user_id;
     let rsp = vm.process_req(req).map_err(|e| controller::Error::VmReqProcess(e));
     let t2 = precise_time_ns();
 
@@ -257,7 +264,10 @@ fn process_req(req: Request, mut vm: Vm, stat: &mut Metrics) -> Result<String, c
         stat.req_rsp_tsp.entry(vm.id).or_insert(vec![]).append(&mut vec![t1,t2]);
     }
 
-    return rsp;
+    Ok(serde_json::to_string(&request::Response {
+        user_id,
+        payload: serde_json::from_str(&rsp?).unwrap()
+    }).unwrap())
 }
 
 fn handle_controller_error(e: controller::Error, stat: &mut Metrics, function_name: &str) {

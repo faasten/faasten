@@ -312,13 +312,13 @@ impl Vm {
                     let response = syscalls::GithubRestResponse{
                         data: match syscalls::HttpVerb::from_i32(req.verb) {
                             Some(syscalls::HttpVerb::Get) => {
-                                self.http_get(&req)?.text().map_err(|e| Error::HttpReq(e))?
+                                self.http_get(&req)?.bytes().map_err(|e| Error::HttpReq(e))?.to_vec()
                             },
                             Some(syscalls::HttpVerb::Post) => {
-                                self.http_post(&req)?.text().map_err(|e| Error::HttpReq(e))?
+                                self.http_post(&req)?.bytes().map_err(|e| Error::HttpReq(e))?.to_vec()
                             },
                             None => {
-                               format!("`{:?}` not supported", req.verb)
+                               format!("`{:?}` not supported", req.verb).as_bytes().to_vec()
                             }
                         },
                     };

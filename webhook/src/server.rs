@@ -1,16 +1,18 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use http;
 use httparse;
-use log::{warn, error, debug};
+use log::{info, error};
 
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc;
-use std::sync::mpsc::Sender;
 
-use crate::app::Handler;
-use crate::workerpool::WorkerPool;
-use crate::message::Message;
+//pub trait Handler {
+//    fn handle_request(&mut self, request: &http::Request<Bytes>) -> Result<Option<Request>, http::StatusCode>;
+//}
+
+pub trait Handler {
+    fn handle_request(&mut self, request: &http::Request<Bytes>, conn: &mut TcpStream) -> http::Response<Bytes>;
+}
 
 pub struct Client {
     stream: TcpStream,
@@ -115,105 +117,68 @@ impl Client {
 }
 
 pub struct Server<H> {
-    wp: WorkerPool,
+    connect: String,
     listener: TcpListener,
     handler: H,
 }
 
+fn request_helper<H: Handler>(client: &mut Client, handler: &mut H, conn: &mut TcpStream) -> Result<(), std::io::Error> {
+    let request = client.read()?;
+    client.write_response(&handler.handle_request(&request, conn))
+}
+
+
 impl<H> Server<H> {
-    pub fn new(total_mem: usize, config_path: &str, listen_addr: &str, handler: H) -> Self {
-        use crate::{configs, controller, workerpool};
-        // create a controller object
-        let config = configs::ControllerConfig::new(config_path);
-        let mut controller = controller::Controller::new(config);
-        controller.set_total_mem(total_mem);
-        let controller = std::sync::Arc::new(controller);
+    pub fn new(connect: String, listen: &str, handler: H) -> Self {
+        let listener = TcpListener::bind(listen).unwrap();
+        info!("Webhook server listening on {}", listen);
 
-        let listener = TcpListener::bind(listen_addr).unwrap();
-        warn!("Listening on {}", listen_addr);
-
-        // worker pool
-        let wp = workerpool::WorkerPool::new(controller.clone());
-        
-        Server { wp, listener, handler }
-    }
-
-    /// Use Ctrl-C to shut down the server
-    pub fn set_ctrlc_handler(&self) {
-        let controller = self.wp.get_controller();
-        let sender = self.wp.get_sender();
-        let pool_size = self.wp.pool_size();
-        ctrlc::set_handler(move || { 
-            println!("");
-            warn!("{}", "Handling Ctrl-C. Shutting down...");
-            // Shutdown all idle VMs
-            controller.shutdown();
-            // Shutdown all workers:
-            // first, sending Shutdown message to each thread in the pool
-            // second, wait for ack messages from all workers
-            let (tx, rx) = mpsc::channel(); 
-            for _ in 0..pool_size {
-                sender.send(Message::Shutdown(tx.clone())).expect("failed to shutdown workers");
-            }
-            // Worker threads may have exited while we try receiving from the channel causing
-            // recv errors. We simply ignore errors.
-            for _ in 0..pool_size {
-                match rx.recv() {
-                    Ok(_) => (),
-                    Err(_) => (),
-                }
-            }
-            crate::unlink_unix_sockets();
-            std::process::exit(0);
-        }).expect("Error setting Ctrl-C handler");
+        Server { connect, listener, handler }
     }
 }
 
 impl<H: 'static + Handler + Send + Clone> Server<H> {
-    pub fn run(&self) -> Result<(), std::io::Error> {
+    pub fn run(self) -> Result<(), std::io::Error> {
         for stream in self.listener.incoming() {
             let stream = stream?;
             let mut handler = self.handler.clone();
-            let sender = self.wp.get_sender();
+            let connect = self.connect.clone();
             std::thread::spawn(move || {
                 let mut client = Client::new(stream);
+                let mut conn = TcpStream::connect(connect).expect("Cannot connect to snapfaas");
+                info!("Connect to snapfaas");
                 loop {
-                    if let Err(r) = request_helper(&mut client, &mut handler, &sender) {
+                    if let Err(r) = request_helper(&mut client, &mut handler, &mut conn) {
                         if r.kind() != std::io::ErrorKind::UnexpectedEof {
                             error!("{}", r);
                         }
                         break;
                     }
                 }
+                conn.shutdown(std::net::Shutdown::Both).expect("Failed to close the connection with snapfaas");
+                info!("Shutdown connection to snapfaas");
             });
         }
         Ok(())
     }
 }
 
-fn request_helper(client: &mut Client, handler: &mut dyn Handler, sender: &Sender<Message>) -> Result<(), std::io::Error> {
-    use http::Response;
-    let request = client.read()?;
-
-    match handler.handle_request(&request) {
-        Ok(maybe_req) => {
-            if let Some(req) = maybe_req {
-                let (tx, rx) = mpsc::channel();
-                sender.send(Message::HTTPRequest(req, tx))
-                    .expect("failed to send HTTP-sourced request");
-                
-                match rx.recv().expect("failed to receive worker response") {
-                    Ok(resp) => {
-                        debug!("Response: {:?}", resp);
-                        client.write_response(&Response::builder().body(request.body().clone()).unwrap())
-                    },
-                    Err(c) => client.write_response(&Response::builder().status(c).body(Bytes::new()).unwrap()),
-                }
-            } else {
-                debug!("Ping GitHub.");
-                client.write_response(&Response::builder().body(Bytes::new()).unwrap())
-            }
-        },
-        Err(c) => client.write_response(&Response::builder().status(c).body(Bytes::new()).unwrap()),
-    }
-}
+//fn request_helper(client: &mut Client, handler: &mut dyn Handler, stream: &mut TcpStream) -> Result<(), std::io::Error> {
+//    use http::Response;
+//    let request = client.read()?;
+//
+//    match handler.handle_request(&request) {
+//        Ok(maybe_req) => {
+//            if let Some(req) = maybe_req {
+//                // send requests to snapfaas over TCP connection
+//                snapfaas::request::write_u8(req, stream);
+//                    .expect("failed to send HTTP-sourced request");
+//                m.lock().unwrap().set(req.user_id, client.try_clone());
+//            } else {
+//                debug!("Ping GitHub.");
+//                client.write_response(&Response::builder().body(Bytes::new()).unwrap())
+//            }
+//        },
+//        Err(c) => client.write_response(&Response::builder().status(c).body(Bytes::new()).unwrap()),
+//    }
+//}

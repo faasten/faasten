@@ -22,16 +22,8 @@ pub struct VmmWrapper {
     event_fd: Rc<EventFd>,
 }
 
-//#[derive(Debug)]
-//pub struct VmChannel {
-//    request_sender: File,
-//    response_receiver: File,
-//    status_receiver: File,
-//}
-
 #[derive(Debug)]
 pub enum VmmError {
-    PipeCreate(nix::Error),
     EventFd(io::Error),
     ActionError(VmmActionError),
     ActionSender(mpsc::SendError<Box<VmmAction>>),
@@ -40,12 +32,6 @@ pub enum VmmError {
 
 impl VmmWrapper {
     pub fn new(id: String, config: SnapFaaSConfig) -> Result<VmmWrapper, VmmError> {
-
-        // unix pipes for communicating with the vm
-        //let (request_receiver, request_sender) = nix::unistd::pipe().map_err(|e| VmmError::PipeCreate(e))?;
-        //let (response_receiver, response_sender) = nix::unistd::pipe().map_err(|e| VmmError::PipeCreate(e))?;
-        //let (status_receiver, status_sender) = nix::unistd::pipe().map_err(|e| VmmError::PipeCreate(e))?;
-        // mpsc channel for Box<VmmAction> with the vmm thread
         let (vmm_action_sender, vmm_action_receiver) = channel();
 
         let shared_info = Arc::new(RwLock::new(InstanceInfo {

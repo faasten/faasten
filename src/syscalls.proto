@@ -56,7 +56,7 @@ message GithubRest {
 }
 
 message GithubRestResponse {
-  string data = 1;
+  bytes data = 1;
 }
 
 message GetCurrentLabel {

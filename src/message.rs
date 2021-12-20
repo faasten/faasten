@@ -1,14 +1,12 @@
-use http::StatusCode;
-
 use std::sync::mpsc::Sender;
 use std::sync::{Mutex, Arc};
-use std::net::{TcpStream};
+use std::net::TcpStream;
 
 use crate::request::Request;
 
 #[derive(Debug)]
 pub enum Message {
-    HTTPRequest(Request, Sender<Result<String, StatusCode>>),
+    //HTTPRequest(Request, Sender<Result<String, StatusCode>>),
     Shutdown(Sender<Message>),
     ShutdownAck,
     NoAckShutdown,
