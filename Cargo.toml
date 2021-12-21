@@ -9,14 +9,6 @@ name = "firerunner"
 path = "bins/firerunner/main.rs"
 
 [[bin]]
-name = "client"
-path = "bins/client/main.rs"
-
-[[bin]]
-name = "server"
-path = "bins/server/main.rs"
-
-[[bin]]
 name = "fc_wrapper"
 path = "bins/fc_wrapper/main.rs"
 
