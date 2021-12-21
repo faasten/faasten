@@ -8,6 +8,8 @@ use snapfaas::vm::Vm;
 use snapfaas::request;
 use snapfaas::unlink_unix_sockets;
 use snapfaas::configs::FunctionConfig;
+use std::env;
+use std::path::Path;
 use std::io::{BufRead};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Instant;
@@ -19,6 +21,7 @@ const CID: u32 = 100;
 
 fn main() {
     env_logger::init();
+    let firerunner = Path::new(&env::args().next().unwrap_or("".to_string())).parent().unwrap().join("firerunner");
     let cmd_arguments = App::new("fireruner wrapper")
         .version(crate_version!())
         .author(crate_authors!())
@@ -86,6 +89,7 @@ fn main() {
                  .value_name("MEMSIZE")
                  .takes_value(true)
                  .required(true)
+                 .default_value("128")
                  .help("Guest memory size in MB (default is 128)")
         )
         .arg(
@@ -94,6 +98,7 @@ fn main() {
                  .value_name("VCPUCOUNT")
                  .takes_value(true)
                  .required(true)
+                 .default_value("1")
                  .help("Number of vcpus (default is 1)")
         )
         .arg(
@@ -124,7 +129,7 @@ fn main() {
                 .value_name("FIRERUNNER PATH")
                 .takes_value(true)
                 .required(true)
-                .default_value("target/release/firerunner")
+                .default_value(firerunner.to_str().unwrap())
                 .help("path to the firerunner binary")
         )
         .arg(
