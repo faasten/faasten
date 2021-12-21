@@ -225,7 +225,7 @@ fn main() {
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
     let firerunner = cmd_arguments.value_of("firerunner").unwrap();
-    let (mut vm, ts_vec) = match Vm::new(id, "myapp", &vm_app_config, &vm_listener, CID,
+    let (mut vm, ts_vec) = match Vm::new(id, "myapp", &vm_app_config, vm_listener, CID,
         cmd_arguments.is_present("enable network"), firerunner, cmd_arguments.is_present("force exit"), Some(odirect))
     {
         Ok(vm) => vm,
@@ -252,7 +252,7 @@ fn main() {
             }
             Err(e) => {
                 eprintln!("invalid requests: {:?}", e);
-                vm.shutdown();
+                drop(vm);
                 unlink_unix_sockets();
                 std::process::exit(1);
             }
@@ -294,6 +294,6 @@ fn main() {
 
     // Shutdown the vm and exit
     println!("Shutting down vm...");
-    vm.shutdown();
+    drop(vm);
     unlink_unix_sockets();
 }
