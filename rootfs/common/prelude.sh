@@ -1,4 +1,4 @@
-apk add openrc util-linux
+apk add openrc util-linux build-base
 
 cp /common/outl /usr/bin/outl
 cp /common/setup-eth0.sh /usr/bin/setup-eth0.sh
