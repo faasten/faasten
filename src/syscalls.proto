@@ -2,6 +2,15 @@ syntax = "proto3";
 
 package snapfaas.syscalls;
 
+message Invoke {
+  string function = 1;
+  string payload = 2;
+}
+
+message InvokeResponse {
+  bool success = 1;
+}
+
 message Clause {
   // A disjuction of principals
   repeated string principals = 1;
@@ -70,6 +79,7 @@ message Syscall {
     GetCurrentLabel getCurrentLabel = 4;
     DcLabel taintWithLabel = 5;
     GithubRest githubRest = 6;
+    Invoke invoke = 7;
   }
 }
 

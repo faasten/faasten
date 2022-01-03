@@ -1,27 +1,21 @@
 //! Host-side VM handle that transfer data in and out of the VM through VSOCK socket and
 //! implements syscall API
-extern crate reqwest;
-extern crate url;
-
-#[cfg(not(test))]
 use std::env;
-#[cfg(not(test))]
 use std::net::Shutdown;
-#[cfg(not(test))]
 use std::os::unix::net::{UnixListener, UnixStream};
-#[cfg(not(test))]
-use tokio::process::{Child, Command};
 use std::process::Stdio;
 use std::string::String;
-#[cfg(not(test))]
-use log::{info, error};
-use std::time::Instant;
+use std::sync::mpsc::Sender;
+use std::sync::mpsc;
+use std::io::Write;
 
-#[cfg(not(test))]
+use log::{debug, error};
+use tokio::process::{Child, Command};
+
 use crate::configs::FunctionConfig;
-#[cfg(not(test))]
-use crate::request::Request;
+use crate::message::Message;
 use crate::syscalls;
+use crate::request::{Request, RequestStatus, Response};
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
@@ -35,9 +29,6 @@ use labeled::Label;
 #[derive(Debug)]
 pub enum Error {
     ProcessSpawn(std::io::Error),
-    //VmTimeout(RecvTimeoutError),
-    VmWrite(std::io::Error),
-    VmRead(std::io::Error),
     Rpc(prost::DecodeError),
     VsockListen(std::io::Error),
     VsockWrite(std::io::Error),
@@ -49,9 +40,9 @@ pub enum Error {
     RootfsNotExist,
     AppfsNotExist,
     LoadDirNotExist,
-    NotString(std::string::FromUtf8Error),
 }
 
+/// Specify the `O_DIRECT` flag when open a disk image which is a regular file
 pub struct OdirectOption {
     pub base: bool,
     pub diff: bool,
@@ -60,43 +51,72 @@ pub struct OdirectOption {
 }
 
 #[derive(Debug)]
-#[cfg(not(test))]
-pub struct Vm {
-    pub id: usize,
-    pub memory: usize, // MB
-    pub function_name: String,
+struct VmHandle {
     conn: UnixStream,
-    //TODO: currently every VM instance opens a connection to the REST server
-    // Having a pool of connections is more ideal.
+    //currently every VM instance opens a connection to the REST server
     rest_client: reqwest::blocking::Client,
-    process: Child,
-    current_label: DCLabel,
+    vm_process: Child,
+    // None when VM is created from single-VM launcher
+    invoke_handle: Option<Sender<Message>>,
 }
 
-#[cfg(not(test))]
+#[derive(Debug)]
+pub struct Vm {
+    id: usize,
+    firerunner: String,
+    allow_network: bool,
+    function_name: String,
+    function_config: FunctionConfig,
+    current_label: DCLabel,
+    handle: Option<VmHandle>,
+}
+
 impl Vm {
-    /// Launch a vm instance and return a Vm value
-    /// When this function returns, the VM has finished booting and is ready
-    /// to accept requests.
+    /// Create a new Vm instance with its handle uninitialized
     pub fn new(
-        id: &str,
-        function_name: &str,
-        function_config: &FunctionConfig,
+        id: usize,
+        firerunner: String,
+        function_name: String,
+        function_config: FunctionConfig,
+        allow_network: bool,
+    ) -> Self {
+        Vm {
+            id,
+            allow_network,
+            firerunner,
+            function_name: function_name.clone(),
+            function_config,
+            // We should also probably have a clearance to mitigate side channel attacks, but
+            // meh for now...
+            /// Starting label with public secrecy and integrity has app-name
+            current_label: DCLabel::new(false, [[function_name]]),
+            handle: None,
+        }
+    }
+
+    /// Return true if the Vm instance is already launched, otherwise false.
+    pub fn is_launched(&self) -> bool {
+        self.handle.is_some()
+    }
+
+    /// Launch the current Vm instance.
+    /// When this function returns, the VM has finished booting and is ready to accept requests.
+    pub fn launch(
+        &mut self,
+        invoke_handle: Option<Sender<Message>>,
         vm_listener: UnixListener,
         cid: u32,
-        allow_network: bool,
-        firerunner: &str,
         force_exit: bool,
         odirect: Option<OdirectOption>,
-    ) -> Result<(Vm, Vec<Instant>), Error> {
-        let mut ts_vec = Vec::with_capacity(10);
-        ts_vec.push(Instant::now());
+    ) -> Result<(), Error> {
+        let function_config = &self.function_config;
         let mem_str = function_config.memory.to_string();
         let vcpu_str = function_config.vcpus.to_string();
         let cid_str = cid.to_string();
+        let id_str = self.id.to_string();
         let mut args = vec![
             "--id",
-            id,
+            &id_str,
             "--kernel",
             &function_config.kernel,
             "--mem_size",
@@ -137,7 +157,7 @@ impl Vm {
         // network config should be of the format <TAP-Name>/<MAC Address>
         let tap_name = format!("tap{}", cid-100);
         let mac_addr = format!("{}:{:02X}:{:02X}", MACPREFIX, ((cid-100)&0xff00)>>8, (cid-100)&0xff);
-        if function_config.network && allow_network {
+        if function_config.network && self.allow_network {
             args.extend_from_slice(&["--tap_name", &tap_name]);
             args.extend_from_slice(&["--mac", &mac_addr]);
         }
@@ -160,14 +180,12 @@ impl Vm {
 
         let runtime = tokio::runtime::Builder::new_current_thread().enable_io().build().unwrap();
         let (conn, vm_process) = runtime.block_on(async {
-            info!("args: {:?}", args);
-            let mut vm_process = Command::new(firerunner).args(args).kill_on_drop(true)
+            debug!("args: {:?}", args);
+            let mut vm_process = Command::new(&self.firerunner).args(args).kill_on_drop(true)
                 .stdin(Stdio::null())
                 .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|e| Error::ProcessSpawn(e))?;
-            ts_vec.push(Instant::now());
-
 
             if force_exit {
                 let output = vm_process .wait_with_output().await
@@ -194,40 +212,50 @@ impl Vm {
             conn.set_nonblocking(false).map_err(|e| Error::VsockListen(e))?;
             Ok((conn, vm_process))
         })?;
-        ts_vec.push(Instant::now());
-        info!("{}", "VM is now connected to the host");
 
         let rest_client = reqwest::blocking::Client::new();
+        
+        let handle = VmHandle {
+            conn,
+            rest_client,
+            vm_process,
+            invoke_handle,
+        };
 
-        return Ok((
-            Vm {
-                id: id.parse::<usize>().expect("vm id not int"),
-                function_name: function_name.to_string(),
-                memory: function_config.memory,
-                conn,
-                rest_client,
-                process: vm_process,
-                // We should also probably have a clearance to mitigate side channel attacks, but
-                // meh for now...
-                /// Starting label with public secrecy and integrity has app-name
-                current_label: DCLabel::new(false, [[function_name.to_string()]]),
-            },
-            ts_vec,
-        ));
+        self.handle = Some(handle);
+
+        Ok(())
+    }
+
+    pub fn function_name(&self) -> String {
+        self.function_name.clone()
+    }
+
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    /// Return function memory size in MB
+    pub fn memory(&self) -> usize {
+        self.function_config.memory
+    }
+
+    fn send_into_vm(&mut self, sys_req: Vec<u8>) -> Result<(), Error> {
+        let mut conn = &self.handle.as_ref().unwrap().conn;
+        conn.write_all(&(sys_req.len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
+        conn.write_all(sys_req.as_ref()).map_err(|e| Error::VsockWrite(e))
     }
 
     /// Send request to vm and wait for its response
     pub fn process_req(&mut self, req: Request) -> Result<String, Error> {
         use prost::Message;
-        use std::io::Write;
 
         let sys_req = syscalls::Request {
             payload: req.payload_as_string(),
         }
         .encode_to_vec();
 
-        self.conn.write_all(&(sys_req.len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
-        self.conn.write_all(sys_req.as_ref()).map_err(|e| Error::VsockWrite(e))?;
+        self.send_into_vm(sys_req)?;
 
         self.process_syscall()
     }
@@ -237,7 +265,8 @@ impl Vm {
         // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
         let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
         url.set_path(&sc_req.route);
-        let mut req = self.rest_client.get(url)
+        let rest_client = &self.handle.as_ref().unwrap().rest_client;
+        let mut req = rest_client.get(url)
             .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
             .header(reqwest::header::USER_AGENT, USER_AGENT);
         req = match env::var_os(GITHUB_AUTH_TOKEN) {
@@ -261,7 +290,8 @@ impl Vm {
             Some(t_osstr) => {
                 match t_osstr.into_string() {
                     Ok(t_str) => {
-                        self.rest_client.post(url)
+                        let rest_client = &self.handle.as_ref().unwrap().rest_client;
+                        rest_client.post(url)
                             .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
                             .header(reqwest::header::USER_AGENT, USER_AGENT)
                             .body(std::string::String::from(sc_req.body.as_ref().unwrap()))
@@ -275,10 +305,24 @@ impl Vm {
         }
     }
 
+    fn send_req(&self, invoke: syscalls::Invoke) -> Response {
+        let (tx, rx) = mpsc::channel();
+        self.handle.as_ref().unwrap().invoke_handle.as_ref().unwrap().send(Message::Request(
+            Request {
+                time: 0,
+                user_id: 0,
+                function: invoke.function,
+                payload: serde_json::Value::String(invoke.payload),
+            },
+            tx, 
+        )).expect("Failed to send request");
+        rx.recv().expect("Failed to receive request response")
+    }
+
     pub fn process_syscall(&mut self) -> Result<String, Error> {
         use lmdb::{Transaction, WriteFlags};
         use prost::Message;
-        use std::io::{Read, Write};
+        use std::io::Read;
         use syscalls::syscall::Syscall as SC;
         use syscalls::Syscall;
 
@@ -290,26 +334,36 @@ impl Vm {
         loop {
             let buf = {
                 let mut lenbuf = [0;4];
-                self.conn.read_exact(&mut lenbuf).map_err(|e| Error::VsockRead(e))?;
+                let mut conn = &self.handle.as_ref().unwrap().conn;
+                conn.read_exact(&mut lenbuf).map_err(|e| Error::VsockRead(e))?;
                 let size = u32::from_be_bytes(lenbuf);
                 let mut buf = vec![0u8; size as usize];
-                self.conn.read_exact(&mut buf).map_err(|e| Error::VsockRead(e))?;
+                conn.read_exact(&mut buf).map_err(|e| Error::VsockRead(e))?;
                 buf
             };
-            //println!("VM.RS: received a syscall");
             match Syscall::decode(buf.as_ref()).map_err(|e| Error::Rpc(e))?.syscall {
                 Some(SC::Response(r)) => {
-                    //println!("VS.RS: received response");
                     return Ok(r.payload);
+                }
+                Some(SC::Invoke(invoke)) => {
+                    if self.handle.as_ref().unwrap().invoke_handle.is_none() {
+                        debug!("No invoke handle, ignoring invoke syscall.");
+                        continue;
+                    }
+                    let success = self.send_req(invoke).status == RequestStatus::SentToVM;
+                    let result = syscalls::InvokeResponse { success }.encode_to_vec();
+
+                    self.send_into_vm(result)?;
                 }
                 Some(SC::ReadKey(rk)) => {
                     let txn = dbenv.begin_ro_txn().unwrap();
                     let result = syscalls::ReadKeyResponse {
                         value: txn.get(default_db, &rk.key).ok().map(Vec::from),
-                    };
+                    }
+                    .encode_to_vec();
                     let _ = txn.commit();
-                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
-                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
+
+                    self.send_into_vm(result)?;
                 },
                 Some(SC::WriteKey(wk)) => {
                     let mut txn = dbenv.begin_rw_txn().unwrap();
@@ -317,13 +371,14 @@ impl Vm {
                         success: txn
                             .put(default_db, &wk.key, &wk.value, WriteFlags::empty())
                             .is_ok(),
-                    };
+                    }
+                    .encode_to_vec();
                     let _ = txn.commit();
-                    self.conn.write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
-                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
+
+                    self.send_into_vm(result)?;
                 },
                 Some(SC::GithubRest(req)) => {
-                    let response = syscalls::GithubRestResponse{
+                    let result = syscalls::GithubRestResponse{
                         data: match syscalls::HttpVerb::from_i32(req.verb) {
                             Some(syscalls::HttpVerb::Get) => {
                                 self.http_get(&req)?.bytes().map_err(|e| Error::HttpReq(e))?.to_vec()
@@ -335,9 +390,10 @@ impl Vm {
                                format!("`{:?}` not supported", req.verb).as_bytes().to_vec()
                             }
                         },
-                    };
-                    self.conn.write_all(&(response.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
-                    self.conn.write(response.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
+                    }
+                    .encode_to_vec();
+
+                    self.send_into_vm(result)?;
                 },
                 Some(SC::GetCurrentLabel(_)) => {
                     let result = syscalls::DcLabel {
@@ -363,10 +419,10 @@ impl Vm {
                                     .collect(),
                             }),
                         },
-                    };
-                    self.conn
-                        .write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
-                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
+                    }
+                    .encode_to_vec();
+
+                    self.send_into_vm(result)?;
                 }
                 Some(SC::TaintWithLabel(label)) => {
                     let dclabel = DCLabel {
@@ -417,10 +473,10 @@ impl Vm {
                                     .collect(),
                             }),
                         },
-                    };
-                    self.conn
-                        .write_all(&(result.encoded_len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
-                    self.conn.write_all(result.encode_to_vec().as_ref()).map_err(|e| Error::VsockWrite(e))?;
+                    }
+                    .encode_to_vec();
+
+                    self.send_into_vm(result)?;
                 }
                 None => {
                     // Should never happen, so just ignore??
@@ -434,7 +490,8 @@ impl Vm {
 impl Drop for Vm {
     /// shutdown this vm
     fn drop(&mut self) {
-        if let Err(e) = self.conn.shutdown(Shutdown::Both) {
+        let handle = self.handle.as_ref().unwrap();
+        if let Err(e) = handle.conn.shutdown(Shutdown::Both) {
             error!("Failed to shut down unix connection: {:?}", e);
         }
     }

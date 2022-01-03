@@ -2,11 +2,10 @@ extern crate glob;
 
 pub mod request;
 pub mod worker;
-pub mod workerpool;
 pub mod message;
 pub mod gateway;
 pub mod configs;
-pub mod controller;
+pub mod resource_manager;
 pub mod vm;
 pub mod syscalls;
 pub mod metrics;

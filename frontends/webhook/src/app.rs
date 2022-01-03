@@ -28,7 +28,7 @@ impl App {
         }
     }
 
-    pub fn handle_github_event(&self, request: &http::Request<Bytes>, conn: &mut TcpStream) -> AppResult<Bytes> {
+    pub fn handle_github_event(&self, request: &http::Request<Bytes>, conn: &mut TcpStream) -> AppResult<()> {
         let event_type = request
             .headers()
             .get("x-github-event")
@@ -55,7 +55,7 @@ impl App {
                 )?;
 
                 debug!("GitHub pinged.");
-                Ok(Bytes::new())
+                Ok(())
             }
             b"push" => {
                 debug!("Push event.");
@@ -87,11 +87,12 @@ impl App {
                     payload: serde_json::from_slice(request.body()).unwrap(),
                 };
 
-                if let Err(e) = request::write_u8(serde_json::to_string(&req).unwrap().as_bytes(), conn) {
+                if let Err(e) = request::write_u8(&req.to_vec(), conn) {
                     error!("Failed to send request to snapfaas: {:?}", e);
                     return Err(StatusCode::INTERNAL_SERVER_ERROR);
                 }
 
+                debug!("Request from user_id {} sent", req.user_id);
                 match request::read_u8(conn) {
                     Err(e) => {
                         error!("Failed to read response from snapfaas: {:?}", e);
@@ -100,65 +101,18 @@ impl App {
                     Ok(buf) => {
                         let rsp: request::Response = serde_json::from_slice(&buf).unwrap();
                         debug!("Reponse for user_id: {:?}", rsp.user_id);
-                        Ok(Bytes::from(serde_json::to_vec(&rsp.payload).unwrap()))
+                        match rsp.status {
+                            request::RequestStatus::ResourceExhausted => Err(StatusCode::TOO_MANY_REQUESTS),
+                            request::RequestStatus::FunctionNotExist | request::RequestStatus::Dropped => Err(StatusCode::BAD_REQUEST),
+                            request::RequestStatus::LaunchFailed => Err(StatusCode::INTERNAL_SERVER_ERROR),
+                            request::RequestStatus::SentToVM => Ok(()),
+                        }
                     },
                 }
             },
             _ => Err(StatusCode::BAD_REQUEST),
         }
     }
-
-    //// download the tarball of a repository from GitHub
-    //fn get_github_tarball(&self, event_body: &PushEvent) -> Vec<u8> {
-    //    use url::Url;
-    //    let tarball_url = format!("https://api.github.com/repos/{}/tarball/{}",
-    //                              &event_body.repository.full_name, &event_body.after);
-    //    let tarball_url = Url::parse(&tarball_url).unwrap();
-    //    debug!("Archive URL: {:?}", tarball_url);
-    //    
-    //    use curl::easy::{Easy, List};
-    //    let mut easy = Easy::new();
-    //    easy.url(tarball_url.as_str()).unwrap();
-    //    easy.useragent("webhook-snapfaas").unwrap();
-    //    if let Some(token) = self.config.repos[&event_body.repository.full_name].token.as_ref() {
-    //        let mut headers = List::new();
-    //        headers.append(format!("Authorization: token {}", token).as_str()).unwrap();
-    //        easy.http_headers(headers).unwrap();
-    //    }
-    //    easy.follow_location(true).unwrap();
-
-    //    let mut buf = Vec::new();
-    //    {
-    //        let mut transfer = easy.transfer();
-    //        transfer.write_function(|data| {
-    //            buf.extend_from_slice(data);
-    //            Ok(data.len())
-    //        }).unwrap();
-    //        transfer.perform().unwrap();
-    //    }
-
-    //    {
-    //        use log::{log_enabled, Level};
-    //        if log_enabled!(Level::Debug) {
-    //            use flate2::read::GzDecoder;
-    //            use tar::Archive;
-    //            let tar = GzDecoder::new(&buf[..]);
-    //            let mut archive = Archive::new(tar);
-    //            if let Ok(entries) = archive.entries() {
-    //                for entry in entries {
-    //                    match entry {
-    //                        Ok(ent) => debug!("{:?}", ent.path()),
-    //                        Err(err) => debug!("Invalid Entry: {:?}", err),
-    //                    }
-    //                }
-    //            } else {
-    //                debug!("Bad gzip format: {:?}", archive.entries().err().unwrap());
-    //            }
-    //        }
-    //    }
-
-    //    buf
-    //}
 }
 
 type AppResult<T> = Result<T, StatusCode>;
@@ -166,8 +120,8 @@ type AppResult<T> = Result<T, StatusCode>;
 impl Handler for App {
     fn handle_request(&mut self, request: &http::Request<Bytes>, conn: &mut TcpStream) -> http::Response<Bytes> {
         match self.handle_github_event(request, conn) {
-            Ok(buf) => http::Response::builder()
-                .body(buf)
+            Ok(()) => http::Response::builder()
+                .body(Bytes::new())
                 .unwrap(),
             Err(status_code) => http::Response::builder()
                 .status(status_code)

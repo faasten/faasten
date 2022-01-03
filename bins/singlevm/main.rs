@@ -11,7 +11,7 @@ use snapfaas::configs::FunctionConfig;
 use std::io::{BufRead};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Instant;
-use log::debug;
+use log;
 
 use clap::{App, Arg};
 
@@ -211,8 +211,7 @@ fn main() {
         dump_ws: cmd_arguments.is_present("dump working set"),
         load_ws: cmd_arguments.is_present("load working set"),
     };
-    let id: &str = cmd_arguments.value_of("id").expect("id");
-    //println!("id: {}, function config: {:?}", id, vm_app_config);
+    let id = cmd_arguments.value_of("id").unwrap().parse::<usize>().unwrap();
 
     let odirect = snapfaas::vm::OdirectOption {
         base: cmd_arguments.is_present("odirect base"),
@@ -220,27 +219,21 @@ fn main() {
         rootfs: !cmd_arguments.is_present("no odirect rootfs"),
         appfs: !cmd_arguments.is_present("no odirect appfs")
     };
-    let vm_listener_path = format!("worker-{}.sock_1234", CID);
-    let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
-    let firerunner = cmd_arguments.value_of("firerunner").unwrap();
-    let (mut vm, ts_vec) = match Vm::new(id, "myapp", &vm_app_config, vm_listener, CID,
-        cmd_arguments.is_present("enable network"), firerunner, cmd_arguments.is_present("force exit"), Some(odirect))
-    {
-        Ok(vm) => vm,
-        Err(e) => {
-            eprintln!("Vm creation failed due to: {:?}", e);
-            unlink_unix_sockets();
-            std::process::exit(1);
-        }
-    };
+    let firerunner = cmd_arguments.value_of("firerunner").unwrap().to_string();
+    let allow_network = cmd_arguments.is_present("enable network");
+    let mut vm =  Vm::new(id, firerunner, "myapp".to_string(), vm_app_config, allow_network);
+    let vm_listener_path = format!("worker-{}.sock_1234", CID);
+    let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
+    let force_exit = cmd_arguments.is_present("force_exit");
+    if let Err(e) = vm.launch(None, vm_listener, CID, force_exit, Some(odirect)) {
+        log::error!("unable to launch the VM: {:?}", e);
+        snapfaas::unlink_unix_sockets();
+    }
     let t2 = Instant::now();
 
-    println!("FW: VM creation: {} us\nFW: Spawning VMM: {} us\nFW: Guest connected: {} us",
-             t2.duration_since(t1).as_micros(),
-             ts_vec[1].duration_since(ts_vec[0]).as_micros(),
-             ts_vec[2].duration_since(ts_vec[1]).as_micros());
+    println!("VM ready in: {} us", t2.duration_since(t1).as_micros());
 
     // create a vector of Request values from stdin
     let mut requests: Vec<request::Request> = Vec::new();
@@ -265,12 +258,12 @@ fn main() {
     let dump_working_set = true && cmd_arguments.is_present("dump working set");
     for req in requests {
         let t1 = Instant::now();
-        debug!("req: {:?}", req);
+        log::debug!("request: {:?}", req);
         match vm.process_req(req) {
-            Ok(_rsp) => {
+            Ok(rsp) => {
                 let t2 = Instant::now();
-                println!("FW: Request took: {} us", t2.duration_since(t1).as_micros());
-                debug!("Response: {:?}",_rsp);
+                println!("request returned in: {} us", t2.duration_since(t1).as_micros());
+                log::debug!("response: {:?}", rsp);
                 num_rsp+=1;
             }
             Err(e) => {

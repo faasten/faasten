@@ -1,20 +1,12 @@
-use std::io::{BufReader, ErrorKind};
-use std::fs::File;
-use std::io::BufRead;
+use std::io::ErrorKind;
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc;
-use std::sync::mpsc::{Sender, Receiver};
 use std::sync::{Mutex, Arc};
 use std::collections::{VecDeque};
-use std::thread;
 use std::thread::JoinHandle;
 
-use log::{error, warn, info};
+use log::{error, debug};
 
-use crate::message::Message;
 use crate::request;
-
-pub const DEFAULT_PORT:u32 = 28888;
 
 /// A gateway listens on a endpoint and accepts requests
 /// For example a FileGateway "listens" to a file and accepts
@@ -22,152 +14,43 @@ pub const DEFAULT_PORT:u32 = 28888;
 /// A HTTPGateway listens on a TCP port and accepts requests from
 /// HTTP POST commands.
 pub trait Gateway {
-    fn listen(source: &str) -> std::io::Result<Self>
+    fn listen(source: &str) -> Self
         where Self: std::marker::Sized;
 }
 
 #[derive(Debug)]
-pub struct FileGateway {
-    url: String,
-    reader: BufReader<File>,
-    rsp_sender: Sender<Message>,
-    rsp_serializer: JoinHandle<()>,
-}
-
-impl Gateway for FileGateway {
-
-    fn listen(source: &str) -> std::io::Result<Self>{
-        match File::open(source) {
-            Err(e) => Err(e),
-            Ok(file) => {
-                let reader = BufReader::new(file);
-
-                let (tx, rx) = mpsc::channel();
-                let handle = FileGateway::create_serializer_thread(rx);
-
-                Ok(FileGateway {
-                    url: source.to_string(),
-                    reader: reader,
-                    rsp_sender: tx,
-                    rsp_serializer: handle,
-                })
-            }
-        }
-    }
-
-}
-
-impl FileGateway {
-    fn create_serializer_thread(rx: Receiver<Message>) -> JoinHandle<()> {
-        return thread::spawn(move || {
-            loop {
-                match rx.recv() {
-                    Ok(msg) => {
-                        match msg {
-                            Message::Response(rsp) => warn!("{:?}", rsp),
-                            Message::NoAckShutdown => return,
-                            _ => error!("Reponse serializer received a non-response"),
-                        }
-                    },
-                    Err(_) => () //TODO: handle errors
-                }
-            }
-        });
-
-    }
-
-    pub fn shutdown(self) {
-        self.rsp_sender.send(Message::NoAckShutdown).expect("Couldn't send the shutdown message");
-        self.rsp_serializer.join().expect("Couldn't join on response serializer thread");
-    }
-
-}
-
-impl Iterator for FileGateway {
-    type Item = std::io::Result<(request::Request, Sender<Message>)>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut buf = String::new();
-        match self.reader.read_line(&mut buf) {
-            Ok(0) => None,
-            Ok(_n) => match request::parse_json(&buf) {
-                Ok(req) => {
-                    Some(Ok((req, self.rsp_sender.clone())))
-                }
-                Err(e) => Some(Err(std::io::Error::from(e)))
-            }
-            Err(e) => Some(Err(e))
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct FileRequestIter {
-    reader: BufReader<File>,
-    rsp_sender: Sender<Message>,
-}
-
-impl Iterator for FileRequestIter {
-    type Item = std::io::Result<(request::Request, Sender<Message>)>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut buf = String::new();
-
-        match self.reader.read_line(&mut buf) {
-            Ok(0) => None,
-            Ok(_n) => match request::parse_json(&buf) {
-                Ok(req) => {
-                    std::thread::sleep(std::time::Duration::from_millis(req.time));
-                    Some(Ok((req, self.rsp_sender.clone())))
-                }
-                Err(e) => Some(Err(std::io::Error::from(e)))
-            }
-            Err(e) => Some(Err(e))
-        }
-    }
-}
-
-
-#[derive(Debug)]
 pub struct HTTPGateway {
-    pub port: u32,
     listener: JoinHandle<()>,
-    pub streams: Arc<Mutex<VecDeque<Arc<Mutex<TcpStream>>>>>,
+    streams: Arc<Mutex<VecDeque<Arc<Mutex<TcpStream>>>>>,
 }
 
 impl HTTPGateway {
-
-    pub fn listen(port: &str) -> std::io::Result<Self> {
-        let p: u32 = port.parse::<u32>().unwrap_or(DEFAULT_PORT);
-        let addr = format!("localhost:{}", port);
-
-        let streams: Arc<Mutex<VecDeque<Arc<Mutex<TcpStream>>>>> = Arc::new(Mutex::new(VecDeque::new()));
-        let builder = thread::Builder::new();
-
+    pub fn listen(addr: &str) -> Self {
         // create listener thread
         // A listener thread listens on `addr` for incoming TCP connections.
+        let streams: Arc<Mutex<VecDeque<Arc<Mutex<TcpStream>>>>> = Arc::new(Mutex::new(VecDeque::new()));
         let sc = streams.clone();
-        let listener_handle = builder.spawn(move || {
-            let listener = TcpListener::bind(addr).expect("listner failed to bind");
+        let listener = TcpListener::bind(addr).expect("listner failed to bind");
+        debug!("Gateway started listening on: {:?}", addr);
+
+        let listener_handle = std::thread::spawn(move || {
             for stream in listener.incoming() {
                 if let Ok(stream) = stream {
+                    debug!("connection from {:?}", stream.peer_addr());
                     stream.set_nonblocking(true).expect("cannot set stream to non-blocking");
                     {
                         let mut streams = sc.lock().expect("can't lock stream list");
                         streams.push_back(Arc::new(Mutex::new(stream)));
-                        info!("number of streams: {:?}", streams.len());
                     }
                 }
 
             }
-        })?;
+        });
 
-        Ok(HTTPGateway{
-            port: p,
+        HTTPGateway{
             listener: listener_handle,
             streams: streams,
-        })
-
+        }
     }
 }
 
@@ -194,7 +77,7 @@ impl Iterator for HTTPGateway {
                     Ok(buf) => {
                         // If parse succeeds, return the Request value and a
                         // clone of the TcpStream value.
-                        match request::parse_u8(buf) {
+                        match request::parse_u8_request(buf) {
                             Err(e) => {
                                 error!("request parsing failed: {:?}", e);
                             }
@@ -211,7 +94,7 @@ impl Iterator for HTTPGateway {
                             // when client closed the connection, remove the
                             // stream from stream list
                             ErrorKind::UnexpectedEof => {
-                                info!("connection {:?} closed by client", s);
+                                debug!("connection {:?} closed by client", s);
                                 return None;
                             }
                             // no data in the stream atm.
@@ -220,7 +103,7 @@ impl Iterator for HTTPGateway {
                             _ => {
                                 // Some other error happened. Report and
                                 // just try the next stream in the list
-                                error!("Failed to read response: {:?}", e);
+                                error!("Other error: {:?}", e);
                             }
                         }
                     }
@@ -231,6 +114,5 @@ impl Iterator for HTTPGateway {
             }
         }
     }
-
 }
 

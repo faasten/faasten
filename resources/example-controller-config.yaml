@@ -1,6 +1,6 @@
 ---
 allow_network: false
-firerunner_path: "./target/release/firerunner"
+firerunner_path: "./target/debug/firerunner"
 kernel_path: "./resources/images/vmlinux-4.20.0"
 runtimefs_dir: "./"
 functions:

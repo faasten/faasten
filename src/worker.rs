@@ -2,49 +2,36 @@
 //! Each worker runs in its own thread and is modeled as the following state
 //! machine:
 use std::result::Result;
-use std::sync::mpsc::{Receiver};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::mpsc;
 use std::thread;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
-use std::sync::atomic::{Ordering};
 use std::os::unix::net::UnixListener;
 
-use log::{error, warn, info, trace};
+use log::{error, warn, debug};
 use time::precise_time_ns;
-use serde_json::json;
 
-use crate::controller::Controller;
-use crate::controller;
 use crate::message::Message;
-use crate::request::Request;
+use crate::request::{Request, RequestStatus, Response};
 use crate::vm;
 use crate::vm::Vm;
 use crate::metrics::Metrics;
-use crate::request;
-
-const EVICTION_TIMEOUT: Duration = Duration::from_secs(2);
+use crate::resource_manager;
 
 #[derive(Debug)]
 pub struct Worker {
-    pub thread: JoinHandle<()>,
-}
-
-#[derive(Debug)]
-pub enum State {
-    WaitForMsg,
-    Shutdown,
-    Response,
-    ReqFail,
+    pub thread: Option<JoinHandle<()>>,
 }
 
 impl Worker {
     pub fn new(
         receiver: Arc<Mutex<Receiver<Message>>>,
-        ctr: Arc<Controller>,
+        vm_req_sender: Sender<Message>,
+        func_req_sender: Sender<Message>,
         cid: u32,
-    ) -> Worker {
+    ) -> Self {
         let handle = thread::spawn(move || {
             let id = thread::current().id();
             let mut stat: Metrics = Metrics::new();
@@ -59,30 +46,11 @@ impl Worker {
                     Ok(listener) => listener,
                     Err(e) => panic!("Failed to clone unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
                 };
-                let msg: Message = receiver.lock().unwrap().recv().unwrap();
-                trace!("[Worker {:?}] task received: {:?}", id, msg);
 
+                let msg: Message = receiver.lock().unwrap().recv().unwrap();
                 match msg {
-                    //Message::HTTPRequest(req, rsp_sender) => {
-                    //    let function_name = req.function.clone();
-                    //    match acquire_vm(&function_name, &ctr, &mut stat, &vm_listener_dup, cid)
-                    //        .and_then(|vm| process_req(req, vm, &mut stat)) {
-                    //        Ok(rsp) => {
-                    //            trace!("[Worker {:?}] finished processing {}", id, function_name);
-                    //            if let Err(e) = rsp_sender.send(Ok(rsp)) {
-                    //                error!("[Worker {:?}] response failed to send: {:?}", id, e);
-                    //            }
-                    //        }
-                    //        Err(e) => {
-                    //            handle_controller_error(e, &mut stat, &function_name);
-                    //            if let Err(e) = rsp_sender.send(Err(http::StatusCode::INTERNAL_SERVER_ERROR)) {
-                    //                error!("[Worker {:?}] response failed to send: {:?}", id, e);
-                    //            }
-                    //        }
-                    //    }
-                    //}
                     // To shutdown, dump collected statistics and then terminate
-                    Message::Shutdown(ack_sender) => {
+                    Message::Shutdown => {
                         warn!("[Worker {:?}] shutdown received", id);
                         if let Err(e) = std::fs::create_dir_all("./out") {
                             error!("Cannot create stats folder ./out: {:?}", e);
@@ -97,53 +65,52 @@ impl Worker {
                                 },
                             }
                         }
-                        ack_sender.send(Message::ShutdownAck).expect("Failed to ack shutdown");
                         return;
                     }
                     Message::Request(req, rsp_sender) => {
+                        debug!("processing request to function {}", &req.function);
                         let function_name = req.function.clone();
-                        match acquire_vm(&function_name, &ctr, &mut stat, vm_listener_dup, cid)
-                                  .and_then(|vm| process_req(req, vm, &mut stat)) {
-
-                            Ok(rsp) => {
-                                trace!("[Worker {:?}] finished processing {}", id, function_name);
-                                if let Err(e) = rsp_sender.send(Message::Response(rsp)) {
-                                    error!("[Worker {:?}] response failed to send: {:?}", id, e);
-                                }
-                            }
-                            Err(e) => handle_controller_error(e, &mut stat, &function_name),
-                        }
-                    }
-                    Message::RequestTcp(req, rsp_sender) => {
-                        let function_name = req.function.clone();
-                        let user_id = req.user_id;
-                        match acquire_vm(&function_name, &ctr, &mut stat, vm_listener_dup, cid)
-                                  .and_then(|vm| process_req(req, vm, &mut stat)) {
-
-                            Ok(rsp) => {
-                                trace!("[Worker {:?}] finished processing {}", id, function_name);
-                                {
-                                    let mut s = rsp_sender.lock().expect("rsp_sender lock poisoned");
-                                    if let Err(e) = request::write_u8(rsp.as_bytes(), &mut s) {
-                                        error!("[Worker: {:?}] response failed to send: {:?}", id, e);
+                        let (tx, rx) = mpsc::channel();
+                        vm_req_sender.send(Message::GetVm(function_name, tx)).expect("Failed to send GetVm request");
+                        match rx.recv().expect("Failed to receive GetVm response") {
+                            Ok(mut vm) => {
+                                if !vm.is_launched() {
+                                    // newly allocated VM is returned, launch it first
+                                    if let Err(e) = vm.launch(Some(func_req_sender.clone()), vm_listener_dup, cid, false, None) {
+                                        handle_vm_error(e, &mut stat);                                    
+                                        rsp_sender.send(Response {
+                                            user_id: req.user_id,
+                                            status: RequestStatus::LaunchFailed,
+                                        }).expect("Failed to write response"); 
+                                        // a VM launched or not occupies system resources, we need
+                                        // to put back the resources assigned to this VM.
+                                        vm_req_sender.send(Message::DeleteVm(vm)).expect("Failed to send DeleteVm request");
+                                        continue;
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                use log::debug;
-                                debug!("RequestTcp failed.");
-                                let err_msg = json!({
-                                    "user_id": user_id,
-                                    "payload": {
-                                        "error": format!("{:?}", e),
-                                    },
-                                });
-                                handle_controller_error(e, &mut stat, &function_name);
-                                // Return a error message
-                                let mut s = rsp_sender.lock().expect("lock poisoned");
-                                if let Err(e) = request::write_u8(err_msg.to_string().as_bytes(), &mut s) {
-                                    error!("[thread: {:?}] response failed to send: {:?}", id, e);
+
+                                debug!("VM is launched");
+                                rsp_sender.send(Response {
+                                    user_id: req.user_id,
+                                    status: RequestStatus::SentToVM,
+                                }).expect("Failed to write response");
+
+                                match process_req(req, &mut vm, &mut stat) {
+                                    Ok(rsp) => {
+                                        // TODO: output are currently ignored
+                                        debug!("{:?}", rsp);
+                                    }
+                                    Err(e) => handle_vm_error(e, &mut stat),
                                 }
+
+                                vm_req_sender.send(Message::ReleaseVm(vm)).expect("Failed to send ReleaseVm request");
+                            },
+                            Err(e) => {
+                                let status = handle_resource_manager_error(e, &mut stat, &req.function);
+                                rsp_sender.send(Response {
+                                    user_id: req.user_id,
+                                    status,
+                                }).expect("Failed to write response");
                             }
                         }
                     }
@@ -154,144 +121,64 @@ impl Worker {
             }
         });
 
-        Worker { thread: handle }
+        Worker { thread: Some(handle) }
+    }
+
+    pub fn take(&mut self) -> Option<JoinHandle<()>> {
+        self.thread.take()
     }
 }
 
-// Send a request to a Vm, wait for Vm's response and return the result.
-// A worker will first try to acquire an idle Vm to handle the request.
-// If there are no idle Vms for the particular request, it will try to
-// allocate a new Vm. If there's not enough resources on the machine to
-// allocate a new Vm, it will try to evict an idle Vm from another
-// function's idle list, and then allocate a new Vm.
-// After processing the request, the worker will push its Vm into the idle
-// list of its function.
-fn acquire_vm(
-    function_name: &str,
-    ctr: &Arc<Controller>,
-    stat: &mut Metrics,
-    vm_listener: UnixListener,
-    cid: u32,
-)-> Result<Vm, controller::Error> {
-    let thread_id = thread::current().id();
-    let func_config = ctr.get_function_config(function_name).ok_or(controller::Error::FunctionNotExist)?;
-
-    // try to fail quickly here when there's resource exhaustion, i.e., when there's no idle vm
-    // for this request, not enough memory to create a new VM, and not enough idle resources to
-    // evict to create a new VM, we want this sequence of functions to return quickly and the
-    // worker to return "Resource exhaustion" quickly.
-    let vm = ctr
-        .get_idle_vm(function_name)
-        .or_else(|e| {
-            match e {
-               // No Idle vm for this function. Try to allocatea new vm.
-                controller::Error::NoIdleVm => {
-                    let t1 = precise_time_ns();
-                    let ret = ctr.allocate(function_name, vm_listener, cid);
-                    let t2 = precise_time_ns();
-
-                    if let Ok(vm) = ret.as_ref() {
-                        let id = vm.id;
-                        let mem_size = vm.memory;
-                        stat.vm_mem_size.insert(id, mem_size);
-                        stat.boot_tsp.insert(id, vec![t1, t2]);
-                        info!("[Worker {:?}] Allocated new VM. ID: {:?}, App: {:?}", thread_id, id, function_name);
-                    }
-                    return ret;
-                },
-                // Not enough free memory to allocate. Try eviction
-                controller::Error::LowMemory(_) => {
-                    let mut freed: usize = 0;
-                    let start = Instant::now();
-
-                    while freed < func_config.memory && start.elapsed() < EVICTION_TIMEOUT {
-                        if let Ok(vm) = ctr.find_evict_candidate(&function_name) {
-                            info!("evicting vm: {:?}", vm);
-                            let t1 = precise_time_ns();
-                            let t2 = precise_time_ns();
-
-                            ctr.free_mem.fetch_add(vm.memory, Ordering::Relaxed);
-                            freed = freed + vm.memory;
-
-                            stat.evict_tsp.insert(vm.id, vec![t1, t2]);
-                            stat.num_evict = stat.num_evict + 1;
-                            drop(vm)
-                        }
-                    }
-
-                    // If we've freed up enough memory, try allocating again
-                    // It's possible that even though we've freed up enough resources,
-                    // we still can't allocate a VM because there are other workers
-                    // running in parallel who might have grabbed the resources we
-                    // freed and used it for their requests.
-                    if freed >= func_config.memory {
-                        let t1 = precise_time_ns();
-                        let ret = ctr.allocate(function_name, vm_listener, cid);
-                        let t2 = precise_time_ns();
-                        if let Ok(vm) = ret.as_ref() {
-                            let id = vm.id;
-                            let mem_size = vm.memory;
-                            stat.vm_mem_size.insert(id, mem_size);
-                            stat.boot_tsp.insert(id, vec![t1, t2]);
-                        }
-                        return ret;
-                    } else {
-                        return Err(controller::Error::InsufficientEvict);
-                    }
-                }
-                // Just return all other errors
-                _ => return Err(e)
-            }
-        });
-
-    return vm;
-}
-
-fn process_req(req: Request, mut vm: Vm, stat: &mut Metrics) -> Result<String, controller::Error> {
+fn process_req(req: Request, vm: &mut Vm, stat: &mut Metrics) -> Result<String, vm::Error> {
     let t1 = precise_time_ns();
-    let user_id = req.user_id;
-    let rsp = vm.process_req(req).map_err(|e| controller::Error::VmReqProcess(e));
+    let rsp = vm.process_req(req);
     let t2 = precise_time_ns();
 
     if let Ok(_) = rsp {
         stat.num_complete = stat.num_complete + 1;
-        stat.req_rsp_tsp.entry(vm.id).or_insert(vec![]).append(&mut vec![t1,t2]);
+        stat.req_rsp_tsp.entry(vm.id()).or_insert(vec![]).append(&mut vec![t1,t2]);
     }
-    Ok(serde_json::to_string(&request::Response {
-        user_id,
-        payload: serde_json::from_str(&rsp?).unwrap()
-    }).unwrap())
+    rsp
 }
 
-fn handle_controller_error(e: controller::Error, stat: &mut Metrics, function_name: &str) {
+fn handle_resource_manager_error(e: resource_manager::Error, stat: &mut Metrics, function_name: &str) -> RequestStatus {
     let id = thread::current().id();
     match e {
-        controller::Error::InsufficientEvict |
-        controller::Error::LowMemory(_) => {
+        resource_manager::Error::InsufficientEvict |
+        resource_manager::Error::LowMemory(_) => {
             warn!("[Worker {:?}] Resource exhaustion", id);
             stat.num_drop+=1;
+            RequestStatus::ResourceExhausted
         }
-        controller::Error::FunctionNotExist=> {
+        resource_manager::Error::FunctionNotExist=> {
             warn!("[Worker {:?}] Requested function doesn't exist: {:?}", id, function_name);
+            RequestStatus::FunctionNotExist
         }
-        controller::Error::StartVm(vme) => {
+        _ => {
+            error!("[Worker {:?}] Unexpected resource_manager error: {:?}", id, e);
+            RequestStatus::Dropped
+        }
+    }
+}
+
+fn handle_vm_error(vme: vm::Error, stat: &mut Metrics) {
+    let id = thread::current().id();
+    match vme {
+        vm::Error::ProcessSpawn(_) | vm::Error::VsockListen(_) => {
             error!("[Worker {:?}] Failed to start vm due to: {:?}", id, vme);
             stat.num_vm_startfail+=1;
         }
-        controller::Error::VmReqProcess(vme) => {
+        _ => {
             error!("[Worker {:?}] Vm failed to process request due to: {:?}", id, vme);
             match vme {
-                vm::Error::VmRead(_) => {
+                vm::Error::VsockRead(_) => {
                     stat.num_rsp_readfail+=1;
                 }
-                vm::Error::VmWrite(_) => {
+                vm::Error::VsockWrite(_) => {
                     stat.num_req_writefail+=1;
                 }
                 _ => ()
             }
-        }
-        _ => {
-            error!("[Worker {:?}] Unexpected controller error: {:?}", id, e);
         }
     }
 }

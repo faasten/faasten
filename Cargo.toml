@@ -9,8 +9,12 @@ name = "firerunner"
 path = "bins/firerunner/main.rs"
 
 [[bin]]
-name = "fc_wrapper"
-path = "bins/fc_wrapper/main.rs"
+name = "singlevm"
+path = "bins/singlevm/main.rs"
+
+[[bin]]
+name = "multivm"
+path = "bins/multivm/main.rs"
 
 [lib]
 

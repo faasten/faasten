@@ -1,4 +1,4 @@
-//! Controller and function configuration
+//! ResourceManager and function configuration
 //! In-memory data structures that represent controller configuration and
 //! function configurations
 use serde::Deserialize;
@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use crate::convert_fs_path_to_url;
 
 #[derive(Deserialize, Debug, Default)]
-pub struct ControllerConfig {
+pub struct ResourceManagerConfig {
     pub allow_network: bool,
     pub firerunner_path: String,
     pub kernel_path: String,
@@ -25,25 +25,25 @@ pub struct ControllerConfig {
     pub functions: BTreeMap<String, FunctionConfig>,
 }
 
-impl ControllerConfig {
-    /// Create in-memory ControllerConfig struct from a YAML file
-    /// TODO: Currently only supports file://localhost urls
-    pub fn new(path: &str) -> ControllerConfig {
+impl ResourceManagerConfig {
+    /// Create in-memory ResourceManagerConfig struct from a YAML file
+    pub fn new(path: &str) -> Self {
+        // TODO: Currently only supports file://localhost urls
         let config_url = convert_fs_path_to_url(path).expect("Invalid configuration file path");
         info!("Using controller config: {}", config_url);
 
-        return ControllerConfig::initialize(&config_url);
+        ResourceManagerConfig::initialize(&config_url)
     }
 
-    fn initialize(config_url: &str) -> ControllerConfig {
+    fn initialize(config_url: &str) -> Self {
         if let Ok(config_url) = Url::parse(config_url) {
-            // populate a ControllerConfig struct from the yaml file
+            // populate a ResourceManagerConfig struct from the yaml file
             if let Ok(f) = File::open(config_url.path()) {
-                let config: serde_yaml::Result<ControllerConfig> = serde_yaml::from_reader(f);
+                let config: serde_yaml::Result<ResourceManagerConfig> = serde_yaml::from_reader(f);
                 if let Ok(mut config) = config {
-                    ControllerConfig::convert_to_url(&mut config);
-                    ControllerConfig::build_full_path_fs_images(&mut config);
-                    debug!("Controller config: {:?}", config);
+                    ResourceManagerConfig::convert_to_url(&mut config);
+                    ResourceManagerConfig::build_full_path_fs_images(&mut config);
+                    debug!("ResourceManager config: {:?}", config);
                     config
                 } else {
                     panic!("Invalid YAML file");
@@ -57,7 +57,7 @@ impl ControllerConfig {
         }
     }
 
-    fn convert_to_url(config: &mut ControllerConfig) {
+    fn convert_to_url(config: &mut ResourceManagerConfig) {
         config.kernel_path = convert_fs_path_to_url(&config.kernel_path)
             .expect("Invalid kernel path");
         config.runtimefs_dir = convert_fs_path_to_url(&config.runtimefs_dir)
@@ -68,7 +68,7 @@ impl ControllerConfig {
             .expect("Invalid snapshot directory"));
     }
 
-    fn build_full_path_fs_images(config: &mut ControllerConfig) {
+    fn build_full_path_fs_images(config: &mut ResourceManagerConfig) {
         let runtimefs_base = config.get_runtimefs_base();
         let maybe_appfs_base = config.get_appfs_base();
         let maybe_snapshot_base = config.get_snapshot_base();

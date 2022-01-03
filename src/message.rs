@@ -1,16 +1,14 @@
 use std::sync::mpsc::Sender;
-use std::sync::{Mutex, Arc};
-use std::net::TcpStream;
 
-use crate::request::Request;
+use crate::request::{Request, Response};
+use crate::vm::Vm;
+use crate::resource_manager;
 
 #[derive(Debug)]
 pub enum Message {
-    //HTTPRequest(Request, Sender<Result<String, StatusCode>>),
-    Shutdown(Sender<Message>),
-    ShutdownAck,
-    NoAckShutdown,
-    Request(Request, Sender<Message>),
-    RequestTcp(Request, Arc<Mutex<TcpStream>>),
-    Response(String),
+    Shutdown,
+    Request(Request, Sender<Response>),
+    GetVm(String, Sender<Result<Vm, resource_manager::Error>>),
+    ReleaseVm(Vm),
+    DeleteVm(Vm),
 }
