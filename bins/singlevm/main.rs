@@ -19,6 +19,8 @@ const CID: u32 = 100;
 
 fn main() {
     env_logger::init();
+    let mut default_firerunner = std::env::current_dir().unwrap();
+    default_firerunner.set_file_name("firerunner");
     let cmd_arguments = App::new("fireruner wrapper")
         .version(crate_version!())
         .author(crate_authors!())
@@ -83,17 +85,15 @@ fn main() {
         .arg(
             Arg::with_name("mem_size")
                  .long("mem_size")
-                 .value_name("MEMSIZE")
-                 .takes_value(true)
-                 .required(true)
+                 .value_name("MB")
+                 .default_value("128")
                  .help("Guest memory size in MB (default is 128)")
         )
         .arg(
             Arg::with_name("vcpu_count")
                  .long("vcpu_count")
                  .value_name("VCPUCOUNT")
-                 .takes_value(true)
-                 .required(true)
+                 .default_value("1")
                  .help("Number of vcpus (default is 1)")
         )
         .arg(
@@ -121,10 +121,8 @@ fn main() {
         .arg(
             Arg::with_name("firerunner")
                 .long("firerunner")
-                .value_name("FIRERUNNER PATH")
-                .takes_value(true)
-                .required(true)
-                .default_value("target/release/firerunner")
+                .value_name("PATH_TO_FIRERUNNER")
+                .default_value(default_firerunner.to_str().unwrap())
                 .help("path to the firerunner binary")
         )
         .arg(
