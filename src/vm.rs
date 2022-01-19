@@ -327,6 +327,7 @@ impl Vm {
         use syscalls::Syscall;
 
         let dbenv = lmdb::Environment::new()
+            .set_map_size(4096 * 1024 * 1024)
             .open(std::path::Path::new("storage"))
             .unwrap();
         let default_db = dbenv.open_db(None).unwrap();
