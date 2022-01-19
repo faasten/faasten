@@ -55,7 +55,7 @@ pub fn parse_u8_request(buf: Vec<u8>) -> Result<Request, serde_json::Error> {
 /// Write a [u8] array to channel.
 /// Channel is anything that implements the std::io::Read trait. In practice,
 /// this includes TcpStream and stdin pipe for Firerunner processes.
-/// `write_u8` will first write 4 bytes ([u8;4]) into the channel. These 4 bytes
+/// `write_u8` will first write 4 bytes ([u8; 4]) into the channel. These 4 bytes
 /// encodes the size of the buf in big endian. It then writes the buf into the
 /// channel. 
 /// On success, `write_u8` returns Ok(()).
