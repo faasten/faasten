@@ -131,7 +131,7 @@ impl Worker {
 
 fn process_req(req: Request, vm: &mut Vm, stat: &mut Metrics) -> Result<String, vm::Error> {
     let t1 = precise_time_ns();
-    let rsp = vm.process_req(req);
+    let rsp = vm.process_req(req.payload);
     let t2 = precise_time_ns();
 
     if let Ok(_) = rsp {

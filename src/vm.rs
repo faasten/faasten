@@ -11,6 +11,7 @@ use std::io::Write;
 
 use log::{debug, error};
 use tokio::process::{Child, Command};
+use serde_json::Value;
 
 use crate::configs::FunctionConfig;
 use crate::message::Message;
@@ -247,11 +248,11 @@ impl Vm {
     }
 
     /// Send request to vm and wait for its response
-    pub fn process_req(&mut self, req: Request) -> Result<String, Error> {
+    pub fn process_req(&mut self, req: Value) -> Result<String, Error> {
         use prost::Message;
 
         let sys_req = syscalls::Request {
-            payload: req.payload_as_string(),
+            payload: req.to_string(),
         }
         .encode_to_vec();
 
