@@ -16,6 +16,10 @@ path = "bins/singlevm/main.rs"
 name = "multivm"
 path = "bins/multivm/main.rs"
 
+[[bin]]
+name = "sfdb"
+path = "bins/sfdb/main.rs"
+
 [lib]
 
 [dependencies]
@@ -23,6 +27,7 @@ ctrlc = "^3.2.0"
 reqwest = { version = "0.11", features = ["blocking"] }
 labeled = { git = "git://github.com/alevy/labeled" }
 bytes = "1.1.0"
+byteorder = "1.2.1"
 prost = "0.9.0"
 lmdb-rkv = "0.14.0"
 url = "2.2"
