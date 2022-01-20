@@ -309,7 +309,6 @@ impl Vm {
         let (tx, rx) = mpsc::channel();
         self.handle.as_ref().unwrap().invoke_handle.as_ref().unwrap().send(Message::Request(
             Request {
-                time: 0,
                 user_id: 0,
                 function: invoke.function,
                 payload: serde_json::Value::String(invoke.payload),

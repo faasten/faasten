@@ -25,7 +25,6 @@ impl Response {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
-    pub time: u64,
     pub user_id: u64,
     pub function: String,
     pub payload: Value,
