@@ -12,15 +12,17 @@ use std::io::{BufRead};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Instant;
 use log;
+use serde_json;
 
 use clap::{App, Arg};
 
 const CID: u32 = 100;
+// If firerunner path is not set by the user, the program will assume firerunner is on the
+// environment variable PATH.
+const DEFAULT_FIRERUNNER: &str = "firerunner";
 
 fn main() {
     env_logger::init();
-    let mut default_firerunner = std::env::current_dir().unwrap();
-    default_firerunner.set_file_name("firerunner");
     let cmd_arguments = App::new("fireruner wrapper")
         .version(crate_version!())
         .author(crate_authors!())
@@ -122,7 +124,7 @@ fn main() {
             Arg::with_name("firerunner")
                 .long("firerunner")
                 .value_name("PATH_TO_FIRERUNNER")
-                .default_value(default_firerunner.to_str().unwrap())
+                .default_value(DEFAULT_FIRERUNNER)
                 .help("path to the firerunner binary")
         )
         .arg(
@@ -210,17 +212,17 @@ fn main() {
         load_ws: cmd_arguments.is_present("load working set"),
     };
     let id = cmd_arguments.value_of("id").unwrap().parse::<usize>().unwrap();
-
     let odirect = snapfaas::vm::OdirectOption {
         base: cmd_arguments.is_present("odirect base"),
         diff: !cmd_arguments.is_present("no odirect diff"),
         rootfs: !cmd_arguments.is_present("no odirect rootfs"),
         appfs: !cmd_arguments.is_present("no odirect appfs")
     };
-    // Launch a vm based on the FunctionConfig value
-    let t1 = Instant::now();
     let firerunner = cmd_arguments.value_of("firerunner").unwrap().to_string();
     let allow_network = cmd_arguments.is_present("enable network");
+
+    // Launch a vm based on the FunctionConfig value
+    let t1 = Instant::now();
     let mut vm =  Vm::new(id, firerunner, "myapp".to_string(), vm_app_config, allow_network);
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
@@ -237,9 +239,13 @@ fn main() {
     let mut requests: Vec<request::Request> = Vec::new();
     let stdin = std::io::stdin();
     for line in std::io::BufReader::new(stdin).lines().map(|l| l.unwrap()) {
-        match request::parse_json(&line) {
+        match serde_json::from_str(&line) {
             Ok(j) => {
-                requests.push(j);
+                requests.push(request::Request{
+                    user_id: 0,
+                    function: "myapp".to_string(),
+                    payload: j,
+                });
             }
             Err(e) => {
                 eprintln!("invalid requests: {:?}", e);
