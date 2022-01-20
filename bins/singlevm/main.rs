@@ -5,7 +5,6 @@ extern crate clap;
 /// the request to VM, waits for VM's response and finally prints the response
 /// to stdout, kills the VM and exits.
 use snapfaas::vm::Vm;
-use snapfaas::request;
 use snapfaas::unlink_unix_sockets;
 use snapfaas::configs::FunctionConfig;
 use std::io::{BufRead};
@@ -236,7 +235,7 @@ fn main() {
     println!("VM ready in: {} us", t2.duration_since(t1).as_micros());
 
     // create a vector of Request values from stdin
-    let mut requests: Vec<request::Request> = Vec::new();
+    let mut requests: Vec<serde_json::Value> = Vec::new();
     let stdin = std::io::stdin();
     for line in std::io::BufReader::new(stdin).lines().map(|l| l.unwrap()) {
         match serde_json::from_str(&line) {

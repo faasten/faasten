@@ -16,6 +16,10 @@ path = "bins/singlevm/main.rs"
 name = "multivm"
 path = "bins/multivm/main.rs"
 
+[[bin]]
+name = "sfdb"
+path = "bins/sfdb/main.rs"
+
 [lib]
 
 [dependencies]
@@ -23,6 +27,7 @@ ctrlc = "^3.2.0"
 reqwest = { version = "0.11", features = ["blocking"] }
 labeled = { git = "git://github.com/alevy/labeled" }
 bytes = "1.1.0"
+byteorder = "1.2.1"
 prost = "0.9.0"
 lmdb-rkv = "0.14.0"
 url = "2.2"
@@ -32,12 +37,12 @@ env_logger = "^0.9.0"
 serde = {version = "1.0.102", features = ["derive"]}
 serde_yaml = "0.8.11"
 serde_json = "*"
-vmm = { path = "firecracker/vmm", features = ["vsock"]}
 cgroups = "0.1.0"
-memory_model = { path = "firecracker/memory_model" }
-fc_util = { path = "firecracker/fc_util" }
-sys_util = { path = "firecracker/sys_util" }
-net_util = { path = "firecracker/net_util" }
+vmm = { git = "git://github.com/princeton-sns/firecracker", rev = "f2559c1dac7c4b51b5e8b98ce00ac5bcc5d1865d", features = ["vsock"] }
+memory_model = { git = "git://github.com/princeton-sns/firecracker", rev = "f2559c1dac7c4b51b5e8b98ce00ac5bcc5d1865d" }
+fc_util = { git = "git://github.com/princeton-sns/firecracker", rev = "f2559c1dac7c4b51b5e8b98ce00ac5bcc5d1865d" }
+sys_util = { git = "git://github.com/princeton-sns/firecracker", rev = "f2559c1dac7c4b51b5e8b98ce00ac5bcc5d1865d" }
+net_util = { git = "git://github.com/princeton-sns/firecracker", rev = "f2559c1dac7c4b51b5e8b98ce00ac5bcc5d1865d" }
 time = "0.1"
 signal-hook = "0.1.13"
 crossbeam-channel = "0.4.2"

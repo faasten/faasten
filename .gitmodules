@@ -1,6 +1,0 @@
-[submodule "firecracker"]
-        path = firecracker
-        url = git@github.com:princeton-sns/firecracker.git
-[submodule "snapfaas-images"]
-	path = snapfaas-images
-	url = git@github.com:princeton-sns/snapfaas-images.git
