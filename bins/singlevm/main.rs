@@ -240,11 +240,7 @@ fn main() {
     for line in std::io::BufReader::new(stdin).lines().map(|l| l.unwrap()) {
         match serde_json::from_str(&line) {
             Ok(j) => {
-                requests.push(request::Request{
-                    user_id: 0,
-                    function: "myapp".to_string(),
-                    payload: j,
-                });
+                requests.push(j);
             }
             Err(e) => {
                 eprintln!("invalid requests: {:?}", e);
