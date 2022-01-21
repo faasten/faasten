@@ -10,13 +10,12 @@
 //!   3. function store and their files' locations
 
 use clap::{App, Arg};
-use log::{error, warn};
+use log::{warn};
 use snapfaas::configs;
 use snapfaas::resource_manager::ResourceManager;
 use snapfaas::gateway;
 use snapfaas::message::Message;
 use snapfaas::worker::Worker;
-use snapfaas::request;
 
 use std::sync::{mpsc, Arc, Mutex};
 use std::sync::mpsc::Sender;
@@ -78,34 +77,13 @@ fn main() {
 
     // TCP gateway
     if let Some(l) = matches.value_of("listen address") {
-        let mut gateway = gateway::HTTPGateway::listen(l);
+        let gateway = gateway::HTTPGateway::listen(l);
 
-        loop {
-            // read a request from TcpStreams and process it
-            let task = gateway.next();
-            match task {
-                None=> (),
-                Some(task) => {
-                    // ignore invalid requests
-                    if task.is_err() {
-                        error!("Invalid task: {:?}", task);
-                        continue;
-                    }
-
-                    let (req, tcp_stream) = task.unwrap();
-
-                    // Return when a VM acquisition succeeds or fails
-                    // but before a VM launches (if it is newly allocated)
-                    // and execute the request.
-                    let (tx, rx) = mpsc::channel();
-                    request_sender.send(Message::Request(req, tx)).expect("Failed to send request");
-                    let result = rx.recv().expect("Failed to receive request response");
-                    let mut stream = tcp_stream.lock().expect("TCP stream lock poisoned");
-                    if let Err(e) = request::write_u8(&result.to_vec(), &mut stream) {
-                        error!("Failed to respond to TCP client at {:?}: {:?}", stream.peer_addr(), e);
-                    };
-                }
-            }
+        for (request, response_tx) in gateway {
+            // Return when a VM acquisition succeeds or fails
+            // but before a VM launches (if it is newly allocated)
+            // and execute the request.
+            request_sender.send(Message::Request(request, response_tx)).expect("Failed to send request");
         }
     }
 }
@@ -132,8 +110,8 @@ fn set_ctrlc_handler(request_sender: Sender<Message>, mut pool: Vec<Worker>, man
         for _ in 0..pool_size {
             request_sender.send(Message::Shutdown).expect("failed to shut down workers");
         }
-        for _ in 0..pool_size {
-            pool.pop().unwrap().take().map(JoinHandle::join).unwrap().expect("failed to join worker thread");
+        while let Some(worker) = pool.pop() {
+            worker.join().expect("failed to join worker thread");
         }
         snapfaas::unlink_unix_sockets();
         manager_sender.send(Message::Shutdown).expect("failed to shut down resource manager");
