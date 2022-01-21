@@ -22,7 +22,7 @@ use crate::resource_manager;
 
 #[derive(Debug)]
 pub struct Worker {
-    pub thread: Option<JoinHandle<()>>,
+    pub thread: JoinHandle<()>,
 }
 
 impl Worker {
@@ -121,11 +121,11 @@ impl Worker {
             }
         });
 
-        Worker { thread: Some(handle) }
+        Worker { thread: handle }
     }
 
-    pub fn take(&mut self) -> Option<JoinHandle<()>> {
-        self.thread.take()
+    pub fn join(self) -> std::thread::Result<()> {
+        self.thread.join()
     }
 }
 
