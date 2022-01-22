@@ -1285,6 +1285,7 @@ dependencies = [
  "futures",
  "glob",
  "labeled",
+ "lazy_static",
  "lmdb-rkv",
  "log",
  "memory_model",

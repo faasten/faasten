@@ -16,7 +16,7 @@ use serde_json::Value;
 use crate::configs::FunctionConfig;
 use crate::message::Message;
 use crate::syscalls;
-use crate::request::{Request, RequestStatus, Response};
+use crate::request::Request;
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
@@ -26,6 +26,13 @@ const USER_AGENT: &str = "snapfaas";
 
 use labeled::dclabel::{Clause, Component, DCLabel};
 use labeled::Label;
+
+lazy_static::lazy_static! {
+    static ref DBENV: lmdb::Environment = lmdb::Environment::new()
+        .set_map_size(4096 * 1024 * 1024)
+        .open(std::path::Path::new("storage"))
+        .unwrap();
+}
 
 #[derive(Debug)]
 pub enum Error {
@@ -258,7 +265,7 @@ impl Vm {
 
         self.send_into_vm(sys_req)?;
 
-        self.process_syscall()
+        self.process_syscalls()
     }
 
     /// Send a HTTP GET request no matter if an authentication token is present
@@ -306,31 +313,32 @@ impl Vm {
         }
     }
 
-    fn send_req(&self, invoke: syscalls::Invoke) -> Response {
-        let (tx, rx) = mpsc::channel();
-        self.handle.as_ref().unwrap().invoke_handle.as_ref().unwrap().send(Message::Request(
-            Request {
-                user_id: 0,
-                function: invoke.function,
-                payload: serde_json::Value::String(invoke.payload),
-            },
-            tx, 
-        )).expect("Failed to send request");
-        rx.recv().expect("Failed to receive request response")
+    fn send_req(&self, invoke: syscalls::Invoke) -> bool {
+        if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
+            let (tx, _) = mpsc::channel();
+            invoke_handle.send(Message::Request(
+                Request {
+                    user_id: 0,
+                    function: invoke.function,
+                    payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
+                },
+                tx,
+            )).is_ok()
+        } else {
+            debug!("No invoke handle, ignoring invoke syscall. {:?}", invoke);
+            false
+        }
     }
 
-    pub fn process_syscall(&mut self) -> Result<String, Error> {
+    fn process_syscalls(&mut self) -> Result<String, Error> {
         use lmdb::{Transaction, WriteFlags};
         use prost::Message;
         use std::io::Read;
         use syscalls::syscall::Syscall as SC;
         use syscalls::Syscall;
 
-        let dbenv = lmdb::Environment::new()
-            .set_map_size(4096 * 1024 * 1024)
-            .open(std::path::Path::new("storage"))
-            .unwrap();
-        let default_db = dbenv.open_db(None).unwrap();
+        
+        let default_db = DBENV.open_db(None).unwrap();
 
         loop {
             let buf = {
@@ -347,17 +355,11 @@ impl Vm {
                     return Ok(r.payload);
                 }
                 Some(SC::Invoke(invoke)) => {
-                    if self.handle.as_ref().unwrap().invoke_handle.is_none() {
-                        debug!("No invoke handle, ignoring invoke syscall.");
-                        continue;
-                    }
-                    let success = self.send_req(invoke).status == RequestStatus::SentToVM;
-                    let result = syscalls::InvokeResponse { success }.encode_to_vec();
-
-                    self.send_into_vm(result)?;
+                    let result = syscalls::InvokeResponse { success: self.send_req(invoke) };
+                    self.send_into_vm(result.encode_to_vec())?;
                 }
                 Some(SC::ReadKey(rk)) => {
-                    let txn = dbenv.begin_ro_txn().unwrap();
+                    let txn = DBENV.begin_ro_txn().unwrap();
                     let result = syscalls::ReadKeyResponse {
                         value: txn.get(default_db, &rk.key).ok().map(Vec::from),
                     }
@@ -367,7 +369,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::WriteKey(wk)) => {
-                    let mut txn = dbenv.begin_rw_txn().unwrap();
+                    let mut txn = DBENV.begin_rw_txn().unwrap();
                     let result = syscalls::WriteKeyResponse {
                         success: txn
                             .put(default_db, &wk.key, &wk.value, WriteFlags::empty())

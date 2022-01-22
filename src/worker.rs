@@ -78,10 +78,10 @@ impl Worker {
                                     // newly allocated VM is returned, launch it first
                                     if let Err(e) = vm.launch(Some(func_req_sender.clone()), vm_listener_dup, cid, false, None) {
                                         handle_vm_error(e, &mut stat);                                    
-                                        rsp_sender.send(Response {
+                                        let _ = rsp_sender.send(Response {
                                             user_id: req.user_id,
                                             status: RequestStatus::LaunchFailed,
-                                        }).expect("Failed to write response"); 
+                                        });
                                         // a VM launched or not occupies system resources, we need
                                         // to put back the resources assigned to this VM.
                                         vm_req_sender.send(Message::DeleteVm(vm)).expect("Failed to send DeleteVm request");
@@ -90,10 +90,10 @@ impl Worker {
                                 }
 
                                 debug!("VM is launched");
-                                rsp_sender.send(Response {
+                                let _ = rsp_sender.send(Response {
                                     user_id: req.user_id,
                                     status: RequestStatus::SentToVM,
-                                }).expect("Failed to write response");
+                                });
 
                                 match process_req(req, &mut vm, &mut stat) {
                                     Ok(rsp) => {
@@ -107,10 +107,10 @@ impl Worker {
                             },
                             Err(e) => {
                                 let status = handle_resource_manager_error(e, &mut stat, &req.function);
-                                rsp_sender.send(Response {
+                                let _ = rsp_sender.send(Response {
                                     user_id: req.user_id,
                                     status,
-                                }).expect("Failed to write response");
+                                });
                             }
                         }
                     }
