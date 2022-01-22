@@ -3,7 +3,6 @@ use clap::{App, Arg};
 
 mod app;
 mod config;
-mod server;
 
 fn main() -> Result<(), std::io::Error> {
     env_logger::init();
@@ -44,7 +43,7 @@ fn main() -> Result<(), std::io::Error> {
     );
     let listen_addr = matches.value_of("listen").unwrap();
     let listener = TcpListener::bind(listen_addr).unwrap();
-    let server = server::Server::new(
+    let server = httpserver::Server::new(
         listener,
         app
     );

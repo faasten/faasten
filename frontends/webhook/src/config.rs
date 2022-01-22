@@ -5,6 +5,7 @@ use std::fs::File;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
+    pub secret: Option<String>,
     pub repos: BTreeMap<String, Repo>,
 }
 

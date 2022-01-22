@@ -1,4 +1,3 @@
-use github_types::{PushEvent, PingEvent};
 use bytes::Bytes;
 use http;
 use http::status::StatusCode;
@@ -11,7 +10,7 @@ use std::net::TcpStream;
 use snapfaas::request;
 
 use crate::config::Config;
-use crate::server::Handler;
+use httpserver::Handler;
 
 #[derive(Clone)]
 pub struct App {
@@ -38,17 +37,8 @@ impl App {
         debug!("Headers contain x-github-event key.");
         match event_type.as_bytes() {
             b"ping" => {
-                let event_body: PingEvent =
-                    serde_json::from_slice(request.body().as_ref()).or(Err(StatusCode::BAD_REQUEST))?;
-
-                let name = &event_body.repository.ok_or(StatusCode::BAD_REQUEST)?.full_name;
-                let repo = self
-                    .config
-                    .repos
-                    .get(name)
-                    .ok_or(StatusCode::NOT_FOUND)?;
                 verify_github_request(
-                    &repo.secret,
+                    &self.config.secret,
                     &request.body(),
                     request
                         .headers()
@@ -61,23 +51,18 @@ impl App {
             }
             b"push" => {
                 debug!("Push event.");
-                let event_body: PushEvent =
-                    serde_json::from_slice(request.body().as_ref()).or(Err(StatusCode::BAD_REQUEST))?;
-
-                let name = &event_body.repository.full_name;
-                let repo = self
-                    .config
-                    .repos
-                    .get(name)
-                    .ok_or(StatusCode::NOT_FOUND)?;
                 verify_github_request(
-                    &repo.secret,
+                    &self.config.secret,
                     &request.body(),
                     request
                         .headers()
                         .get("x-hub-signature")
                         .map(|v| v.as_bytes()),
                 )?;
+
+                // TODO: use the event body to set a label?
+                /*let event_body: PushEvent =
+                    serde_json::from_slice(request.body().as_ref()).or(Err(StatusCode::BAD_REQUEST))?;*/
 
                 let req = request::Request {
                     function: "build_tarball".to_string(),
