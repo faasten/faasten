@@ -16,7 +16,7 @@ use serde_json::Value;
 use crate::configs::FunctionConfig;
 use crate::message::Message;
 use crate::syscalls;
-use crate::request::{Request, RequestStatus};
+use crate::request::Request;
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
@@ -265,7 +265,7 @@ impl Vm {
 
         self.send_into_vm(sys_req)?;
 
-        self.process_syscall()
+        self.process_syscalls()
     }
 
     /// Send a HTTP GET request no matter if an authentication token is present
@@ -314,8 +314,8 @@ impl Vm {
     }
 
     fn send_req(&self, invoke: syscalls::Invoke) -> bool {
-        let (tx, rx) = mpsc::channel();
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
+            let (tx, _) = mpsc::channel();
             invoke_handle.send(Message::Request(
                 Request {
                     user_id: 0,
@@ -323,15 +323,14 @@ impl Vm {
                     payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
                 },
                 tx,
-            )).expect("Failed to send request");
-            rx.recv().expect("Failed to receive request response").status == RequestStatus::SentToVM
+            )).is_ok()
         } else {
             debug!("No invoke handle, ignoring invoke syscall. {:?}", invoke);
             false
         }
     }
 
-    pub fn process_syscall(&mut self) -> Result<String, Error> {
+    fn process_syscalls(&mut self) -> Result<String, Error> {
         use lmdb::{Transaction, WriteFlags};
         use prost::Message;
         use std::io::Read;
@@ -356,7 +355,7 @@ impl Vm {
                     return Ok(r.payload);
                 }
                 Some(SC::Invoke(invoke)) => {
-                    let result = syscalls::InvokeResponse { send_req(invoke) };
+                    let result = syscalls::InvokeResponse { success: self.send_req(invoke) };
                     self.send_into_vm(result.encode_to_vec())?;
                 }
                 Some(SC::ReadKey(rk)) => {
