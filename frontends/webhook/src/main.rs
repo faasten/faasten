@@ -1,3 +1,4 @@
+use std::net::TcpListener;
 use clap::{App, Arg};
 
 mod app;
@@ -41,8 +42,10 @@ fn main() -> Result<(), std::io::Error> {
         matches.value_of("app config").unwrap(),
         matches.value_of("snapfaas address").unwrap().to_string()
     );
+    let listen_addr = matches.value_of("listen").unwrap();
+    let listener = TcpListener::bind(listen_addr).unwrap();
     let server = server::Server::new(
-        matches.value_of("listen").unwrap(),
+        listener,
         app
     );
     server.run()
