@@ -42,10 +42,6 @@ impl Request {
 
 }
 
-pub fn parse_json(json: &str) -> Result<Request, serde_json::Error> {
-    serde_json::from_str(json)
-}
-
 /// Given a [u8], parse it to a Requst value
 pub fn parse_u8_request(buf: Vec<u8>) -> Result<Request, serde_json::Error> {
     serde_json::from_slice(&buf)

@@ -1,8 +1,5 @@
-use std::io::ErrorKind;
-use std::net::{TcpListener, TcpStream};
-use std::sync::{Mutex, Arc};
-use std::collections::{VecDeque};
-use std::thread::JoinHandle;
+use std::net::TcpListener;
+use std::sync::mpsc::{channel, Sender, Receiver};
 
 use log::{error, debug};
 
@@ -20,99 +17,60 @@ pub trait Gateway {
 
 #[derive(Debug)]
 pub struct HTTPGateway {
-    listener: JoinHandle<()>,
-    streams: Arc<Mutex<VecDeque<Arc<Mutex<TcpStream>>>>>,
+    requests: Receiver<(request::Request, Sender<request::Response>)>,
 }
 
 impl HTTPGateway {
     pub fn listen(addr: &str) -> Self {
-        // create listener thread
-        // A listener thread listens on `addr` for incoming TCP connections.
-        let streams: Arc<Mutex<VecDeque<Arc<Mutex<TcpStream>>>>> = Arc::new(Mutex::new(VecDeque::new()));
-        let sc = streams.clone();
-        let listener = TcpListener::bind(addr).expect("listner failed to bind");
+        let listener = TcpListener::bind(addr).expect("listener failed to bind");
         debug!("Gateway started listening on: {:?}", addr);
 
-        let listener_handle = std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                if let Ok(stream) = stream {
-                    debug!("connection from {:?}", stream.peer_addr());
-                    stream.set_nonblocking(true).expect("cannot set stream to non-blocking");
-                    {
-                        let mut streams = sc.lock().expect("can't lock stream list");
-                        streams.push_back(Arc::new(Mutex::new(stream)));
-                    }
-                }
+        let (requests_tx, requests_rx) = channel();
 
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if let Ok(mut stream) = stream {
+                    debug!("connection from {:?}", stream.peer_addr());
+                    let requests = requests_tx.clone();
+                    std::thread::spawn(move || {
+                        while let Ok(buf) = request::read_u8(&mut stream) {
+                            // there's a request sitting in the stream
+
+                            // If parse succeeds, return the Request value and a
+                            // clone of the TcpStream value.
+                            match request::parse_u8_request(buf) {
+                                Err(e) => {
+                                    error!("request parsing failed: {:?}", e);
+                                    return;
+                                }
+                                Ok(req) => {
+                                    let (tx, rx) = channel::<request::Response>();
+                                    let _ = requests.send((req, tx));
+                                    if let Ok(response) = rx.recv() {
+                                        println!("{:?}", response);
+                                        if let Err(e) = request::write_u8(&response.to_vec(), &mut stream) {
+                                            error!("Failed to respond to TCP client at {:?}: {:?}", stream.peer_addr(), e);
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
             }
         });
 
         HTTPGateway{
-            listener: listener_handle,
-            streams: streams,
+            requests: requests_rx,
         }
     }
 }
 
 impl Iterator for HTTPGateway {
-    type Item = std::io::Result<(request::Request, Arc<Mutex<TcpStream>>)>;
+    type Item = (request::Request, Sender<request::Response>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        // For each TcpStream in a shared VecDeque of TcpStream values,
-        // try to read a request from it.
-        // If there's no data in the stream, move on to the next one.
-        // If the stream returns EOF, close the stream and remove it
-        // from the VecDeque.
-        let s = self.streams.lock().expect("stream lock poisoned").pop_front();
-        match s {
-            // no connections
-            None => {
-                return None;
-                //continue; // next() will block waiting for connections
-            }
-            Some(s) => {
-                let res = request::read_u8(&mut s.lock().expect("lock failed"));
-                match res {
-                    // there's a request sitting in the stream
-                    Ok(buf) => {
-                        // If parse succeeds, return the Request value and a
-                        // clone of the TcpStream value.
-                        match request::parse_u8_request(buf) {
-                            Err(e) => {
-                                error!("request parsing failed: {:?}", e);
-                            }
-                            Ok(req) => {
-                                //let stream_clone = s.try_clone().expect("cannot clone stream");
-                                let c = s.clone();
-                                self.streams.lock().expect("stream lock poisoned").push_back(s);
-                                return Some(Ok((req, c)));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        match e.kind() {
-                            // when client closed the connection, remove the
-                            // stream from stream list
-                            ErrorKind::UnexpectedEof => {
-                                debug!("connection {:?} closed by client", s);
-                                return None;
-                            }
-                            // no data in the stream atm.
-                            ErrorKind::WouldBlock => {
-                            }
-                            _ => {
-                                // Some other error happened. Report and
-                                // just try the next stream in the list
-                                error!("Other error: {:?}", e);
-                            }
-                        }
-                    }
-                }
-
-                self.streams.lock().expect("stream lock poisoned").push_back(s);
-                return None;
-            }
-        }
+        self.requests.recv().ok()
     }
 }
 

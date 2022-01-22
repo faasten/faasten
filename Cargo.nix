@@ -3578,6 +3578,7 @@ rec {
           { name = "firerunner"; path = "bins/firerunner/main.rs"; }
           { name = "singlevm"; path = "bins/singlevm/main.rs"; }
           { name = "multivm"; path = "bins/multivm/main.rs"; }
+          { name = "sfclient"; path = "bins/sfclient/main.rs"; }
           { name = "sfdb"; path = "bins/sfdb/main.rs"; }
         ];
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./.; };

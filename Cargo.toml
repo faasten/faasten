@@ -17,6 +17,10 @@ name = "multivm"
 path = "bins/multivm/main.rs"
 
 [[bin]]
+name = "sfclient"
+path = "bins/sfclient/main.rs"
+
+[[bin]]
 name = "sfdb"
 path = "bins/sfdb/main.rs"
 

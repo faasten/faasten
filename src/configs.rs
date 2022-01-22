@@ -40,13 +40,14 @@ impl ResourceManagerConfig {
             // populate a ResourceManagerConfig struct from the yaml file
             if let Ok(f) = File::open(config_url.path()) {
                 let config: serde_yaml::Result<ResourceManagerConfig> = serde_yaml::from_reader(f);
-                if let Ok(mut config) = config {
-                    ResourceManagerConfig::convert_to_url(&mut config);
-                    ResourceManagerConfig::build_full_path_fs_images(&mut config);
-                    debug!("ResourceManager config: {:?}", config);
-                    config
-                } else {
-                    panic!("Invalid YAML file");
+                match config {
+                    Ok(mut config) => {
+                        ResourceManagerConfig::convert_to_url(&mut config);
+                        ResourceManagerConfig::build_full_path_fs_images(&mut config);
+                        debug!("ResourceManager config: {:?}", config);
+                        config
+                    },
+                    Err(e) => panic!("Invalid YAML file {:?}", e)
                 }
             } else {
                 panic!("Invalid local path to config file");
