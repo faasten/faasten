@@ -3631,6 +3631,10 @@ rec {
             packageId = "labeled";
           }
           {
+            name = "lazy_static";
+            packageId = "lazy_static";
+          }
+          {
             name = "lmdb-rkv";
             packageId = "lmdb-rkv";
           }
