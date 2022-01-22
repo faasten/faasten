@@ -318,7 +318,6 @@ impl Vm {
             let (tx, _) = mpsc::channel();
             invoke_handle.send(Message::Request(
                 Request {
-                    user_id: 0,
                     function: invoke.function,
                     payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
                 },

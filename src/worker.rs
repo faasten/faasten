@@ -79,7 +79,6 @@ impl Worker {
                                     if let Err(e) = vm.launch(Some(func_req_sender.clone()), vm_listener_dup, cid, false, None) {
                                         handle_vm_error(e, &mut stat);                                    
                                         let _ = rsp_sender.send(Response {
-                                            user_id: req.user_id,
                                             status: RequestStatus::LaunchFailed,
                                         });
                                         // a VM launched or not occupies system resources, we need
@@ -91,7 +90,6 @@ impl Worker {
 
                                 debug!("VM is launched");
                                 let _ = rsp_sender.send(Response {
-                                    user_id: req.user_id,
                                     status: RequestStatus::SentToVM,
                                 });
 
@@ -108,7 +106,6 @@ impl Worker {
                             Err(e) => {
                                 let status = handle_resource_manager_error(e, &mut stat, &req.function);
                                 let _ = rsp_sender.send(Response {
-                                    user_id: req.user_id,
                                     status,
                                 });
                             }

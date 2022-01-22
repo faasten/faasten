@@ -13,7 +13,6 @@ pub enum RequestStatus {
                 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Response {
-    pub user_id: u64,
     pub status: RequestStatus,
 }
 
@@ -25,7 +24,6 @@ impl Response {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
-    pub user_id: u64,
     pub function: String,
     pub payload: Value,
 }
