@@ -37,9 +37,11 @@ fn main() -> Result<(), std::io::Error> {
         )
         .get_matches();
 
-    let app = app::App::new(matches.value_of("app config").unwrap());
+    let app = app::App::new(
+        matches.value_of("app config").unwrap(),
+        matches.value_of("snapfaas address").unwrap().to_string()
+    );
     let server = server::Server::new(
-        matches.value_of("snapfaas address").unwrap().to_string(),
         matches.value_of("listen").unwrap(),
         app
     );

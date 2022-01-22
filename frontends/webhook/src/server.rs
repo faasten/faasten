@@ -11,7 +11,7 @@ use std::net::{TcpListener, TcpStream};
 //}
 
 pub trait Handler {
-    fn handle_request(&mut self, request: &http::Request<Bytes>, conn: &mut TcpStream) -> http::Response<Bytes>;
+    fn handle_request(&mut self, request: &http::Request<Bytes>) -> http::Response<Bytes>;
 }
 
 pub struct Client {
@@ -117,23 +117,22 @@ impl Client {
 }
 
 pub struct Server<H> {
-    connect: String,
     listener: TcpListener,
     handler: H,
 }
 
-fn request_helper<H: Handler>(client: &mut Client, handler: &mut H, conn: &mut TcpStream) -> Result<(), std::io::Error> {
+fn request_helper<H: Handler>(client: &mut Client, handler: &mut H) -> Result<(), std::io::Error> {
     let request = client.read()?;
-    client.write_response(&handler.handle_request(&request, conn))
+    client.write_response(&handler.handle_request(&request))
 }
 
 
 impl<H> Server<H> {
-    pub fn new(connect: String, listen: &str, handler: H) -> Self {
+    pub fn new(listen: &str, handler: H) -> Self {
         let listener = TcpListener::bind(listen).unwrap();
         info!("Webhook server listening on {}", listen);
 
-        Server { connect, listener, handler }
+        Server { listener, handler }
     }
 }
 
@@ -142,21 +141,16 @@ impl<H: 'static + Handler + Send + Clone> Server<H> {
         for stream in self.listener.incoming() {
             let stream = stream?;
             let mut handler = self.handler.clone();
-            let connect = self.connect.clone();
             std::thread::spawn(move || {
                 let mut client = Client::new(stream);
-                let mut conn = TcpStream::connect(connect).expect("Cannot connect to snapfaas");
-                info!("Connect to snapfaas");
                 loop {
-                    if let Err(r) = request_helper(&mut client, &mut handler, &mut conn) {
+                    if let Err(r) = request_helper(&mut client, &mut handler) {
                         if r.kind() != std::io::ErrorKind::UnexpectedEof {
                             error!("{}", r);
                         }
                         break;
                     }
                 }
-                conn.shutdown(std::net::Shutdown::Both).expect("Failed to close the connection with snapfaas");
-                info!("Shutdown connection to snapfaas");
             });
         }
         Ok(())

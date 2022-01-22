@@ -4,7 +4,8 @@ use http;
 use http::status::StatusCode;
 use log::{error, debug};
 
-use std::time::Instant;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::net::TcpStream;
 
 use snapfaas::request;
@@ -14,21 +15,22 @@ use crate::server::Handler;
 
 #[derive(Clone)]
 pub struct App {
+    conn: Arc<Mutex<TcpStream>>,
     config: Config,
-    uptime: Instant,
 }
 
 impl App {
-    pub fn new(config_path: &str) -> Self {
+    pub fn new(config_path: &str, snapfaas_address: String) -> Self {
         let config = Config::new(config_path);
         debug!("App config: {:?}", config);
+        let conn = Arc::new(Mutex::new(TcpStream::connect(snapfaas_address).expect("Cannot connect to snapfaas")));
         App {
             config,
-            uptime : Instant::now(),
+            conn,
         }
     }
 
-    pub fn handle_github_event(&self, request: &http::Request<Bytes>, conn: &mut TcpStream) -> AppResult<()> {
+    pub fn handle_github_event(&self, request: &http::Request<Bytes>) -> AppResult<()> {
         let event_type = request
             .headers()
             .get("x-github-event")
@@ -77,22 +79,17 @@ impl App {
                         .map(|v| v.as_bytes()),
                 )?;
 
-                use std::hash::{Hash, Hasher};
-                let mut s = std::collections::hash_map::DefaultHasher::new();
-                event_body.repository.full_name.hash(&mut s);
                 let req = request::Request {
-                    time: Instant::now().duration_since(self.uptime).as_millis() as u64,
-                    user_id: s.finish(),
                     function: "build_tarball".to_string(),
                     payload: serde_json::from_slice(request.body()).unwrap(),
                 };
 
+                let conn = &mut *self.conn.lock().expect("Lock failed");
                 if let Err(e) = request::write_u8(&req.to_vec(), conn) {
                     error!("Failed to send request to snapfaas: {:?}", e);
                     return Err(StatusCode::INTERNAL_SERVER_ERROR);
                 }
 
-                debug!("Request from user_id {} sent", req.user_id);
                 match request::read_u8(conn) {
                     Err(e) => {
                         error!("Failed to read response from snapfaas: {:?}", e);
@@ -100,7 +97,7 @@ impl App {
                     },
                     Ok(buf) => {
                         let rsp: request::Response = serde_json::from_slice(&buf).unwrap();
-                        debug!("Reponse for user_id: {:?}", rsp.user_id);
+                        debug!("Reponse {:?}", rsp);
                         match rsp.status {
                             request::RequestStatus::ResourceExhausted => Err(StatusCode::TOO_MANY_REQUESTS),
                             request::RequestStatus::FunctionNotExist | request::RequestStatus::Dropped => Err(StatusCode::BAD_REQUEST),
@@ -118,8 +115,8 @@ impl App {
 type AppResult<T> = Result<T, StatusCode>;
 
 impl Handler for App {
-    fn handle_request(&mut self, request: &http::Request<Bytes>, conn: &mut TcpStream) -> http::Response<Bytes> {
-        match self.handle_github_event(request, conn) {
+    fn handle_request(&mut self, request: &http::Request<Bytes>) -> http::Response<Bytes> {
+        match self.handle_github_event(request) {
             Ok(()) => http::Response::builder()
                 .body(Bytes::new())
                 .unwrap(),
