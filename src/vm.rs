@@ -63,6 +63,9 @@ struct VmHandle {
     conn: UnixStream,
     //currently every VM instance opens a connection to the REST server
     rest_client: reqwest::blocking::Client,
+    #[allow(dead_code)]
+    // This field is never used, but we need to it make sure the Child isn't dropped and, thus,
+    // killed, before the VmHandle is dropped.
     vm_process: Child,
     // None when VM is created from single-VM launcher
     invoke_handle: Option<Sender<Message>>,
@@ -318,7 +321,6 @@ impl Vm {
             let (tx, _) = mpsc::channel();
             invoke_handle.send(Message::Request(
                 Request {
-                    user_id: 0,
                     function: invoke.function,
                     payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
                 },

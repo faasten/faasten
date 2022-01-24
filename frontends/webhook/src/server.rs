@@ -1,18 +1,8 @@
-use bytes::{BufMut, Bytes, BytesMut};
-use http;
-use httparse;
-use log::{info, error};
-
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 
-//pub trait Handler {
-//    fn handle_request(&mut self, request: &http::Request<Bytes>) -> Result<Option<Request>, http::StatusCode>;
-//}
-
-pub trait Handler {
-    fn handle_request(&mut self, request: &http::Request<Bytes>, conn: &mut TcpStream) -> http::Response<Bytes>;
-}
+use bytes::{BufMut, Bytes, BytesMut};
+use http;
 
 pub struct Client {
     stream: TcpStream,
@@ -39,15 +29,7 @@ impl Client {
             buf.put(&lowbuf[..len]);
             let mut headers = [httparse::EMPTY_HEADER; 100];
             let mut req = httparse::Request::new(&mut headers);
-            let res = req.parse(buf.as_ref());
-            if let Err(e) = res {
-                error!("Failed to parse HTTP request: {:?}", e);
-                return Err(std::io::Error::new(
-                        std::io::ErrorKind::UnexpectedEof,
-                        "Parse error",
-                        ));
-            }
-            let res = res.unwrap();
+            let res = req.parse(buf.as_ref()).unwrap();
             if let httparse::Status::Complete(len) = res {
                 let method = req
                     .method
@@ -116,69 +98,43 @@ impl Client {
     }
 }
 
+pub trait Handler {
+    fn handle_request(&mut self, request: &http::Request<Bytes>) -> http::Response<Bytes>;
+}
+
 pub struct Server<H> {
-    connect: String,
     listener: TcpListener,
     handler: H,
 }
 
-fn request_helper<H: Handler>(client: &mut Client, handler: &mut H, conn: &mut TcpStream) -> Result<(), std::io::Error> {
+fn request_helper<H: Handler>(client: &mut Client, handler: &mut H) -> Result<(), std::io::Error> {
     let request = client.read()?;
-    client.write_response(&handler.handle_request(&request, conn))
+    client.write_response(&handler.handle_request(&request))
 }
 
-
 impl<H> Server<H> {
-    pub fn new(connect: String, listen: &str, handler: H) -> Self {
-        let listener = TcpListener::bind(listen).unwrap();
-        info!("Webhook server listening on {}", listen);
-
-        Server { connect, listener, handler }
+    pub fn new(listener: TcpListener, handler: H) -> Server<H> {
+        Server { listener, handler }
     }
 }
 
 impl<H: 'static + Handler + Send + Clone> Server<H> {
-    pub fn run(self) -> Result<(), std::io::Error> {
+    pub fn run(&self) -> Result<(), std::io::Error> {
         for stream in self.listener.incoming() {
             let stream = stream?;
             let mut handler = self.handler.clone();
-            let connect = self.connect.clone();
             std::thread::spawn(move || {
                 let mut client = Client::new(stream);
-                let mut conn = TcpStream::connect(connect).expect("Cannot connect to snapfaas");
-                info!("Connect to snapfaas");
                 loop {
-                    if let Err(r) = request_helper(&mut client, &mut handler, &mut conn) {
+                    if let Err(r) = request_helper(&mut client, &mut handler) {
                         if r.kind() != std::io::ErrorKind::UnexpectedEof {
-                            error!("{}", r);
+                            eprintln!("{}", r);
                         }
                         break;
                     }
                 }
-                conn.shutdown(std::net::Shutdown::Both).expect("Failed to close the connection with snapfaas");
-                info!("Shutdown connection to snapfaas");
             });
         }
         Ok(())
     }
 }
-
-//fn request_helper(client: &mut Client, handler: &mut dyn Handler, stream: &mut TcpStream) -> Result<(), std::io::Error> {
-//    use http::Response;
-//    let request = client.read()?;
-//
-//    match handler.handle_request(&request) {
-//        Ok(maybe_req) => {
-//            if let Some(req) = maybe_req {
-//                // send requests to snapfaas over TCP connection
-//                snapfaas::request::write_u8(req, stream);
-//                    .expect("failed to send HTTP-sourced request");
-//                m.lock().unwrap().set(req.user_id, client.try_clone());
-//            } else {
-//                debug!("Ping GitHub.");
-//                client.write_response(&Response::builder().body(Bytes::new()).unwrap())
-//            }
-//        },
-//        Err(c) => client.write_response(&Response::builder().status(c).body(Bytes::new()).unwrap()),
-//    }
-//}

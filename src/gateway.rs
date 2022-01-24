@@ -47,7 +47,6 @@ impl HTTPGateway {
                                     let (tx, rx) = channel::<request::Response>();
                                     let _ = requests.send((req, tx));
                                     if let Ok(response) = rx.recv() {
-                                        println!("{:?}", response);
                                         if let Err(e) = request::write_u8(&response.to_vec(), &mut stream) {
                                             error!("Failed to respond to TCP client at {:?}: {:?}", stream.peer_addr(), e);
                                         };

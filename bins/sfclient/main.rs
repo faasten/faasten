@@ -37,7 +37,6 @@ fn main() -> std::io::Result<()> {
     stdin().read_to_end(&mut input)?;
     let payload = serde_json::from_slice(&input)?;
     let request = request::Request {
-        user_id: 0,
         function,
         payload,
     };
