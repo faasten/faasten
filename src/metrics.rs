@@ -1,51 +1,68 @@
-use std::collections::{BTreeMap};
-use serde_json::json;
+use std::{thread, time};
+use std::sync::{Arc, Mutex};
+use std::io::Write;
+use std::fs::File;
 
-#[derive(Clone, Debug)]
-pub struct Metrics {
-    pub start_tsp: u64,
-    pub end_tsp: u64,
-    pub num_drop: u32,  // number of dropped requests
-    pub num_complete: u32,  // number of requests completed
-    pub num_evict: u32, // number of evictions
-    pub num_vm_startfail: u32, // number of vms that failed to start either due to process spawn or no ready signal
-    pub num_req_writefail: u32, // number of reqs that failed to write to a vm
-    pub num_rsp_readfail: u32, // number of rsq that failed to read from a vm 
-    pub vm_mem_size: BTreeMap<usize, usize>,
-    pub boot_tsp: BTreeMap<usize, Vec<u64>>, // key is vm_id, value is boot timestamp
-    pub evict_tsp: BTreeMap<usize, Vec<u64>>,
-    pub req_rsp_tsp: BTreeMap<usize, Vec<u64>> // key is vm_id, value is request send time and response receive time
+use log::error;
+
+// one hour
+const FLUSH_INTERVAL_SECS: u64 = 3600;
+
+#[derive(Default, Debug)]
+pub struct RequestTimestamps {
+    /// request arrival time
+    pub arrived: u64,
+    /// resource allocation completion time, 0 if resource exhaution
+    pub allocated: u64,
+    /// VM launch completion time, 0 if launching fails
+    pub launched: u64,
+    /// response returned time, 0 if execution fails
+    pub completed: u64,
 }
 
-impl Metrics {
-    pub fn new() -> Metrics {
-        return Metrics {
-            start_tsp:0,
-            end_tsp:0,
-            num_drop: 0,
-            num_complete: 0,
-            num_evict: 0,
-            num_vm_startfail: 0,
-            num_req_writefail: 0,
-            num_rsp_readfail: 0,
-            vm_mem_size: BTreeMap::new(),
-            boot_tsp: BTreeMap::new(),
-            evict_tsp: BTreeMap::new(),
-            req_rsp_tsp: BTreeMap::new(),
-        }
+#[derive(Debug)]
+pub struct WorkerMetrics {
+    log_file: File,
+    request_timestamps: Arc<Mutex<Vec<RequestTimestamps>>>,
+}
 
+impl WorkerMetrics {
+    pub fn new(log_file: File) -> Self {
+        WorkerMetrics {
+            log_file,
+            request_timestamps: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
-    pub fn to_json(&self) -> serde_json::value::Value {
-        return json!({
-            "number of vms created": self.vm_mem_size.len(),
-            "vm memory sizes": self.vm_mem_size,
-            "number of requests completed": self.num_complete,
-            "number of requests dropped": self.num_drop,
-            "number of evictions": self.num_evict,
-            "boot timestamps": self.boot_tsp,
-            "request/response timestamps":self.req_rsp_tsp,
-            "eviction timestamps": self.evict_tsp,
+    pub fn start_timed_flush(&self) {
+        let reqtsps = Arc::clone(&self.request_timestamps);
+        let mut log_file = self.log_file.try_clone().unwrap();
+        thread::spawn(move || {
+            loop {
+                thread::sleep(time::Duration::from_secs(FLUSH_INTERVAL_SECS));
+                let tsps = &mut *reqtsps.lock().unwrap();
+                for t in tsps.as_slice() {
+                    if let Err(e) = log_file.write_fmt(format_args!("{:?}", t)) {
+                        error!("failed to flush worker metrics: {:?}", e);
+                    }
+                }
+                tsps.truncate(0);
+            }
         });
+    }
+
+    /// insert a request's timestamps
+    pub fn push(&mut self, tsps: RequestTimestamps) {
+        self.request_timestamps.lock().unwrap().push(tsps);
+    }
+
+    /// manual flush
+    pub fn flush(mut self) {
+        let tsps = &*self.request_timestamps.lock().unwrap();
+        for t in tsps.as_slice() {
+            if let Err(e) = self.log_file.write_fmt(format_args!("{:?}", t)) {
+                error!("failed to flush worker metrics: {:?}", e);
+            }
+        }
     }
 }
