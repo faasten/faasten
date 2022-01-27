@@ -27,7 +27,6 @@ path = "bins/sfdb/main.rs"
 [lib]
 
 [dependencies]
-tempfile = "^3.3.0"
 ctrlc = "^3.2.0"
 reqwest = { version = "0.11", features = ["blocking"] }
 labeled = { git = "git://github.com/alevy/labeled" }
@@ -55,6 +54,9 @@ futures = "0.1.18"
 glob =  "*"
 tokio = { version = "1.14.0", features = [ "rt", "macros",  "process", "net" ] }
 lazy_static = "1.4.0"
+
+[dev-dependencies]
+tempfile = "^3.3.0"
 
 [build-dependencies]
 prost-build = "0.9.0"
