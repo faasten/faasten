@@ -18,6 +18,10 @@ use crate::vm;
 use crate::metrics;
 use crate::resource_manager;
 
+// one hour
+const FLUSH_INTERVAL_SECS: u64 = 3600;
+
+
 #[derive(Debug)]
 pub struct Worker {
     pub thread: JoinHandle<()>,
@@ -35,7 +39,7 @@ impl Worker {
             std::fs::create_dir_all("./out").unwrap();
             let log_file = std::fs::File::create(format!("./out/thread-{:?}.stat", id)).unwrap();
             let mut stat = metrics::WorkerMetrics::new(log_file);
-            stat.start_timed_flush();
+            stat.start_timed_flush(FLUSH_INTERVAL_SECS);
 
             let vm_listener = match UnixListener::bind(format!("worker-{}.sock_1234", cid)) {
                 Ok(listener) => listener,

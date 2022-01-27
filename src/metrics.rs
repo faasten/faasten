@@ -4,11 +4,10 @@ use std::io::Write;
 use std::fs::File;
 
 use log::error;
+use serde_json;
+use serde::Serialize;
 
-// one hour
-const FLUSH_INTERVAL_SECS: u64 = 3600;
-
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize)]
 pub struct RequestTimestamps {
     /// request arrival time
     pub arrived: u64,
@@ -18,6 +17,12 @@ pub struct RequestTimestamps {
     pub launched: u64,
     /// response returned time, 0 if execution fails
     pub completed: u64,
+}
+
+impl RequestTimestamps {
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(&self).unwrap()
+    }
 }
 
 #[derive(Debug)]
@@ -34,15 +39,15 @@ impl WorkerMetrics {
         }
     }
 
-    pub fn start_timed_flush(&self) {
+    pub fn start_timed_flush(&self, interval: u64) {
         let reqtsps = Arc::clone(&self.request_timestamps);
         let mut log_file = self.log_file.try_clone().unwrap();
         thread::spawn(move || {
             loop {
-                thread::sleep(time::Duration::from_secs(FLUSH_INTERVAL_SECS));
+                thread::sleep(time::Duration::from_secs(interval));
                 let tsps = &mut *reqtsps.lock().unwrap();
                 for t in tsps.as_slice() {
-                    if let Err(e) = log_file.write_fmt(format_args!("{:?}", t)) {
+                    if let Err(e) = writeln!(&mut log_file, "{}", t.to_json()) {
                         error!("failed to flush worker metrics: {:?}", e);
                     }
                 }
@@ -60,9 +65,79 @@ impl WorkerMetrics {
     pub fn flush(mut self) {
         let tsps = &*self.request_timestamps.lock().unwrap();
         for t in tsps.as_slice() {
-            if let Err(e) = self.log_file.write_fmt(format_args!("{:?}", t)) {
+            if let Err(e) = writeln!(&mut self.log_file, "{}", t.to_json()) {
                 error!("failed to flush worker metrics: {:?}", e);
             }
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.request_timestamps.lock().unwrap().len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate tempfile;
+    use tempfile::NamedTempFile;
+
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    
+    #[test]
+    fn test_timed_flush() {
+        let temp = NamedTempFile::new().unwrap();
+        let mut m = WorkerMetrics::new(temp.reopen().unwrap());
+        m.start_timed_flush(2);
+
+        // test empty flush
+        thread::sleep(time::Duration::from_secs(3));
+        assert_eq!(m.len(), 0);
+
+        // test non-empty flush
+        m.push(Default::default());
+        m.push(Default::default());
+        assert_eq!(m.len(), 2);
+        thread::sleep(time::Duration::from_secs(2));
+        assert_eq!(m.len(), 0);
+
+        m.push(Default::default());
+        assert_eq!(m.len(), 1);
+        thread::sleep(time::Duration::from_secs(2));
+        assert_eq!(m.len(), 0);
+
+        let breader = BufReader::new(temp.reopen().unwrap());
+        let mut counter = 0;
+        for l in breader.lines() {
+            let tsps_json = RequestTimestamps { ..Default::default() }.to_json();
+            assert_eq!(l.unwrap(), tsps_json);
+            counter += 1;
+        }
+        assert_eq!(counter, 3);
+    }
+
+    #[test]
+    fn test_manual_flush() {
+        let temp = NamedTempFile::new().unwrap();
+        let mut m = WorkerMetrics::new(temp.reopen().unwrap());
+        m.start_timed_flush(2);
+        m.push(Default::default());
+        m.push(Default::default());
+        assert_eq!(m.len(), 2);
+        thread::sleep(time::Duration::from_secs(3));
+        assert_eq!(m.len(), 0);
+
+        m.push(Default::default());
+        assert_eq!(m.len(), 1);
+        m.flush();
+
+        let breader = BufReader::new(temp.reopen().unwrap());
+        let mut counter = 0;
+        for l in breader.lines() {
+            let tsps_json = RequestTimestamps { ..Default::default() }.to_json();
+            assert_eq!(l.unwrap(), tsps_json);
+            counter += 1;
+        }
+        assert_eq!(counter, 3);
     }
 }
