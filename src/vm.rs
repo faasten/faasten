@@ -501,27 +501,3 @@ impl Drop for Vm {
         }
     }
 }
-
-#[cfg(test)]
-use crate::request::Request;
-
-#[derive(Debug)]
-#[cfg(test)]
-pub struct Vm {
-    pub id: usize,
-    pub memory: usize, // MB
-}
-
-#[cfg(test)]
-impl Vm {
-    /// Create a dummy VM for controller tests
-    pub fn new_dummy(memory: usize) -> Self {
-        Vm { id: 0, memory }
-    }
-
-    pub fn process_req(&mut self, _: Request) -> Result<String, Error> {
-        Ok(String::new())
-    }
-
-    pub fn shutdown(&mut self) {}
-}
