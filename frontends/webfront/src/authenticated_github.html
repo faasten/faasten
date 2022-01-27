@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+<body>
+  
+  <script language="javascript">
+    let github_token = "{}";
+    window.addEventListener("message", async (event) => {{
+      console.log(event);
+      let jwt = event.data;
+      let response = await fetch('http://localhost:3030/pair_github', {{
+        method: 'POST',
+        headers: new Headers({{
+          'Authorization': 'Bearer '+jwt, 
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }}),
+        body: 'github_token=' + encodeURIComponent(github_token)
+      }});
+      window.opener.postMessage(JSON.stringify(await response.json()), "*");
+      window.close();
+    }});
+    window.opener.postMessage("jwt_please", "*");
+  </script>
+</body>
+</html>
