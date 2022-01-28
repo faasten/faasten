@@ -121,8 +121,11 @@ impl App {
         #[derive(Serialize)]
         struct User {
             login: String,
+            github: Option<String>,
         }
-        Ok(Response::json(&User { login }))
+        let txn = self.dbenv.begin_ro_txn().unwrap();
+        let github: Option<String> = txn.get(*self.user_db, &format!("github/for/user/{}", login).as_bytes()).ok().map(|l| String::from_utf8_lossy(l).to_string());
+        Ok(Response::json(&User { login, github }))
     }
 
     fn assignments(&self, request: &Request) -> Result<Response, Response> {
