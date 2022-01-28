@@ -3,28 +3,50 @@ use http;
 use http::status::StatusCode;
 use log::{error, debug};
 
-use std::sync::Arc;
-use std::sync::Mutex;
 use std::net::TcpStream;
 
 use snapfaas::request;
 
-use crate::config::Config;
 use httpserver::Handler;
+
+struct SnapFaasManager {
+    address: String,
+}
+
+impl r2d2::ManageConnection for SnapFaasManager {
+    type Connection = TcpStream;
+    type Error = std::io::Error;
+
+    fn connect(&self) -> Result<Self::Connection, Self::Error> {
+        Ok(TcpStream::connect(&self.address)?)
+    }
+
+    fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+        let req = request::Request {
+            function: String::from("ping"),
+            payload: serde_json::Value::Null,
+        };
+        request::write_u8(&req.to_vec(), conn)?;
+        request::read_u8(conn)?;
+        Ok(())
+    }
+
+    fn has_broken(&self, conn: &mut Self::Connection) -> bool {
+        conn.take_error().ok().flatten().is_some()
+    }
+}
 
 #[derive(Clone)]
 pub struct App {
-    conn: Arc<Mutex<TcpStream>>,
-    config: Config,
+    conn: r2d2::Pool<SnapFaasManager>,
+    secret: Option<String>,
 }
 
 impl App {
-    pub fn new(config_path: &str, snapfaas_address: String) -> Self {
-        let config = Config::new(config_path);
-        debug!("App config: {:?}", config);
-        let conn = Arc::new(Mutex::new(TcpStream::connect(snapfaas_address).expect("Cannot connect to snapfaas")));
+    pub fn new(secret: Option<String>, snapfaas_address: String) -> Self {
+        let conn = r2d2::Pool::builder().max_size(10).build(SnapFaasManager { address: snapfaas_address }).expect("pool");
         App {
-            config,
+            secret,
             conn,
         }
     }
@@ -38,7 +60,7 @@ impl App {
         match event_type.as_bytes() {
             b"ping" => {
                 verify_github_request(
-                    &self.config.secret,
+                    &self.secret,
                     &request.body(),
                     request
                         .headers()
@@ -52,7 +74,7 @@ impl App {
             b"push" => {
                 debug!("Push event.");
                 verify_github_request(
-                    &self.config.secret,
+                    &self.secret,
                     &request.body(),
                     request
                         .headers()
@@ -65,11 +87,13 @@ impl App {
                     serde_json::from_slice(request.body().as_ref()).or(Err(StatusCode::BAD_REQUEST))?;*/
 
                 let req = request::Request {
-                    function: "build_tarball".to_string(),
+                    function: "gh_repo".to_string(),
                     payload: serde_json::from_slice(request.body()).unwrap(),
                 };
 
-                let conn = &mut *self.conn.lock().expect("Lock failed");
+                debug!("Getting connection to SnapFaas");
+                let conn = &mut self.conn.get().expect("Lock failed");
+                debug!("Got it!");
                 if let Err(e) = request::write_u8(&req.to_vec(), conn) {
                     error!("Failed to send request to snapfaas: {:?}", e);
                     return Err(StatusCode::INTERNAL_SERVER_ERROR);
