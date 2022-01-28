@@ -55,13 +55,15 @@ fn main() -> Result<(), std::io::Error> {
         .set_max_dbs(2)
         .open(&std::path::Path::new(matches.value_of("storage path").unwrap()))
         .unwrap();
+    let public_key_bytes = std::fs::read(matches.value_of("public key").expect("public key"))?;
+    let private_key_bytes = std::fs::read(matches.value_of("secret key").expect("private key"))?;
     let app = app::App::new(
         app::GithubOAuthCredentials {
             client_id: github_client_id,
             client_secret: github_client_secret,
         },
-        PKey::private_key_from_pem(include_bytes!("../secret.pem")).unwrap(),
-        PKey::public_key_from_pem(include_bytes!("../public.pem")).unwrap(),
+        PKey::private_key_from_pem(private_key_bytes.as_slice()).unwrap(),
+        PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
         dbenv
     );
     let listen_addr = matches.value_of("listen").unwrap();
