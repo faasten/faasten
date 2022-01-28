@@ -213,8 +213,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "The Chromium OS Authors"
@@ -254,8 +254,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "Amazon firecracker team <firecracker-devel@amazon.com>"
@@ -721,8 +721,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "Amazon firecracker team <firecracker-devel@amazon.com>"
@@ -929,8 +929,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "The Chromium OS Authors"
@@ -1040,8 +1040,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "Amazon firecracker team <firecracker-devel@amazon.com>"
@@ -1202,8 +1202,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "Amazon firecracker team <firecracker-devel@amazon.com>"
@@ -2219,8 +2219,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         dependencies = [
           {
@@ -2241,8 +2241,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "The Chromium OS Authors"
@@ -2439,8 +2439,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "Amazon firecracker team <firecracker-devel@amazon.com>"
@@ -2545,8 +2545,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "The Chromium OS Authors"
@@ -2575,8 +2575,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "Amazon firecracker team <firecracker-devel@amazon.com>"
@@ -2693,8 +2693,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "Amazon firecracker team <firecracker-devel@amazon.com>"
@@ -2873,8 +2873,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "The Chromium OS Authors"
@@ -2894,8 +2894,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "The Chromium OS Authors"
@@ -3628,8 +3628,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "Amazon firecracker team <firecracker-devel@amazon.com>"
@@ -4210,8 +4210,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "Amazon firecracker team <firecracker-devel@amazon.com>"
@@ -4877,8 +4877,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "The Chromium OS Authors"
@@ -5672,8 +5672,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "The Chromium OS Authors"
@@ -5687,8 +5687,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "git://github.com/princeton-sns/firecracker";
-          rev = "8a77486de9739dd049c8615d67b0e260c025e016";
-          sha256 = "1qf6a43r5n17c2s1qhi13gjf2s1ri3xfbqp74g38l8y2cd5rf5xj";
+          rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
+          sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
         authors = [
           "Amazon firecracker team <firecracker-devel@amazon.com>"
