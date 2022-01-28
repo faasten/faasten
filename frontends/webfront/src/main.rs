@@ -47,6 +47,14 @@ fn main() -> Result<(), std::io::Error> {
                 .required(true)
                 .help("PEM encoded public key"),
         )
+        .arg(
+            Arg::with_name("base url")
+                .long("base_url")
+                .takes_value(true)
+                .value_name("URL")
+                .required(true)
+                .help("Base URL of server"),
+        )
         .get_matches();
 
 
@@ -57,6 +65,7 @@ fn main() -> Result<(), std::io::Error> {
         .unwrap();
     let public_key_bytes = std::fs::read(matches.value_of("public key").expect("public key"))?;
     let private_key_bytes = std::fs::read(matches.value_of("secret key").expect("private key"))?;
+    let base_url = matches.value_of("base url").expect("base url").to_string();
     let app = app::App::new(
         app::GithubOAuthCredentials {
             client_id: github_client_id,
@@ -64,7 +73,8 @@ fn main() -> Result<(), std::io::Error> {
         },
         PKey::private_key_from_pem(private_key_bytes.as_slice()).unwrap(),
         PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
-        dbenv
+        dbenv,
+        base_url
     );
     let listen_addr = matches.value_of("listen").unwrap();
     rouille::start_server(listen_addr, move |request| {

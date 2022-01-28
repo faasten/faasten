@@ -33,13 +33,14 @@ pub struct App {
     dbenv: Arc<lmdb::Environment>,
     default_db: Arc<lmdb::Database>,
     user_db: Arc<lmdb::Database>,
+    base_url: String,
 }
 
 impl App {
-    pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment) -> App {
+    pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment, base_url: String) -> App {
         let dbenv = Arc::new(dbenv);
         let default_db = Arc::new(dbenv.open_db(None).unwrap());
-        let user_db = Arc::new(dbenv.open_db(Some("users")).unwrap());
+        let user_db = Arc::new(dbenv.create_db(Some("users"), lmdb::DatabaseFlags::empty()).unwrap());
         App {
             dbenv,
             default_db,
@@ -47,6 +48,7 @@ impl App {
             pkey, 
             pubkey,
             gh_creds,
+            base_url,
         }
     }
 
@@ -92,7 +94,7 @@ impl App {
             },
             (GET) (/login/cas) => {
                 Ok(Response::redirect_302(
-                    format!("{}/login?service={}", "https://fed.princeton.edu/cas", "http://localhost:3030/authenticate/cas")))
+                    format!("{}/login?service={}", "https://fed.princeton.edu/cas", format!("{}/authenticate/cas", self.base_url))))
             },
             (GET) (/authenticate/cas) => {
                 self.authenticate_cas(request)
@@ -179,7 +181,7 @@ impl App {
 
     fn authenticate_cas(&self, request: &Request) -> Result<Response, Response> {
         let ticket = request.get_param("ticket").ok_or(Response::empty_404())?;
-        let service = String::from("http://localhost:3030/authenticate/cas");
+        let service = format!("{}/authenticate/cas", self.base_url);
 
         let client = Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
         let validate_cas = client
@@ -231,7 +233,7 @@ impl App {
             access_token: String,
         }
         let t: AuthResponse = uat.json().map_err(|_| Response::empty_400())?;
-        Ok(Response::html(format!(include_str!("authenticated_github.html"), t.access_token)))
+        Ok(Response::html(format!(include_str!("authenticated_github.html"), token=t.access_token, base_url=self.base_url)))
     }
 
     fn pair_github_to_user(&self, request: &Request) -> Result<Response, Response> {
@@ -247,8 +249,8 @@ impl App {
             .header(reqwest::header::USER_AGENT, "SnapFaaS Web Frontend")
             .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", input.github_token))
             .send().expect("reqwest").json().unwrap();
-        let user_db = self.dbenv.create_db(Some("users"), lmdb::DatabaseFlags::empty()).unwrap();
         let mut txn = self.dbenv.begin_rw_txn().unwrap();
+        let user_db = *self.user_db;
         txn.put(user_db, &format!("github/for/user/{}", &local_user).as_str(), &github_user.login.as_str(), lmdb::WriteFlags::empty()).expect("store user");
         txn.put(user_db, &format!("github/user/{}/token", &github_user.login).as_str(), &input.github_token.as_str(), lmdb::WriteFlags::empty()).expect("store user");
         txn.put(user_db, &format!("github/from/{}", &github_user.login).as_str(), &local_user.as_str(), lmdb::WriteFlags::empty()).expect("store user");

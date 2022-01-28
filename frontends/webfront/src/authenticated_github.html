@@ -8,11 +8,11 @@
 <body>
   
   <script language="javascript">
-    let github_token = "{}";
+    let github_token = "{token}";
     window.addEventListener("message", async (event) => {{
       console.log(event);
       let jwt = event.data;
-      let response = await fetch('http://localhost:3030/pair_github', {{
+      let response = await fetch('{base_url}/pair_github', {{
         method: 'POST',
         headers: new Headers({{
           'Authorization': 'Bearer '+jwt, 
