@@ -74,7 +74,8 @@ impl App {
 
 impl App {
     pub fn handle(&mut self, request: &Request) -> Response {
-        if request.method() == "OPTIONS" {
+        println!("{:?}", request);
+        if request.method().to_uppercase().as_str() == "OPTIONS" {
             return Response::empty_204()
                 .with_additional_header("Access-Control-Allow-Origin", "*")
                 .with_additional_header("Access-Control-Allow-Headers", "Authorization")
@@ -121,7 +122,7 @@ impl App {
         struct User {
             login: String,
         }
-        Ok(Response::json(&User { login }).with_additional_header("Access-Control-Allow-Origin", "*"))
+        Ok(Response::json(&User { login }))
     }
 
     fn assignments(&self, request: &Request) -> Result<Response, Response> {
