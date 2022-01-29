@@ -36,6 +36,19 @@ pub struct App {
     base_url: String,
 }
 
+fn legal_path_for_user(key: &str, login: &String) -> bool {
+    let regexps = vec![
+        format!("cos316/assignments"),
+        format!("cos316/assignments/[^/]/{}", login),
+    ];
+    for re in regexps.iter().map(|re| regex::Regex::new(&re.as_str())).filter_map(Result::ok) {
+        if re.is_match(key) {
+            return true;
+        }
+    }
+    false
+}
+
 impl App {
     pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment, base_url: String) -> App {
         let dbenv = Arc::new(dbenv);
@@ -145,17 +158,17 @@ impl App {
         let keys = request.get_param("keys").unwrap_or(String::new());
         let txn = self.dbenv.begin_ro_txn().unwrap();
         let admins: Vec<String> = txn.get(*self.user_db, &"admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
-        let val = if admins.iter().find(|l| **l == login).is_some() {
+        let val = {
             let mut results = BTreeMap::new();
             for ref key in keys.split(",") {
-                results.insert(*key,
-                    txn.get(*self.default_db, &key).ok()
-                        .map(String::from_utf8_lossy)
-                );
+                if admins.contains(&login) || legal_path_for_user(key, &login) {
+                    results.insert(*key,
+                        txn.get(*self.default_db, &key).ok()
+                            .map(String::from_utf8_lossy)
+                    );
+                }
             }
-            Some(results)
-        } else {
-            None
+            results
         };
         let res = Response::json(&val);
         txn.commit().expect("commit");

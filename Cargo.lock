@@ -2248,6 +2248,7 @@ dependencies = [
  "lmdb-rkv",
  "log",
  "openssl",
+ "regex",
  "reqwest",
  "rouille",
  "serde",

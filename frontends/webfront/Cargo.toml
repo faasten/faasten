@@ -20,3 +20,4 @@ openssl = "*"
 jwt = { version = "0.15.0", features = [ "openssl" ]}
 lazy_static = "1.4.0"
 lmdb-rkv = "0.14.0"
+regex = "1.5.4"

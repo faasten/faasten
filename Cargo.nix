@@ -6653,6 +6653,10 @@ rec {
             packageId = "openssl";
           }
           {
+            name = "regex";
+            packageId = "regex";
+          }
+          {
             name = "reqwest";
             packageId = "reqwest";
             features = [ "blocking" "json" "multipart" ];
