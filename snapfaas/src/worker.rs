@@ -94,15 +94,14 @@ impl Worker {
                                 debug!("VM is launched");
                                 tsps.launched = precise_time_ns();
 
-                                let _ = rsp_sender.send(Response {
-                                    status: RequestStatus::SentToVM,
-                                });
-
                                 match vm.process_req(req.payload) {
                                     Ok(rsp) => {
                                         tsps.completed = precise_time_ns();
                                         // TODO: output are currently ignored
                                         debug!("{:?}", rsp);
+                                        let _ = rsp_sender.send(Response {
+                                            status: RequestStatus::SentToVM(rsp),
+                                        });
                                     }
                                     Err(e) => handle_vm_error(e),
                                 }

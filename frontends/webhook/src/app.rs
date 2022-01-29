@@ -51,7 +51,7 @@ impl App {
         }
     }
 
-    pub fn handle_github_event(&self, request: &http::Request<Bytes>) -> AppResult<()> {
+    pub fn handle_github_event(&self, request: &http::Request<Bytes>) -> AppResult<Bytes> {
         let event_type = request
             .headers()
             .get("x-github-event")
@@ -69,7 +69,7 @@ impl App {
                 )?;
 
                 debug!("GitHub pinged.");
-                Ok(())
+                Ok(Bytes::new())
             }
             b"push" => {
                 debug!("Push event.");
@@ -109,7 +109,7 @@ impl App {
                             request::RequestStatus::ResourceExhausted => Err(StatusCode::TOO_MANY_REQUESTS),
                             request::RequestStatus::FunctionNotExist | request::RequestStatus::Dropped => Err(StatusCode::BAD_REQUEST),
                             request::RequestStatus::LaunchFailed => Err(StatusCode::INTERNAL_SERVER_ERROR),
-                            request::RequestStatus::SentToVM => Ok(()),
+                            request::RequestStatus::SentToVM(response) => Ok(Bytes::from(response)),
                         }
                     },
                 }
@@ -124,8 +124,8 @@ type AppResult<T> = Result<T, StatusCode>;
 impl Handler for App {
     fn handle_request(&mut self, request: &http::Request<Bytes>) -> http::Response<Bytes> {
         match self.handle_github_event(request) {
-            Ok(()) => http::Response::builder()
-                .body(Bytes::new())
+            Ok(body) => http::Response::builder()
+                .body(body)
                 .unwrap(),
             Err(status_code) => http::Response::builder()
                 .status(status_code)

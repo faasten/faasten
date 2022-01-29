@@ -228,12 +228,15 @@ impl App {
                 "error": "failed to send request"
             })).with_status_code(500))?;
 
-        request::read_u8(conn).map_err(|_|
+        let resp_buf = request::read_u8(conn).map_err(|_|
             Response::json(&serde_json::json!({
                 "error": "failed to read response"
             })).with_status_code(500))?;
-
-        Ok(Response::empty_204())
+        let rsp: request::Response = serde_json::from_slice(&resp_buf).unwrap();
+        match rsp.status {
+            request::RequestStatus::SentToVM(response) => Ok(Response::text(response)),
+            _ => Err(Response::json(&serde_json::json!({"error": format!("{:?}", rsp.status)}))),
+        }
     }
 
     fn get(&self, request: &Request) -> Result<Response, Response> {
