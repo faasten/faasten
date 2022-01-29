@@ -2248,12 +2248,14 @@ dependencies = [
  "lmdb-rkv",
  "log",
  "openssl",
+ "r2d2",
  "regex",
  "reqwest",
  "rouille",
  "serde",
  "serde_json",
  "serde_yaml",
+ "snapfaas",
 ]
 
 [[package]]

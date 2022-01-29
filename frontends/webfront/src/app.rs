@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 use std::io::Read;
+use std::net::TcpStream;
 
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,34 @@ use jwt::{PKeyWithDigest, SignWithKey, VerifyWithKey};
 use openssl::pkey::{self, PKey};
 use lmdb::{Transaction};
 
+use snapfaas::request;
+
+struct SnapFaasManager {
+    address: String,
+}
+
+impl r2d2::ManageConnection for SnapFaasManager {
+    type Connection = TcpStream;
+    type Error = std::io::Error;
+
+    fn connect(&self) -> Result<Self::Connection, Self::Error> {
+        Ok(TcpStream::connect(&self.address)?)
+    }
+
+    fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+        let req = request::Request {
+            function: String::from("ping"),
+            payload: serde_json::Value::Null,
+        };
+        request::write_u8(&req.to_vec(), conn)?;
+        request::read_u8(conn)?;
+        Ok(())
+    }
+
+    fn has_broken(&self, conn: &mut Self::Connection) -> bool {
+        conn.take_error().ok().flatten().is_some()
+    }
+}
 
 #[derive(Clone)]
 pub struct GithubOAuthCredentials {
@@ -34,6 +63,7 @@ pub struct App {
     default_db: Arc<lmdb::Database>,
     user_db: Arc<lmdb::Database>,
     base_url: String,
+    conn: r2d2::Pool<SnapFaasManager>,
 }
 
 fn legal_path_for_user(key: &str, login: &String) -> bool {
@@ -50,11 +80,13 @@ fn legal_path_for_user(key: &str, login: &String) -> bool {
 }
 
 impl App {
-    pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment, base_url: String) -> App {
+    pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment, base_url: String, snapfaas_address: String) -> App {
         let dbenv = Arc::new(dbenv);
         let default_db = Arc::new(dbenv.open_db(None).unwrap());
         let user_db = Arc::new(dbenv.create_db(Some("users"), lmdb::DatabaseFlags::empty()).unwrap());
+        let conn = r2d2::Pool::builder().max_size(10).build(SnapFaasManager { address: snapfaas_address }).expect("pool");
         App {
+            conn,
             dbenv,
             default_db,
             user_db,
@@ -91,7 +123,7 @@ impl App {
         if request.method().to_uppercase().as_str() == "OPTIONS" {
             return Response::empty_204()
                 .with_additional_header("Access-Control-Allow-Origin", "*")
-                .with_additional_header("Access-Control-Allow-Headers", "Authorization")
+                .with_additional_header("Access-Control-Allow-Headers", "Authorization, Content-type")
                 .with_additional_header("Access-Control-Allow-Methods", "*");
             
         }
@@ -125,6 +157,9 @@ impl App {
             (GET) (/assignments) => {
                 self.assignments(request)
             },
+            (POST) (/assignments) => {
+                self.start_assignment(request)
+            },
             _ => Ok(Response::empty_404())
         ).unwrap_or_else(|e| e).with_additional_header("Access-Control-Allow-Origin", "*")
     }
@@ -150,6 +185,55 @@ impl App {
         let res = Response::json(&results);
         txn.commit().expect("commit");
         Ok(res)
+    }
+
+    fn start_assignment(&self, request: &Request) -> Result<Response, Response> {
+        let login = self.verify_jwt(request)?;
+
+        let conn = &mut self.conn.get().map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to get snapfaas connection"
+            })).with_status_code(500))?;
+        #[derive(Debug, Deserialize)]
+        struct Input {
+            assignment: String,
+            users: Vec<String>,
+        }
+        let input_json: Input = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
+        println!("{:?}", input_json);
+
+        let txn = self.dbenv.begin_ro_txn().unwrap();
+        let admins: Vec<String> = txn.get(*self.user_db, &"admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+        if !(input_json.users.contains(&login) || admins.contains(&login)) {
+            return Err(Response::json(&serde_json::json!({ "error": "user not authorized to make request" })).with_status_code(401))
+        }
+
+        let mut gh_handles = vec![];
+        for user in input_json.users.iter() {
+            let gh_handle = txn.get(*self.user_db, &format!("github/for/user/{}", user).as_str()).or(Err(Response::empty_400()))?;
+            gh_handles.push(String::from_utf8_lossy(gh_handle).to_string());
+        }
+        txn.commit().expect("commit");
+
+        let req = request::Request {
+            function: "start_assignment".to_string(),
+            payload: serde_json::json!({
+                "assignment": input_json.assignment,
+                "users": input_json.users,
+                "gh_handles": gh_handles,
+            }),
+        };
+        request::write_u8(&req.to_vec(), conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to send request"
+            })).with_status_code(500))?;
+
+        request::read_u8(conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to read response"
+            })).with_status_code(500))?;
+
+        Ok(Response::empty_204())
     }
 
     fn get(&self, request: &Request) -> Result<Response, Response> {

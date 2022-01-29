@@ -91,9 +91,7 @@ impl App {
                     payload: serde_json::from_slice(request.body()).unwrap(),
                 };
 
-                debug!("Getting connection to SnapFaas");
                 let conn = &mut self.conn.get().expect("Lock failed");
-                debug!("Got it!");
                 if let Err(e) = request::write_u8(&req.to_vec(), conn) {
                     error!("Failed to send request to snapfaas: {:?}", e);
                     return Err(StatusCode::INTERNAL_SERVER_ERROR);

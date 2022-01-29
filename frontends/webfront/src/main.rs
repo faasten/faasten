@@ -55,6 +55,14 @@ fn main() -> Result<(), std::io::Error> {
                 .required(true)
                 .help("Base URL of server"),
         )
+        .arg(
+            Arg::with_name("snapfaas address")
+                .long("snapfaas_address")
+                .value_name("[ADDR:]PORT")
+                .takes_value(true)
+                .required(true)
+                .help("Path to snapfaas config YAML file"),
+        )
         .get_matches();
 
 
@@ -66,6 +74,7 @@ fn main() -> Result<(), std::io::Error> {
     let public_key_bytes = std::fs::read(matches.value_of("public key").expect("public key"))?;
     let private_key_bytes = std::fs::read(matches.value_of("secret key").expect("private key"))?;
     let base_url = matches.value_of("base url").expect("base url").to_string();
+    let snapfaas_address = matches.value_of("snapfaas address").unwrap().to_string();
     let app = app::App::new(
         app::GithubOAuthCredentials {
             client_id: github_client_id,
@@ -74,7 +83,8 @@ fn main() -> Result<(), std::io::Error> {
         PKey::private_key_from_pem(private_key_bytes.as_slice()).unwrap(),
         PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
         dbenv,
-        base_url
+        base_url,
+        snapfaas_address,
     );
     let listen_addr = matches.value_of("listen").unwrap();
     rouille::start_server(listen_addr, move |request| {

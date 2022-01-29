@@ -6653,6 +6653,10 @@ rec {
             packageId = "openssl";
           }
           {
+            name = "r2d2";
+            packageId = "r2d2";
+          }
+          {
             name = "regex";
             packageId = "regex";
           }
@@ -6677,6 +6681,10 @@ rec {
           {
             name = "serde_yaml";
             packageId = "serde_yaml";
+          }
+          {
+            name = "snapfaas";
+            packageId = "snapfaas";
           }
         ];
 
