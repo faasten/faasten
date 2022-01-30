@@ -467,15 +467,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4a1e36c821dbe04574f602848a19f742f4fb3c98d40449f11bcad18d6b17421"
 
 [[package]]
-name = "httpserver"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "http",
- "httparse",
-]
-
-[[package]]
 name = "humantime"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1707,7 +1698,7 @@ dependencies = [
  "clap",
  "env_logger",
  "http",
- "httpserver",
+ "httparse",
  "log",
  "ring",
  "serde",

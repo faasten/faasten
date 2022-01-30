@@ -1,7 +1,10 @@
+.env
 target
 out
 tmp
 storage/
+public.pem
+secret.pem
 *secret*
 *tmux*
 *\.ext4

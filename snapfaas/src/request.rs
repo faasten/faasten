@@ -8,7 +8,7 @@ pub enum RequestStatus {
     FunctionNotExist,
     ResourceExhausted,
     LaunchFailed,
-    SentToVM,
+    SentToVM(String),
 }
                 
 #[derive(Debug, Serialize, Deserialize)]

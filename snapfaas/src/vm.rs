@@ -293,7 +293,7 @@ impl Vm {
     }
 
     /// Send a HTTP POST request only if an authentication token is present
-    fn http_post(&self, sc_req: &syscalls::GithubRest) -> Result<reqwest::blocking::Response, Error> {
+    fn http_post(&self, sc_req: &syscalls::GithubRest, method: reqwest::Method) -> Result<reqwest::blocking::Response, Error> {
         // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
         let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
         url.set_path(&sc_req.route);
@@ -302,7 +302,7 @@ impl Vm {
                 match t_osstr.into_string() {
                     Ok(t_str) => {
                         let rest_client = &self.handle.as_ref().unwrap().rest_client;
-                        rest_client.post(url)
+                        rest_client.request(method, url)
                             .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
                             .header(reqwest::header::USER_AGENT, USER_AGENT)
                             .body(std::string::String::from(sc_req.body.as_ref().unwrap()))
@@ -383,20 +383,33 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::GithubRest(req)) => {
-                    let result = syscalls::GithubRestResponse{
-                        data: match syscalls::HttpVerb::from_i32(req.verb) {
-                            Some(syscalls::HttpVerb::Get) => {
-                                self.http_get(&req)?.bytes().map_err(|e| Error::HttpReq(e))?.to_vec()
-                            },
-                            Some(syscalls::HttpVerb::Post) => {
-                                self.http_post(&req)?.bytes().map_err(|e| Error::HttpReq(e))?.to_vec()
-                            },
-                            None => {
-                               format!("`{:?}` not supported", req.verb).as_bytes().to_vec()
-                            }
+                    let resp = match syscalls::HttpVerb::from_i32(req.verb) {
+                        Some(syscalls::HttpVerb::Get) => {
+                            Some(self.http_get(&req)?)
                         },
-                    }
-                    .encode_to_vec();
+                        Some(syscalls::HttpVerb::Post) => {
+                            Some(self.http_post(&req, reqwest::Method::POST)?)
+                        },
+                        Some(syscalls::HttpVerb::Put) => {
+                            Some(self.http_post(&req, reqwest::Method::PUT)?)
+                        },
+                        Some(syscalls::HttpVerb::Delete) => {
+                            Some(self.http_post(&req, reqwest::Method::DELETE)?)
+                        },
+                        None => {
+                           None
+                        }
+                    };
+                    let result = match resp {
+                        None => syscalls::GithubRestResponse {
+                            data: format!("`{:?}` not supported", req.verb).as_bytes().to_vec(),
+                            status: 0,
+                        },
+                        Some(resp) => syscalls::GithubRestResponse {
+                            status: resp.status().as_u16() as u32,
+                            data: resp.bytes().map_err(|e| Error::HttpReq(e))?.to_vec(),
+                        }
+                    }.encode_to_vec();
 
                     self.send_into_vm(result)?;
                 },

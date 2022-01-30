@@ -56,6 +56,8 @@ message WriteKeyResponse {
 enum HttpVerb {
   GET = 0;
   POST = 1;
+  PUT = 2;
+  DELETE = 4;
 }
 
 message GithubRest {
@@ -66,6 +68,7 @@ message GithubRest {
 
 message GithubRestResponse {
   bytes data = 1;
+  uint32 status = 2;
 }
 
 message GetCurrentLabel {

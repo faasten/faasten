@@ -2,8 +2,6 @@ use std::net::TcpListener;
 use clap::{App, Arg};
 
 mod app;
-mod config;
-mod server;
 
 fn main() -> Result<(), std::io::Error> {
     env_logger::init();
@@ -19,13 +17,13 @@ fn main() -> Result<(), std::io::Error> {
                 .help("Path to snapfaas config YAML file"),
         )
         .arg(
-            Arg::with_name("app config")
-                .short("a")
-                .long("app_config")
-                .value_name("YAML")
+            Arg::with_name("secret")
+                .short("s")
+                .long("secret")
+                .value_name("SECRET")
                 .takes_value(true)
-                .required(true)
-                .help("Path to app config YAML file"),
+                .required(false)
+                .help("GitHub Webhook shared secret"),
         )
         .arg(
             Arg::with_name("listen")
@@ -39,12 +37,12 @@ fn main() -> Result<(), std::io::Error> {
         .get_matches();
 
     let app = app::App::new(
-        matches.value_of("app config").unwrap(),
+        matches.value_of("secret").map(ToString::to_string),
         matches.value_of("snapfaas address").unwrap().to_string()
     );
     let listen_addr = matches.value_of("listen").unwrap();
     let listener = TcpListener::bind(listen_addr).unwrap();
-    let server = server::Server::new(
+    let server = httpserver::Server::new(
         listener,
         app
     );

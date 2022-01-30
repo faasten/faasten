@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+<body>
+  
+<script language="javascript">
+  let baseUrl = "https://sns29.cs.princeton.edu";
+  let jwt = localStorage.getItem("snapfaas-jwt");
+  let githubPopup;
+  let casPopup;
+
+  function sfReq(path, args) {
+    let url = new URL(baseUrl);
+    url.pathname = path;
+    args = (args || {});
+    let params = (args.params || {});
+    Object.entries(params).forEach(([key, value]) => url.searchParams.append(key, value));
+    return fetch(url, {
+      method: args.method || 'GET',
+      headers: new Headers({
+        'Authorization': 'Bearer '+jwt, 
+      }),
+    });
+  }
+
+  function sfPut(path, args) {
+    let url = new URL(baseUrl);
+    url.pathname = path;
+    args = args || {};
+    return fetch(url, {
+      method: 'POST',
+      headers: new Headers({
+        'Authorization': 'Bearer '+jwt, 
+      }),
+      body: args.data
+    });
+  }
+
+  if (!jwt) {
+      casPopup = window.open(baseUrl + "/login/cas", "Login", "popup");
+  }
+
+  function githubLogin() {
+    console.log("Logging into Github");
+    githubPopup = window.open(baseUrl + "/login/github", "Login", "popup");
+  }
+
+  window.addEventListener("message", (event) => {
+      if (event.source === casPopup) {
+        jwt = event.data;
+      } else if (event.source === githubPopup) {
+        if (event.data == "jwt_please") {
+          event.source.postMessage(jwt, baseUrl);
+        }
+        console.log(event.data);
+      }
+  }, false);
+</script>
+</body>
+</html>

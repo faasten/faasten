@@ -1,0 +1,62 @@
+[package]
+name = "snapfaas"
+version = "0.1.0"
+authors = ["David H. Liu<hl7@cs.princeton.edu>", "Yue Tan<yuetan@cs.princeton.edu"]
+edition = "2018"
+
+[[bin]]
+name = "firerunner"
+path = "bins/firerunner/main.rs"
+
+[[bin]]
+name = "singlevm"
+path = "bins/singlevm/main.rs"
+
+[[bin]]
+name = "multivm"
+path = "bins/multivm/main.rs"
+
+[[bin]]
+name = "sfclient"
+path = "bins/sfclient/main.rs"
+
+[[bin]]
+name = "sfdb"
+path = "bins/sfdb/main.rs"
+
+[lib]
+
+[dependencies]
+ctrlc = "^3.2.0"
+reqwest = { version = "0.11", features = ["blocking"] }
+labeled = { git = "git://github.com/alevy/labeled" }
+bytes = "1.1.0"
+byteorder = "1.2.1"
+prost = "0.9.0"
+lmdb-rkv = "0.14.0"
+url = "2.2"
+clap = "2.33.0"
+log ={ version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
+env_logger = "^0.9.0"
+serde = {version = "1.0.102", features = ["derive"]}
+serde_yaml = "0.8.11"
+serde_json = "*"
+cgroups = "0.1.0"
+vmm = { git = "git://github.com/princeton-sns/firecracker", rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f", features = ["vsock"] }
+memory_model = { git = "git://github.com/princeton-sns/firecracker", rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f" }
+fc_util = { git = "git://github.com/princeton-sns/firecracker", rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f" }
+sys_util = { git = "git://github.com/princeton-sns/firecracker", rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f" }
+net_util = { git = "git://github.com/princeton-sns/firecracker", rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f" }
+time = "0.1"
+signal-hook = "0.1.13"
+crossbeam-channel = "0.4.2"
+futures = "0.1.18"
+glob =  "*"
+tokio = { version = "1.14.0", features = [ "rt", "macros",  "process", "net" ] }
+lazy_static = "1.4.0"
+
+[dev-dependencies]
+tempfile = "^3.3.0"
+
+[build-dependencies]
+prost-build = "0.9.0"

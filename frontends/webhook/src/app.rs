@@ -1,36 +1,57 @@
-use github_types::{PushEvent, PingEvent};
 use bytes::Bytes;
 use http;
 use http::status::StatusCode;
 use log::{error, debug};
 
-use std::sync::Arc;
-use std::sync::Mutex;
 use std::net::TcpStream;
 
 use snapfaas::request;
 
-use crate::config::Config;
-use crate::server::Handler;
+use httpserver::Handler;
+
+struct SnapFaasManager {
+    address: String,
+}
+
+impl r2d2::ManageConnection for SnapFaasManager {
+    type Connection = TcpStream;
+    type Error = std::io::Error;
+
+    fn connect(&self) -> Result<Self::Connection, Self::Error> {
+        Ok(TcpStream::connect(&self.address)?)
+    }
+
+    fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+        let req = request::Request {
+            function: String::from("ping"),
+            payload: serde_json::Value::Null,
+        };
+        request::write_u8(&req.to_vec(), conn)?;
+        request::read_u8(conn)?;
+        Ok(())
+    }
+
+    fn has_broken(&self, conn: &mut Self::Connection) -> bool {
+        conn.take_error().ok().flatten().is_some()
+    }
+}
 
 #[derive(Clone)]
 pub struct App {
-    conn: Arc<Mutex<TcpStream>>,
-    config: Config,
+    conn: r2d2::Pool<SnapFaasManager>,
+    secret: Option<String>,
 }
 
 impl App {
-    pub fn new(config_path: &str, snapfaas_address: String) -> Self {
-        let config = Config::new(config_path);
-        debug!("App config: {:?}", config);
-        let conn = Arc::new(Mutex::new(TcpStream::connect(snapfaas_address).expect("Cannot connect to snapfaas")));
+    pub fn new(secret: Option<String>, snapfaas_address: String) -> Self {
+        let conn = r2d2::Pool::builder().max_size(10).build(SnapFaasManager { address: snapfaas_address }).expect("pool");
         App {
-            config,
+            secret,
             conn,
         }
     }
 
-    pub fn handle_github_event(&self, request: &http::Request<Bytes>) -> AppResult<()> {
+    pub fn handle_github_event(&self, request: &http::Request<Bytes>) -> AppResult<Bytes> {
         let event_type = request
             .headers()
             .get("x-github-event")
@@ -38,17 +59,8 @@ impl App {
         debug!("Headers contain x-github-event key.");
         match event_type.as_bytes() {
             b"ping" => {
-                let event_body: PingEvent =
-                    serde_json::from_slice(request.body().as_ref()).or(Err(StatusCode::BAD_REQUEST))?;
-
-                let name = &event_body.repository.ok_or(StatusCode::BAD_REQUEST)?.full_name;
-                let repo = self
-                    .config
-                    .repos
-                    .get(name)
-                    .ok_or(StatusCode::NOT_FOUND)?;
                 verify_github_request(
-                    &repo.secret,
+                    &self.secret,
                     &request.body(),
                     request
                         .headers()
@@ -57,21 +69,12 @@ impl App {
                 )?;
 
                 debug!("GitHub pinged.");
-                Ok(())
+                Ok(Bytes::new())
             }
             b"push" => {
                 debug!("Push event.");
-                let event_body: PushEvent =
-                    serde_json::from_slice(request.body().as_ref()).or(Err(StatusCode::BAD_REQUEST))?;
-
-                let name = &event_body.repository.full_name;
-                let repo = self
-                    .config
-                    .repos
-                    .get(name)
-                    .ok_or(StatusCode::NOT_FOUND)?;
                 verify_github_request(
-                    &repo.secret,
+                    &self.secret,
                     &request.body(),
                     request
                         .headers()
@@ -79,12 +82,16 @@ impl App {
                         .map(|v| v.as_bytes()),
                 )?;
 
+                // TODO: use the event body to set a label?
+                /*let event_body: PushEvent =
+                    serde_json::from_slice(request.body().as_ref()).or(Err(StatusCode::BAD_REQUEST))?;*/
+
                 let req = request::Request {
-                    function: "build_tarball".to_string(),
+                    function: "gh_repo".to_string(),
                     payload: serde_json::from_slice(request.body()).unwrap(),
                 };
 
-                let conn = &mut *self.conn.lock().expect("Lock failed");
+                let conn = &mut self.conn.get().expect("Lock failed");
                 if let Err(e) = request::write_u8(&req.to_vec(), conn) {
                     error!("Failed to send request to snapfaas: {:?}", e);
                     return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -102,7 +109,7 @@ impl App {
                             request::RequestStatus::ResourceExhausted => Err(StatusCode::TOO_MANY_REQUESTS),
                             request::RequestStatus::FunctionNotExist | request::RequestStatus::Dropped => Err(StatusCode::BAD_REQUEST),
                             request::RequestStatus::LaunchFailed => Err(StatusCode::INTERNAL_SERVER_ERROR),
-                            request::RequestStatus::SentToVM => Ok(()),
+                            request::RequestStatus::SentToVM(response) => Ok(Bytes::from(response)),
                         }
                     },
                 }
@@ -117,8 +124,8 @@ type AppResult<T> = Result<T, StatusCode>;
 impl Handler for App {
     fn handle_request(&mut self, request: &http::Request<Bytes>) -> http::Response<Bytes> {
         match self.handle_github_event(request) {
-            Ok(()) => http::Response::builder()
-                .body(Bytes::new())
+            Ok(body) => http::Response::builder()
+                .body(body)
                 .unwrap(),
             Err(status_code) => http::Response::builder()
                 .status(status_code)
