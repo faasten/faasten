@@ -68,6 +68,7 @@ pub struct App {
 
 fn legal_path_for_user(key: &str, login: &String) -> bool {
     let regexps = vec![
+        format!("cos316/enrollments.json"),
         format!("cos316/assignments"),
         format!("cos316/assignments/[^/]/{}", login),
     ];
