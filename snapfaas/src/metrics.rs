@@ -7,9 +7,15 @@ use log::error;
 use serde_json;
 use serde::Serialize;
 
+use crate::request::Request;
+
 #[derive(Default, Debug, Serialize)]
 pub struct RequestTimestamps {
-    /// request arrival time
+    /// time a request arrives at the gateway
+    pub at_gateway: u64,
+    /// time a request arrives at the VMM invoke handler
+    pub at_vmm: u64,
+    /// time a request arrives at a worker
     pub arrived: u64,
     /// resource allocation completion time, 0 if resource exhaution
     pub allocated: u64,
@@ -17,6 +23,8 @@ pub struct RequestTimestamps {
     pub launched: u64,
     /// response returned time, 0 if execution fails
     pub completed: u64,
+    /// request in bytes
+    pub request: Request,
 }
 
 impl RequestTimestamps {

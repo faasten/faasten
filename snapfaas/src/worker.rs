@@ -60,14 +60,10 @@ impl Worker {
                         stat.flush();
                         return;
                     }
-                    Message::Request(req, rsp_sender) => {
+                    Message::Request((req, rsp_sender, mut tsps)) => {
                         debug!("processing request to function {}", &req.function);
                         
-                        use metrics::RequestTimestamps;
-                        let mut tsps = RequestTimestamps {
-                            arrived: precise_time_ns(),
-                            ..Default::default()
-                        };
+                        tsps.arrived = precise_time_ns();
 
                         let function_name = req.function.clone();
                         let (tx, rx) = mpsc::channel();
