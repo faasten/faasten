@@ -201,7 +201,6 @@ impl App {
             users: Vec<String>,
         }
         let input_json: Input = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
-        println!("{:?}", input_json);
 
         let txn = self.dbenv.begin_ro_txn().unwrap();
         let admins: Vec<String> = txn.get(*self.user_db, &"admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
@@ -211,7 +210,8 @@ impl App {
 
         let mut gh_handles = vec![];
         for user in input_json.users.iter() {
-            let gh_handle = txn.get(*self.user_db, &format!("github/for/user/{}", user).as_str()).or(Err(Response::empty_400()))?;
+            let gh_handle = txn.get(*self.user_db, &format!("github/for/user/{}", user).as_str()).or(
+                Err(Response::json(&serde_json::json!({ "error": format!("no github handle for \"{}\"", user))).with_status_code(400))?;
             gh_handles.push(String::from_utf8_lossy(gh_handle).to_string());
         }
         txn.commit().expect("commit");
