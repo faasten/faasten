@@ -66,20 +66,6 @@ pub struct App {
     conn: r2d2::Pool<SnapFaasManager>,
 }
 
-fn legal_path_for_user(key: &str, login: &String) -> bool {
-    let regexps = vec![
-        format!("cos316/enrollments.json"),
-        format!("cos316/assignments"),
-        format!("cos316/assignments/[^/]/{}", login),
-    ];
-    for re in regexps.iter().map(|re| regex::Regex::new(&re.as_str())).filter_map(Result::ok) {
-        if re.is_match(key) {
-            return true;
-        }
-    }
-    false
-}
-
 impl App {
     pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment, base_url: String, snapfaas_address: String) -> App {
         let dbenv = Arc::new(dbenv);
@@ -97,6 +83,30 @@ impl App {
             base_url,
         }
     }
+
+    fn legal_path_for_user<T: Transaction>(&self, key: &str, login: &String, txn: &T) -> bool {
+        let regexps = regex::RegexSet::new(&[
+            format!("cos316/enrollments.json"),
+            format!("cos316/assignments"),
+            format!("cos316/assignments/[^/]/{}", login),
+        ]).unwrap();
+        if regexps.is_match(key) {
+            return true;
+        }
+        if let Ok(Some(captures)) = regex::Regex::new("github/([^/]/[^/])/?.*").map(|r| r.captures(key)) {
+            let mut s = String::new();
+            captures.expand("$1/_meta", &mut s);
+            #[derive(Deserialize)]
+            struct Meta {
+                users: Vec<String>
+            }
+            if let Some(meta) = txn.get(*self.default_db, &s.as_bytes()).map(|b| serde_json::from_slice::<Meta>(b).ok()).ok().flatten() {
+                return meta.users.contains(login);
+            }
+        }
+        false
+    }
+
 
     fn verify_jwt(&self, request: &Request) -> Result<String, Response> {
         let jwt = request.header("Authorization").and_then(|header| header.split(" ").last()).ok_or(Response::empty_400())?;
@@ -211,7 +221,10 @@ impl App {
         let mut gh_handles = vec![];
         for user in input_json.users.iter() {
             let gh_handle = txn.get(*self.user_db, &format!("github/for/user/{}", user).as_str()).or(
-                Err(Response::json(&serde_json::json!({ "error": format!("no github handle for \"{}\"", user))).with_status_code(400))?;
+                Err(
+                    Response::json(&serde_json::json!({ "error": format!("no github handle for \"{}\"", user) })).with_status_code(400)
+                )
+            )?;
             gh_handles.push(String::from_utf8_lossy(gh_handle).to_string());
         }
         txn.commit().expect("commit");
@@ -249,7 +262,7 @@ impl App {
         let val = {
             let mut results = BTreeMap::new();
             for ref key in keys.split(",") {
-                if admins.contains(&login) || legal_path_for_user(key, &login) {
+                if admins.contains(&login) || self.legal_path_for_user(key, &login, &txn) {
                     results.insert(*key,
                         txn.get(*self.default_db, &key).ok()
                             .map(String::from_utf8_lossy)
