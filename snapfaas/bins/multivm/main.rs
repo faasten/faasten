@@ -79,11 +79,11 @@ fn main() {
     if let Some(l) = matches.value_of("listen address") {
         let gateway = gateway::HTTPGateway::listen(l);
 
-        for (request, response_tx) in gateway {
+        for (request, response_tx, timestamps) in gateway {
             // Return when a VM acquisition succeeds or fails
             // but before a VM launches (if it is newly allocated)
             // and execute the request.
-            request_sender.send(Message::Request(request, response_tx)).expect("Failed to send request");
+            request_sender.send(Message::Request((request, response_tx, timestamps))).expect("Failed to send request");
         }
     }
 }

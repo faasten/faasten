@@ -317,15 +317,20 @@ impl Vm {
     }
 
     fn send_req(&self, invoke: syscalls::Invoke) -> bool {
+        use time::precise_time_ns;
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
             let (tx, _) = mpsc::channel();
-            invoke_handle.send(Message::Request(
-                Request {
-                    function: invoke.function,
-                    payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
-                },
-                tx,
-            )).is_ok()
+            let req = Request {
+                function: invoke.function,
+                payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
+            };
+            use crate::metrics::RequestTimestamps;
+            let timestamps = RequestTimestamps {
+                at_vmm: precise_time_ns(),
+                request: req.clone(),
+                ..Default::default()
+            };
+            invoke_handle.send(Message::Request((req, tx, timestamps))).is_ok()
         } else {
             debug!("No invoke handle, ignoring invoke syscall. {:?}", invoke);
             false

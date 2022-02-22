@@ -22,7 +22,7 @@ impl Response {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Request {
     pub function: String,
     pub payload: Value,
