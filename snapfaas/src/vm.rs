@@ -382,6 +382,28 @@ impl Vm {
 
                     self.send_into_vm(result)?;
                 },
+                //Some(SC::Read(path)) => {
+                //    let result = syscalls::ReadResponse {
+                //        value: labeled_fs.read().unwrap().read(p, &self.current_label).ok(),
+                //    }
+                //    .encode_to_vec();
+
+                //    self.send_into_vm(result)?;
+                //},
+                //Some(SC::Write(path, data)) => {
+                //    let result = syscalls::WriteResponse {
+                //        success: labeled_fs.write().unwrap().write(p, data,
+                //                                                    &self.current_label,
+                //                                                    &self.function_name).is_ok(),
+                //    }
+                //    .encode_to_vec();
+
+                //    self.send_into_vm(result)?;
+                //},
+                //Some(SC::CreateDir(dir, name)) => {
+                //},
+                //Some(SC::CreateFile(dir, name)) => {
+                //},
                 Some(SC::GithubRest(req)) => {
                     let resp = match syscalls::HttpVerb::from_i32(req.verb) {
                         Some(syscalls::HttpVerb::Get) => {
