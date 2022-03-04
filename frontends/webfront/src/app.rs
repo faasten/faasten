@@ -141,7 +141,7 @@ impl App {
         rouille::router!(request,
             (GET) (/login/github) => {
                 Ok(Response::redirect_302(
-                    format!("https://github.com/login/oauth/authorize?client_id={}&scopes=repo:invites", self.gh_creds.client_id)))
+                    format!("https://github.com/login/oauth/authorize?client_id={}&scope=repo:invites", self.gh_creds.client_id)))
             },
             (GET) (/authenticate/github) => {
                 self.auth_github(request)
