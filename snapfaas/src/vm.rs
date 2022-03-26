@@ -17,6 +17,7 @@ use crate::configs::FunctionConfig;
 use crate::message::Message;
 use crate::syscalls;
 use crate::request::Request;
+use crate::labeled_fs::DBENV;
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
@@ -26,13 +27,6 @@ const USER_AGENT: &str = "snapfaas";
 
 use labeled::dclabel::{Clause, Component, DCLabel};
 use labeled::Label;
-
-lazy_static::lazy_static! {
-    static ref DBENV: lmdb::Environment = lmdb::Environment::new()
-        .set_map_size(4096 * 1024 * 1024)
-        .open(std::path::Path::new("storage"))
-        .unwrap();
-}
 
 #[derive(Debug)]
 pub enum Error {

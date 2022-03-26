@@ -1,16 +1,39 @@
 use std::path::Path;
-use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use lazy_static;
+use lmdb;
+use lmdb::{Transaction, WriteFlags};
 use labeled::dclabel::DCLabel;
-use labeled::Label;
 
 mod dir;
 mod file;
+mod direntry;
+pub mod utils;
 
+use self::direntry::{LabeledDirEntry, DirEntry};
 use self::dir::Directory;
 use self::file::File;
 
-// types
+lazy_static::lazy_static! {
+    static ref NEXT_UID: AtomicU64 = AtomicU64::new(0);
+    pub static ref DBENV: lmdb::Environment = {
+        let dbenv = lmdb::Environment::new()
+            .set_map_size(4096 * 1024 * 1024)
+            .open(std::path::Path::new("storage"))
+            .unwrap();
+
+        let default_db = dbenv.open_db(None).unwrap();
+        let mut txn = dbenv.begin_rw_txn().unwrap();
+        let root_uid = get_next_uid();
+        if let Err(lmdb::Error::NotFound) = get_val_db(root_uid, &txn, default_db) {
+            put_val_db(root_uid, Directory::new().to_vec(), &mut txn, default_db);
+        }
+        txn.commit().unwrap();
+
+        dbenv
+    };
+}
 
 #[derive(PartialEq, Debug)]
 pub enum Error {
@@ -20,161 +43,146 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-pub struct LabeledDirEntry<T> {
-    label: DCLabel,
-    inner: T
+//////////////
+//   APIs   //
+//////////////
+
+/// read always succeeds by raising labels unless the target path is illegal
+pub fn read(path: &str, cur_label: &mut DCLabel) -> Result<Vec<u8>> {
+    let txn = DBENV.begin_ro_txn().unwrap();
+    let db = DBENV.open_db(None).unwrap();
+    let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<Vec<u8>> {
+        let entry = labeled.unlabel(cur_label);
+        match entry.entry_type() {
+            DirEntry::F => {
+                let file = get_val_db(entry.uid(), &txn, db).map(File::from_vec).unwrap();
+                Ok(file.data())
+            },
+            DirEntry::D => Err(Error::BadPath),
+        }
+    });
+    txn.commit().unwrap();
+    res
 }
 
-impl<T> LabeledDirEntry<T> {
-    pub fn unlabel(&self, cur_label: &mut DCLabel) -> &T {
-        if !self.label.can_flow_to(cur_label) {
-            *cur_label = self.label.clone().lub(cur_label.clone());
+/// read always succeed by raising labels unless the target path is illegal
+pub fn list(path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
+    let txn = DBENV.begin_ro_txn().unwrap();
+    let db = DBENV.open_db(None).unwrap();
+    let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<Vec<String>> {
+        let entry = labeled.unlabel(cur_label);
+        match entry.entry_type() {
+            DirEntry::D => {
+                let dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
+                Ok(dir.list())
+            },
+            DirEntry::F => Err(Error::BadPath),
         }
-        &self.inner
-    }
-
-    /// First read and raise label if needed, then apply privilege to check if write can happen.
-    /// This function always updates `cur_label` to privilege applied.
-    pub fn unlabel_mut(&mut self, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<&mut T> {
-        if !self.label.can_flow_to(cur_label) {
-            *cur_label = self.label.clone().lub(cur_label.clone());
-        }
-        let new_label = cur_label.clone().glb(privilege);
-        if new_label.can_flow_to(cur_label) {
-            *cur_label = new_label;    
-            Ok(&mut self.inner)
-        } else {
-            Err(Error::Unauthorized)
-        }
-    }
-
-    fn unlabel_mut_no_write_check(&mut self, cur_label: &mut DCLabel) -> &mut T {
-        if !self.label.can_flow_to(cur_label) {
-            *cur_label = self.label.clone().lub(cur_label.clone());
-        }
-        &mut self.inner
-    }
-
-    pub fn label(&self) -> DCLabel {
-        self.label.clone()
-    }
+    });
+    txn.commit().unwrap();
+    res
 }
 
-pub enum DirEntry {
-    D(LabeledDirEntry<Directory>),
-    F(LabeledDirEntry<File>),
-}
-
-impl DirEntry {
-    fn label(&self) -> DCLabel {
-        match self {
-            Self::D(dir) => dir.label(),
-            Self::F(file) => file.label(),
+/// create_dir only fails when `cur_label` cannot flow to `label` or target directory's label
+pub fn create_dir(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<()> {
+    let mut txn = DBENV.begin_rw_txn().unwrap();
+    let db = DBENV.open_db(None).unwrap();
+    let res = get_direntry(dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
+        let entry = labeled.unlabel_write_check(cur_label, privilege)?;
+        match entry.entry_type() {
+            DirEntry::D => {
+                let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
+                let uid = dir.create(name, cur_label, DirEntry::D, label)?;
+                put_val_db(uid, Directory::new().to_vec(), &mut txn, db);
+                put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
+                Ok(())
+            },
+            DirEntry::F => Err(Error::BadPath),
         }
-    }
+    });
+    txn.commit().unwrap();
+    res
 }
 
-pub struct LabeledFS {
-    dummy_dir: LabeledDirEntry<Directory>,
-}
-
-impl LabeledFS {
-    // API
-    pub fn new() -> Self {
-        Self { dummy_dir: LabeledDirEntry { label: DCLabel::bottom(), inner: Directory::new_dummy() } }
-    }
-
-    /// read always succeed by raising labels unless the target path is illegal
-    pub fn read(&self, path: &str, cur_label: &mut DCLabel) -> Result<Vec<u8>> {
-        let path = Path::new(path);
-        let dir = path.parent().ok_or(Error::BadPath)?;
-        let target = path.file_name().ok_or(Error::BadPath)?.to_str().ok_or(Error::BadPath)?;
-        let dir_obj = self.get_dir_obj(dir, cur_label)?;
-        if let DirEntry::F(target_obj) = dir_obj.unlabel(cur_label).get(target)? {
-            Ok(target_obj.unlabel(cur_label).data())
-        } else {
-            Err(Error::BadPath)
+/// create_file only fails when `cur_label` cannot flow to `label` or target directory's label
+pub fn create_file(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<()> {
+    let mut txn = DBENV.begin_rw_txn().unwrap();
+    let db = DBENV.open_db(None).unwrap();
+    let res = get_direntry(dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
+        let entry = labeled.unlabel_write_check(cur_label, privilege)?;
+        match entry.entry_type() {
+            DirEntry::D => {
+                let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
+                let uid = dir.create(name, cur_label, DirEntry::F, label)?;
+                put_val_db(uid, File::new().to_vec(), &mut txn, db);
+                put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
+                Ok(())
+            },
+            DirEntry::F => Err(Error::BadPath),
         }
-    }
+    });
+    txn.commit().unwrap();
+    res
+}
 
-    /// read always succeed by raising labels unless the target path is illegal
-    pub fn list(&self, path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
-        if path == "/" {
-            let target_obj = self.get_dir_obj(&Path::new(path), cur_label)?;
-            Ok(target_obj.unlabel(cur_label).list())
-        } else {
-            let path = Path::new(path);
-            let dir = path.parent().ok_or(Error::BadPath)?;
-            let target = path.file_name().ok_or(Error::BadPath)?.to_str().ok_or(Error::BadPath)?;
-            let dir_obj = self.get_dir_obj(dir, cur_label)?;
-            if let DirEntry::D(target_obj) = dir_obj.unlabel(cur_label).get(target)? {
-                Ok(target_obj.unlabel(cur_label).list())
-            } else {
-                Err(Error::BadPath)
+/// write fails when `cur_label` cannot flow to the target file's label 
+pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<()> { 
+    let mut txn = DBENV.begin_rw_txn().unwrap();
+    let db = DBENV.open_db(None).unwrap();
+    let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
+        let entry = labeled.unlabel_write_check(cur_label, privilege)?;
+        match entry.entry_type() {
+            DirEntry::F => {
+                let mut file = get_val_db(entry.uid(), &txn, db).map(File::from_vec).unwrap();
+                file.write(data);
+                put_val_db(entry.uid(), file.to_vec(), &mut txn, db);
+                Ok(())
             }
+            DirEntry::D => Err(Error::BadPath),
+        }
+    });
+    txn.commit().unwrap();
+    res
+}
+
+/////////////
+// helpers //
+/////////////
+// return a uid in big-endian bytes
+fn get_next_uid() -> u64 {
+    NEXT_UID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn get_val_db<T>(uid: u64, txn: &T, db: lmdb::Database) -> std::result::Result<Vec<u8>, lmdb::Error>
+where T: Transaction {
+    txn.get(db, &uid.to_be_bytes()).map(Vec::from)
+}
+
+fn put_val_db(uid: u64, val: Vec<u8>, txn: &mut lmdb::RwTransaction, db: lmdb::Database) {
+    let _ = txn.put(db, &uid.to_be_bytes(), &val, WriteFlags::empty());
+}
+
+// return the labeled direntry named by the path
+fn get_direntry<T>(path: &str, cur_label: &mut DCLabel, txn: &T, db: lmdb::Database) -> Result<LabeledDirEntry>
+where T: Transaction
+{
+    let path = Path::new(path);
+    let mut labeled = LabeledDirEntry::root();
+    let mut it = path.iter();
+    let _ = it.next();
+    for component in it {
+        let entry = labeled.unlabel(cur_label);
+        match entry.entry_type() {
+            DirEntry::F => {
+                return Err(Error::BadPath);
+            },
+            DirEntry::D => {
+                let cur_dir = get_val_db(entry.uid(), txn, db).map(Directory::from_vec).unwrap();
+                labeled = cur_dir.get(component.to_str().unwrap())?.clone();
+            },
         }
     }
-
-    /// write fails when `cur_label` cannot flow to the target file's label 
-    pub fn write(&mut self, path: &str, data: Vec<u8>, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<()> { 
-        let path = Path::new(path);
-        let dir = path.parent().ok_or(Error::BadPath)?;
-        let filename = path.file_name().ok_or(Error::BadPath)?.to_str().ok_or(Error::BadPath)?;
-        let dir_obj = self.get_dir_obj_mut(dir, cur_label)?;
-        if let DirEntry::F(file_obj) = dir_obj.unlabel_mut_no_write_check(cur_label).get_mut(filename)? {
-            Ok(file_obj.unlabel_mut(cur_label, privilege)?.write(data))
-        } else {
-            Err(Error::BadPath)
-        }
-    }
-
-    /// create_dir only fails when `cur_label` cannot flow to `label` or target directory's label
-    pub fn create_dir(&mut self, dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<()> {
-        let dir_obj = self.get_dir_obj_mut(&Path::new(dir), cur_label)?; 
-        let new_labeled = LabeledDirEntry {label, inner: Directory::new()};
-        dir_obj.unlabel_mut(cur_label, privilege)?.create(name, cur_label, DirEntry::D(new_labeled))
-    }
-
-    /// create_file only fails when `cur_label` cannot flow to `label` or target directory's label
-    pub fn create_file(&mut self, dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<()> {
-        let dir_obj = self.get_dir_obj_mut(&Path::new(dir), cur_label)?; 
-        let new_labeled = LabeledDirEntry {label, inner: File::new()};
-        dir_obj.unlabel_mut(cur_label, privilege)?.create(name, cur_label, DirEntry::F(new_labeled))
-    }
-
-    // helpers
-
-    // return the refenrence to the directory object named by the path
-    fn get_dir_obj(&self, path: &Path, cur_label: &mut DCLabel) -> Result<&LabeledDirEntry<Directory>> {
-        let mut cur_dir = &self.dummy_dir;
-        for component in path.iter() {
-            match cur_dir.unlabel(cur_label).get(component.to_str().unwrap())? {
-                DirEntry::F(_) => {
-                    return Err(Error::BadPath);
-                },
-                DirEntry::D(dir_obj) => {
-                    cur_dir = dir_obj;
-                },
-            }
-        }
-        Ok(cur_dir)
-    }
-
-    // return the mutable refenrence to the directory object named by the path
-    fn get_dir_obj_mut(&mut self, path: &Path, cur_label: &mut DCLabel) -> Result<&mut LabeledDirEntry<Directory>> {
-        let mut cur_dir = &mut self.dummy_dir;
-        for component in path.iter() {
-            match cur_dir.unlabel_mut_no_write_check(cur_label).get_mut(component.to_str().unwrap())? {
-                DirEntry::F(_) => {
-                    return Err(Error::BadPath);
-                },
-                DirEntry::D(dir_obj) => {
-                    cur_dir = dir_obj;
-                },
-            }
-        }
-        Ok(cur_dir)
-    }
+    Ok(labeled)
 }
 
 #[cfg(test)]
