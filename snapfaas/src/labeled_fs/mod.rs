@@ -46,11 +46,10 @@ type Result<T> = std::result::Result<T, Error>;
 //////////////
 //   APIs   //
 //////////////
-
 /// read always succeeds by raising labels unless the target path is illegal
 pub fn read(path: &str, cur_label: &mut DCLabel) -> Result<Vec<u8>> {
-    let txn = DBENV.begin_ro_txn().unwrap();
     let db = DBENV.open_db(None).unwrap();
+    let txn = DBENV.begin_ro_txn().unwrap();
     let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<Vec<u8>> {
         let entry = labeled.unlabel(cur_label);
         match entry.entry_type() {
@@ -67,8 +66,8 @@ pub fn read(path: &str, cur_label: &mut DCLabel) -> Result<Vec<u8>> {
 
 /// read always succeed by raising labels unless the target path is illegal
 pub fn list(path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
-    let txn = DBENV.begin_ro_txn().unwrap();
     let db = DBENV.open_db(None).unwrap();
+    let txn = DBENV.begin_ro_txn().unwrap();
     let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<Vec<String>> {
         let entry = labeled.unlabel(cur_label);
         match entry.entry_type() {
@@ -85,8 +84,8 @@ pub fn list(path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
 
 /// create_dir only fails when `cur_label` cannot flow to `label` or target directory's label
 pub fn create_dir(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<()> {
-    let mut txn = DBENV.begin_rw_txn().unwrap();
     let db = DBENV.open_db(None).unwrap();
+    let mut txn = DBENV.begin_rw_txn().unwrap();
     let res = get_direntry(dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
         let entry = labeled.unlabel_write_check(cur_label, privilege)?;
         match entry.entry_type() {
@@ -106,8 +105,8 @@ pub fn create_dir(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel
 
 /// create_file only fails when `cur_label` cannot flow to `label` or target directory's label
 pub fn create_file(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<()> {
-    let mut txn = DBENV.begin_rw_txn().unwrap();
     let db = DBENV.open_db(None).unwrap();
+    let mut txn = DBENV.begin_rw_txn().unwrap();
     let res = get_direntry(dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
         let entry = labeled.unlabel_write_check(cur_label, privilege)?;
         match entry.entry_type() {
@@ -127,8 +126,8 @@ pub fn create_file(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabe
 
 /// write fails when `cur_label` cannot flow to the target file's label 
 pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<()> { 
-    let mut txn = DBENV.begin_rw_txn().unwrap();
     let db = DBENV.open_db(None).unwrap();
+    let mut txn = DBENV.begin_rw_txn().unwrap();
     let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
         let entry = labeled.unlabel_write_check(cur_label, privilege)?;
         match entry.entry_type() {
@@ -198,184 +197,53 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_create_dir_success1() {
+    fn test_storage_create_dir_list_fail() {
         // create `/gh_repo`
-        let mut s = LabeledFS::new();
         let target_label = DCLabel::new(true, [["gh_repo"]]);
         let mut cur_label = root_privilege();
         let old_label = cur_label.clone();
-        assert!(s.create_dir("/", "gh_repo", target_label, &mut cur_label, empty_privilege()).is_ok());
+        assert!(create_dir("/", "gh_repo", target_label, &mut cur_label, empty_privilege()).is_ok());
+        assert_eq!(cur_label, old_label);
+
+        // list
+        let mut cur_label = DCLabel::public();
+        assert_eq!(list("/", &mut cur_label).unwrap(), vec![String::from("gh_repo"); 1]);
+
+        // already exists
+        let target_label = DCLabel::new(true, [["gh_repo"]]);
+        let mut cur_label = root_privilege();
+        assert_eq!(create_dir("/", "gh_repo", target_label, &mut cur_label, empty_privilege()).unwrap_err(), Error::BadPath);
+
+        // missing path components
+        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
+        let mut cur_label = DCLabel::public();
+        let old_label = cur_label.clone();
+        assert_eq!(create_dir("/gh_repo/yue", "yue", target_label, &mut cur_label, root_privilege()).unwrap_err(), Error::BadPath);
         assert_eq!(cur_label, old_label);
     }
 
     #[test]
-    fn test_storage_create_dir_success2() {
-        // create `/gh_repo`
-        let mut s = LabeledFS::new();
-        let target_label = DCLabel::new(true, [["gh_repo"]]);
-        let mut cur_label = DCLabel::new([["amit"]], [["yue"]]);
-        assert!(s.create_dir("/", "gh_repo", target_label, &mut cur_label, root_privilege()).is_ok());
-        assert_eq!(cur_label, root_privilege());
-    }
-
-    #[test]
-    fn test_storage_create_dir_fail1() {
+    fn test_storage_create_file_write_read() {
         // create `/gh_repo/yue`
-        let mut s = LabeledFS::new();
+        let mut cur_label = DCLabel::new([["yue"]], [["gh_repo"]]);
         let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        let mut cur_label = DCLabel::public();
-        let old_label = cur_label.clone();
-        assert_eq!(s.create_dir("/gh_repo", "yue", target_label, &mut cur_label, root_privilege()).unwrap_err(), Error::BadPath);
-        assert_eq!(cur_label, old_label);
-    }
-
-    #[test]
-    fn test_storage_create_dir_fail2() {
-        // cannot write the parent directory
-        let mut s = LabeledFS::new();
-        let target_label = DCLabel::new(true, [["gh_repo"]]);
-        let mut cur_label = DCLabel::public();
-        assert_eq!(s.create_dir("/", "gh_repo", target_label, &mut cur_label, empty_privilege()).unwrap_err(), Error::Unauthorized);
-    }
-
-    #[test]
-    fn test_storage_create_dir_fail3() {
-        // cannot read the parent directory
-        let mut s = LabeledFS::new();
-        let target_label = DCLabel::new([["yue"]], [["yue"]]);
-        let mut cur_label = DCLabel::public();
-        assert!(s.create_dir("/", "yue", target_label, &mut cur_label, root_privilege()).is_ok());
-
-        // create a directory of low secrecy in a directory of high secrecy.
-        let target_label = DCLabel::new(true, [["gh_repo"]]);
-        cur_label = DCLabel::new(true, [["yue"]]);
-        assert_eq!(s.create_dir("/yue", "gh_repo", target_label, &mut cur_label, DCLabel::new(false, [["gh_repo"]])).unwrap_err(), Error::Unauthorized);
-        assert_eq!(cur_label, DCLabel::new([["yue"]], [["yue"], ["gh_repo"]]));
-    }
-
-    #[test]
-    fn test_storage_create_dir_fail4() {
-        let mut s = LabeledFS::new();
-        let target_label = DCLabel::new([["yue"]], [["yue"]]);
-        let mut cur_label = DCLabel::public();
-        assert!(s.create_dir("/", "yue", target_label, &mut cur_label, root_privilege()).is_ok());
-
-        // target label of low integrity
-        let target_label = DCLabel::new([["yue"]], false);
-        assert_eq!(s.create_dir("/yue", "gh_repo", target_label, &mut cur_label, empty_privilege()).unwrap_err(), Error::Unauthorized);
-    }
-
-    #[test]
-    fn test_storage_file_create_read() {
-        let mut s = LabeledFS::new();
-        let target_label = DCLabel::new(true, [["gh_repo"]]);
-        let mut cur_label = root_privilege();
-        let old_label = cur_label.clone();
-        assert!(s.create_dir("/", "gh_repo", target_label, &mut cur_label, empty_privilege()).is_ok());
-        assert_eq!(old_label, cur_label);
-
-        cur_label = empty_privilege(); // seeing no secrecy and affected by no endorsement
-
-        // create `/gh_repo/yue`
-        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        let privilege = DCLabel::new(true, [["gh_repo"]]);
-        assert!(s.create_dir("/gh_repo", "yue", target_label, &mut cur_label, privilege.clone()).is_ok());
-        assert_eq!(cur_label, privilege);
+        assert!(create_dir("/gh_repo", "yue", target_label, &mut cur_label, empty_privilege()).is_ok());
 
         // create `/gh_repo/yue/mydata.txt`
         let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        assert!(s.create_file("/gh_repo/yue", "mydata.txt", target_label, &mut cur_label, empty_privilege()).is_ok());
-        assert_eq!(cur_label, DCLabel::new([["yue"]], [["gh_repo"]])); // secrecy raised
-
-        let old_label = cur_label.clone();
-        assert_eq!(s.read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), Vec::<u8>::new());
-        assert_eq!(cur_label, old_label);
-    }
-
-    #[test]
-    fn test_storage_file_create_write_read() {
-        let mut s = LabeledFS::new();
-        let target_label = DCLabel::new(true, [["gh_repo"]]);
-        let mut cur_label = root_privilege();
-        let old_label = cur_label.clone();
-        assert!(s.create_dir("/", "gh_repo", target_label, &mut cur_label, empty_privilege()).is_ok());
-        assert_eq!(old_label, cur_label);
-
-        cur_label = empty_privilege(); // seeing no secrecy and affected by no endorsement
-
-        // create `/gh_repo/yue`
-        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        let privilege = DCLabel::new(true, [["gh_repo"]]);
-        assert!(s.create_dir("/gh_repo", "yue", target_label, &mut cur_label, privilege.clone()).is_ok());
-        assert_eq!(cur_label, privilege);
-
-        // create `/gh_repo/yue/mydata.txt`
-        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        assert!(s.create_file("/gh_repo/yue", "mydata.txt", target_label, &mut cur_label, empty_privilege()).is_ok());
-        assert_eq!(cur_label, DCLabel::new([["yue"]], [["gh_repo"]])); // secrecy raised
-
+        assert!(create_file("/gh_repo/yue", "mydata.txt", target_label, &mut cur_label, empty_privilege()).is_ok());
+        assert_eq!(read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), Vec::<u8>::new());
+    
+        // write read
         let text = "test message";
         let data = text.as_bytes().to_vec();
-        assert!(s.write("/gh_repo/yue/mydata.txt", data.clone(), &mut cur_label, empty_privilege()).is_ok());
+        assert!(write("/gh_repo/yue/mydata.txt", data.clone(), &mut cur_label, empty_privilege()).is_ok());
+        assert_eq!(read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), data);
 
-        let old_label = cur_label.clone();
-        assert_eq!(s.read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), data);
-        assert_eq!(cur_label, old_label);
-    }
-
-    #[test]
-    fn test_storage_file_create_write_write() {
-        let mut s = LabeledFS::new();
-        let target_label = DCLabel::new(true, [["gh_repo"]]);
-        let mut cur_label = root_privilege();
-        let old_label = cur_label.clone();
-        assert!(s.create_dir("/", "gh_repo", target_label, &mut cur_label, empty_privilege()).is_ok());
-        assert_eq!(old_label, cur_label);
-
-        cur_label = empty_privilege(); // seeing no secrecy and affected by no endorsement
-
-        // create `/gh_repo/yue`
-        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        let privilege = DCLabel::new(true, [["gh_repo"]]);
-        assert!(s.create_dir("/gh_repo", "yue", target_label, &mut cur_label, privilege.clone()).is_ok());
-        assert_eq!(cur_label, privilege);
-
-        // create `/gh_repo/yue/mydata.txt`
-        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        assert!(s.create_file("/gh_repo/yue", "mydata.txt", target_label, &mut cur_label, empty_privilege()).is_ok());
-        assert_eq!(cur_label, DCLabel::new([["yue"]], [["gh_repo"]])); // secrecy raised
-
-        let text = "test message";
-        let data = text.as_bytes().to_vec();
-        assert!(s.write("/gh_repo/yue/mydata.txt", data.clone(), &mut cur_label, empty_privilege()).is_ok());
-        assert_eq!(s.read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), data);
-
+        // overwrite read
         let text = "test message test message";
         let data = text.as_bytes().to_vec();
-        cur_label = DCLabel::new([["yue"]], true);
-        assert!(s.write("/gh_repo/yue/mydata.txt", data.clone(), &mut cur_label, DCLabel::new(true, [["yue"]])).is_ok());
-        assert_eq!(s.read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), data);
-    }
-
-    #[test]
-    fn test_storage_dir_create_list() {
-        // create `/gh_repo`
-        let mut s = LabeledFS::new();
-        let target_label = DCLabel::new(true, [["gh_repo"]]);
-        let mut cur_label = DCLabel::public();
-        assert!(s.create_dir("/", "gh_repo", target_label, &mut cur_label, root_privilege()).is_ok());
-        assert_eq!(cur_label, root_privilege());
-        
-        cur_label = DCLabel::new(true, [["gh_repo"]]);
-
-        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        let old_label = cur_label.clone();
-        assert!(s.create_dir("/gh_repo", "yue", target_label, &mut cur_label, empty_privilege()).is_ok());
-        assert_eq!(cur_label, old_label);
-
-        assert_eq!(s.list("/", &mut cur_label).unwrap(), vec![String::from("gh_repo"); 1]);
-        assert_eq!(cur_label, old_label);
-        assert_eq!(s.list("/gh_repo/yue", &mut cur_label).unwrap(), Vec::<String>::new());
-        assert_eq!(cur_label, DCLabel::new([["yue"]], [["gh_repo"]]));
+        assert!(write("/gh_repo/yue/mydata.txt", data.clone(), &mut cur_label, empty_privilege()).is_ok());
+        assert_eq!(read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), data);
     }
 }
