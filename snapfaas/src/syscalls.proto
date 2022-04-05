@@ -74,6 +74,27 @@ message GithubRestResponse {
 message GetCurrentLabel {
 }
 
+message FSRead {
+  string path = 1;
+}
+
+message FSWrite {
+  string path = 1;
+  bytes data = 2;
+}
+
+message FSCreateDir {
+  string baseDir = 1;
+  string name = 2;
+  DcLabel label = 3;
+}
+
+message FSCreateFile {
+  string baseDir = 1;
+  string name = 2;
+  DcLabel label = 3;
+}
+
 message Syscall {
   oneof syscall {
     Response response = 1;
@@ -83,6 +104,10 @@ message Syscall {
     DcLabel taintWithLabel = 5;
     GithubRest githubRest = 6;
     Invoke invoke = 7;
+    FSRead fsRead = 8;
+    FSWrite fsWrite = 9;
+    FSCreateDir fsCreateDir = 10;
+    FSCreateFile fsCreateFile = 11;
   }
 }
 

@@ -78,6 +78,12 @@ pub struct LabeledFS {
     dummy_dir: LabeledDirEntry<Directory>,
 }
 
+impl core::fmt::Debug for LabeledFS {
+    fn fmt(&self, _: &mut core::fmt::Formatter) -> core::fmt::Result {
+        Ok(())
+    }
+}
+
 impl LabeledFS {
     // API
     pub fn new() -> Self {
