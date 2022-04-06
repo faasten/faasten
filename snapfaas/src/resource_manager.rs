@@ -1,7 +1,7 @@
 use std::result::Result;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
@@ -35,7 +35,6 @@ pub struct ResourceManager {
     pub total_num_vms: usize, // total number of vms ever created
     total_mem: usize,
     pub free_mem: usize,
-    fs: Arc<Mutex<super::labeled_fs::LabeledFS>>,
 }
 
 impl ResourceManager {
@@ -57,7 +56,6 @@ impl ResourceManager {
             total_num_vms: 0,
             total_mem,
             free_mem: total_mem,
-            fs: Arc::new(Mutex::new(super::labeled_fs::LabeledFS::new())),
         },
         sender)
     }
@@ -178,7 +176,7 @@ impl ResourceManager {
             self.free_mem -= function_config.memory;
 
             debug!("Allocating new VM. ID: {:?}, App: {:?}", id, function_name);
-            Ok(Vm::new(id, self.config.firerunner_path.clone(), function_name.to_string(), function_config, self.config.allow_network, self.fs.clone()))
+            Ok(Vm::new(id, self.config.firerunner_path.clone(), function_name.to_string(), function_config, self.config.allow_network))
         } else {
             Err(Error::LowMemory(self.free_mem))
         }
