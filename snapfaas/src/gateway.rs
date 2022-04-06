@@ -1,9 +1,11 @@
 use std::net::TcpListener;
-use std::sync::mpsc::{channel, Sender, Receiver};
+use std::sync::mpsc::{channel, Receiver};
 
 use log::{error, debug};
 
 use crate::request;
+use crate::metrics::RequestTimestamps;
+use crate::message::RequestInfo;
 
 /// A gateway listens on a endpoint and accepts requests
 /// For example a FileGateway "listens" to a file and accepts
@@ -17,7 +19,7 @@ pub trait Gateway {
 
 #[derive(Debug)]
 pub struct HTTPGateway {
-    requests: Receiver<(request::Request, Sender<request::Response>)>,
+    requests: Receiver<RequestInfo>,
 }
 
 impl HTTPGateway {
@@ -44,8 +46,14 @@ impl HTTPGateway {
                                     return;
                                 }
                                 Ok(req) => {
+                                    use time::precise_time_ns;
+                                    let timestamps = RequestTimestamps {
+                                        at_gateway: precise_time_ns(),
+                                        request: req.clone(),
+                                        ..Default::default()
+                                    };
                                     let (tx, rx) = channel::<request::Response>();
-                                    let _ = requests.send((req, tx));
+                                    let _ = requests.send((req, tx, timestamps));
                                     if let Ok(response) = rx.recv() {
                                         if let Err(e) = request::write_u8(&response.to_vec(), &mut stream) {
                                             error!("Failed to respond to TCP client at {:?}: {:?}", stream.peer_addr(), e);
@@ -66,7 +74,7 @@ impl HTTPGateway {
 }
 
 impl Iterator for HTTPGateway {
-    type Item = (request::Request, Sender<request::Response>);
+    type Item = RequestInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.requests.recv().ok()

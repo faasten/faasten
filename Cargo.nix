@@ -212,7 +212,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -253,7 +253,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -720,7 +720,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -928,7 +928,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -1039,7 +1039,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -1201,7 +1201,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -2218,7 +2218,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -2240,7 +2240,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -2292,7 +2292,7 @@ rec {
         edition = "2018";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/alevy/labeled";
+          url = "https://github.com/alevy/labeled";
           rev = "22960c4497852fcd64d6827eafafd759e36a5fab";
           sha256 = "1qi6c2q9c6rw3dwq56lyr11pfpwnxsk9r4mmisy97xm782ms6v6j";
         };
@@ -2456,7 +2456,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -2562,7 +2562,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -2592,7 +2592,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -2710,7 +2710,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -2890,7 +2890,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -2911,7 +2911,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -3744,7 +3744,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -4354,7 +4354,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -5033,7 +5033,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -5828,7 +5828,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };
@@ -5843,7 +5843,7 @@ rec {
         edition = "2015";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "git://github.com/princeton-sns/firecracker";
+          url = "https://github.com/princeton-sns/firecracker";
           rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f";
           sha256 = "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni";
         };

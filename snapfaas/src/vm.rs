@@ -5,6 +5,7 @@ use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Stdio;
 use std::string::String;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 use std::sync::mpsc;
 use std::io::Write;
@@ -25,8 +26,35 @@ const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
 const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
 const USER_AGENT: &str = "snapfaas";
 
-use labeled::dclabel::{Clause, Component, DCLabel};
+use labeled::dclabel::{self, Clause, Component, DCLabel};
 use labeled::Label;
+
+fn proto_label_to_dc_label(label: syscalls::DcLabel) -> DCLabel {
+    DCLabel {
+        secrecy: match label.secrecy {
+            None => Component::DCFalse,
+            Some(set) => Component::DCFormula(
+                set.clauses
+                    .iter()
+                    .map(|c| {
+                        Clause(c.principals.iter().map(Clone::clone).collect())
+                    })
+                    .collect(),
+            ),
+        },
+        integrity: match label.integrity {
+            None => Component::DCFalse,
+            Some(set) => Component::DCFormula(
+                set.clauses
+                    .iter()
+                    .map(|c| {
+                        Clause(c.principals.iter().map(Clone::clone).collect())
+                    })
+                    .collect(),
+            ),
+        },
+    }
+}
 
 #[derive(Debug)]
 pub enum Error {
@@ -74,6 +102,7 @@ pub struct Vm {
     function_config: FunctionConfig,
     current_label: DCLabel,
     handle: Option<VmHandle>,
+    fs: Arc<Mutex<super::labeled_fs::LabeledFS>>,
 }
 
 impl Vm {
@@ -84,6 +113,7 @@ impl Vm {
         function_name: String,
         function_config: FunctionConfig,
         allow_network: bool,
+        fs: Arc<Mutex<super::labeled_fs::LabeledFS>>,
     ) -> Self {
         Vm {
             id,
@@ -94,8 +124,9 @@ impl Vm {
             // We should also probably have a clearance to mitigate side channel attacks, but
             // meh for now...
             /// Starting label with public secrecy and integrity has app-name
-            current_label: DCLabel::new(false, [[function_name]]),
+            current_label: DCLabel::new(true, [[function_name]]),
             handle: None,
+            fs,
         }
     }
 
@@ -311,15 +342,20 @@ impl Vm {
     }
 
     fn send_req(&self, invoke: syscalls::Invoke) -> bool {
+        use time::precise_time_ns;
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
             let (tx, _) = mpsc::channel();
-            invoke_handle.send(Message::Request(
-                Request {
-                    function: invoke.function,
-                    payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
-                },
-                tx,
-            )).is_ok()
+            let req = Request {
+                function: invoke.function,
+                payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
+            };
+            use crate::metrics::RequestTimestamps;
+            let timestamps = RequestTimestamps {
+                at_vmm: precise_time_ns(),
+                request: req.clone(),
+                ..Default::default()
+            };
+            invoke_handle.send(Message::Request((req, tx, timestamps))).is_ok()
         } else {
             debug!("No invoke handle, ignoring invoke syscall. {:?}", invoke);
             false
@@ -376,28 +412,55 @@ impl Vm {
 
                     self.send_into_vm(result)?;
                 },
-                //Some(SC::Read(path)) => {
-                //    let result = syscalls::ReadResponse {
-                //        value: labeled_fs.read().unwrap().read(p, &self.current_label).ok(),
-                //    }
-                //    .encode_to_vec();
+                Some(SC::FsRead(req)) => {
+                    let result = syscalls::ReadKeyResponse {
+                        value: self.fs.lock().unwrap().read(req.path.as_str(), &mut self.current_label).ok(),
+                    }
+                    .encode_to_vec();
 
-                //    self.send_into_vm(result)?;
-                //},
-                //Some(SC::Write(path, data)) => {
-                //    let result = syscalls::WriteResponse {
-                //        success: labeled_fs.write().unwrap().write(p, data,
-                //                                                    &self.current_label,
-                //                                                    &self.function_name).is_ok(),
-                //    }
-                //    .encode_to_vec();
+                    self.send_into_vm(result)?;
+                },
+                Some(SC::FsWrite(req)) => {
+                    println!("fsw\t{:?}", self.current_label);
+                    let result = syscalls::WriteKeyResponse {
+                        success: self.fs.lock().unwrap().write(
+                            req.path.as_str(), req.data,
+                            &mut self.current_label,
+                            //DCLabel::new([[&self.function_name]], [[&self.function_name]])
+                            DCLabel::top()
+                        ).is_ok(),
+                    }
+                    .encode_to_vec();
+                    println!("fs2\t{:?}", self.current_label);
 
-                //    self.send_into_vm(result)?;
-                //},
-                //Some(SC::CreateDir(dir, name)) => {
-                //},
-                //Some(SC::CreateFile(dir, name)) => {
-                //},
+                    self.send_into_vm(result)?;
+                },
+                Some(SC::FsCreateDir(req)) => {
+                    let label = proto_label_to_dc_label(req.label.expect("label"));
+                    let result = syscalls::WriteKeyResponse {
+                        success: self.fs.lock().unwrap().create_dir(
+                            req.base_dir.as_str(), req.name.as_str(), label,
+                            &mut self.current_label,
+                            DCLabel::new([[&self.function_name]], [[&self.function_name]])
+                        ).is_ok(),
+                    }
+                    .encode_to_vec();
+
+                    self.send_into_vm(result)?;
+                },
+                Some(SC::FsCreateFile(req)) => {
+                    let label = proto_label_to_dc_label(req.label.expect("label"));
+                    let result = syscalls::WriteKeyResponse {
+                        success: self.fs.lock().unwrap().create_file(
+                            req.base_dir.as_str(), req.name.as_str(), label,
+                            &mut self.current_label,
+                            DCLabel::new([[&self.function_name]], [[&self.function_name]])
+                        ).is_ok(),
+                    }
+                    .encode_to_vec();
+
+                    self.send_into_vm(result)?;
+                },
                 Some(SC::GithubRest(req)) => {
                     let resp = match syscalls::HttpVerb::from_i32(req.verb) {
                         Some(syscalls::HttpVerb::Get) => {
@@ -453,36 +516,15 @@ impl Vm {
                                     .collect(),
                             }),
                         },
-                    }
-                    .encode_to_vec();
+                    };
+                    println!("gcl\t{:?} {:?}", self.current_label, result);
+                    let result = result.encode_to_vec();
 
                     self.send_into_vm(result)?;
                 }
                 Some(SC::TaintWithLabel(label)) => {
-                    let dclabel = DCLabel {
-                        secrecy: match label.secrecy {
-                            None => Component::DCFalse,
-                            Some(set) => Component::DCFormula(
-                                set.clauses
-                                    .iter()
-                                    .map(|c| {
-                                        Clause(c.principals.iter().map(Clone::clone).collect())
-                                    })
-                                    .collect(),
-                            ),
-                        },
-                        integrity: match label.integrity {
-                            None => Component::DCFalse,
-                            Some(set) => Component::DCFormula(
-                                set.clauses
-                                    .iter()
-                                    .map(|c| {
-                                        Clause(c.principals.iter().map(Clone::clone).collect())
-                                    })
-                                    .collect(),
-                            ),
-                        },
-                    };
+                    let dclabel = proto_label_to_dc_label(label);
+                    println!("twl\t{:?} {:?}", self.current_label, dclabel);
                     self.current_label = self.current_label.clone().lub(dclabel);
                     let result = syscalls::DcLabel {
                         secrecy: match &self.current_label.secrecy {

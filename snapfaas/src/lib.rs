@@ -10,7 +10,7 @@ pub mod vm;
 pub mod syscalls;
 pub mod metrics;
 pub mod firecracker_wrapper;
-mod labeled_fs;
+pub mod labeled_fs;
 
 use std::string::String;
 use std::fs::{self, File};

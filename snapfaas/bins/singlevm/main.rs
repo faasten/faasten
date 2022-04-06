@@ -8,6 +8,7 @@ use snapfaas::vm::Vm;
 use snapfaas::unlink_unix_sockets;
 use snapfaas::configs::FunctionConfig;
 use std::io::{BufRead};
+use std::sync::{Arc, Mutex};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Instant;
 use log;
@@ -222,7 +223,7 @@ fn main() {
 
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
-    let mut vm =  Vm::new(id, firerunner, "myapp".to_string(), vm_app_config, allow_network);
+    let mut vm =  Vm::new(id, firerunner, "myapp".to_string(), vm_app_config, allow_network, Arc::new(Mutex::new(snapfaas::labeled_fs::LabeledFS::new())));
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
     let force_exit = cmd_arguments.is_present("force_exit");
