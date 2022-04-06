@@ -5,7 +5,6 @@ use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Stdio;
 use std::string::String;
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 use std::sync::mpsc;
 use std::io::Write;
@@ -18,7 +17,7 @@ use crate::configs::FunctionConfig;
 use crate::message::Message;
 use crate::syscalls;
 use crate::request::Request;
-use crate::labeled_fs::DBENV;
+use crate::labeled_fs::{self, DBENV};
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
@@ -26,7 +25,7 @@ const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
 const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
 const USER_AGENT: &str = "snapfaas";
 
-use labeled::dclabel::{self, Clause, Component, DCLabel};
+use labeled::dclabel::{Clause, Component, DCLabel};
 use labeled::Label;
 
 fn proto_label_to_dc_label(label: syscalls::DcLabel) -> DCLabel {
@@ -102,7 +101,6 @@ pub struct Vm {
     function_config: FunctionConfig,
     current_label: DCLabel,
     handle: Option<VmHandle>,
-    fs: Arc<Mutex<super::labeled_fs::LabeledFS>>,
 }
 
 impl Vm {
@@ -113,7 +111,6 @@ impl Vm {
         function_name: String,
         function_config: FunctionConfig,
         allow_network: bool,
-        fs: Arc<Mutex<super::labeled_fs::LabeledFS>>,
     ) -> Self {
         Vm {
             id,
@@ -126,7 +123,6 @@ impl Vm {
             /// Starting label with public secrecy and integrity has app-name
             current_label: DCLabel::new(true, [[function_name]]),
             handle: None,
-            fs,
         }
     }
 
@@ -414,7 +410,7 @@ impl Vm {
                 },
                 Some(SC::FsRead(req)) => {
                     let result = syscalls::ReadKeyResponse {
-                        value: self.fs.lock().unwrap().read(req.path.as_str(), &mut self.current_label).ok(),
+                        value: labeled_fs::read(req.path.as_str(), &mut self.current_label).ok(),
                     }
                     .encode_to_vec();
 
@@ -423,7 +419,7 @@ impl Vm {
                 Some(SC::FsWrite(req)) => {
                     println!("fsw\t{:?}", self.current_label);
                     let result = syscalls::WriteKeyResponse {
-                        success: self.fs.lock().unwrap().write(
+                        success: labeled_fs::write(
                             req.path.as_str(), req.data,
                             &mut self.current_label,
                             //DCLabel::new([[&self.function_name]], [[&self.function_name]])
@@ -438,7 +434,7 @@ impl Vm {
                 Some(SC::FsCreateDir(req)) => {
                     let label = proto_label_to_dc_label(req.label.expect("label"));
                     let result = syscalls::WriteKeyResponse {
-                        success: self.fs.lock().unwrap().create_dir(
+                        success: labeled_fs::create_dir(
                             req.base_dir.as_str(), req.name.as_str(), label,
                             &mut self.current_label,
                             DCLabel::new([[&self.function_name]], [[&self.function_name]])
@@ -451,7 +447,7 @@ impl Vm {
                 Some(SC::FsCreateFile(req)) => {
                     let label = proto_label_to_dc_label(req.label.expect("label"));
                     let result = syscalls::WriteKeyResponse {
-                        success: self.fs.lock().unwrap().create_file(
+                        success: labeled_fs::create_file(
                             req.base_dir.as_str(), req.name.as_str(), label,
                             &mut self.current_label,
                             DCLabel::new([[&self.function_name]], [[&self.function_name]])

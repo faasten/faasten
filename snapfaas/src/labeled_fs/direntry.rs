@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_json;
 use labeled::dclabel::DCLabel;
 use labeled::Label;
 
@@ -25,14 +24,6 @@ impl LabeledDirEntry {
 
     pub fn root() -> Self {
         Self { label: DCLabel::bottom(), entry_type: DirEntry::D, uid: 0u64 }
-    }
-
-    pub fn from_vec(buf: Vec<u8>) -> Self {
-        serde_json::from_slice(&buf).unwrap()
-    }
-
-    pub fn to_vec(&self) -> Vec<u8> {
-        serde_json::to_vec(self).unwrap()
     }
 
     /// raise label if necessary, and return the uid of the object
@@ -64,9 +55,5 @@ impl LabeledDirEntry {
 
     pub fn entry_type(&self) -> DirEntry {
         self.entry_type
-    }
-
-    pub fn label(&self) -> DCLabel {
-        self.label.clone()
     }
 }
