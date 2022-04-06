@@ -11,7 +11,6 @@ pub mod syscalls;
 pub mod metrics;
 pub mod firecracker_wrapper;
 pub mod labeled_fs;
-mod fs_util;
 
 use std::string::String;
 use std::fs::{self, File};

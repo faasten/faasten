@@ -1,41 +1,43 @@
-use super::{LabeledDirEntry, DirEntry, Result, Error};
 use labeled::dclabel::DCLabel;
 use labeled::Label;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 
+use std::collections::BTreeMap;
+
+use super::{LabeledDirEntry, DirEntry, Result, Error};
+
+#[derive(Serialize, Deserialize)]
 pub struct Directory {
-    mappings: HashMap<String, DirEntry>,
+    mappings: BTreeMap<String, LabeledDirEntry>,
 }
 
 impl Directory {
-    /// Create a dummy directory that contains only the root directory mapping
-    pub fn new_dummy() -> Self {
-        let labeled_root = LabeledDirEntry { label: DCLabel::bottom(), inner: Directory::new() };
-        let mut mappings = HashMap::new();
-        assert!(mappings.insert(String::from("/"), DirEntry::D(labeled_root)).is_none());
-        Directory { mappings }
-    }
-
     /// Create a new labeled empty directory.
     pub fn new() -> Self {
-        Self { mappings: HashMap::new() }
+        Self { mappings: BTreeMap::new() }
     }
 
-    pub fn get(&self, name: &str) -> Result<&DirEntry> {
+    pub fn from_vec(buf: Vec<u8>) -> Self {
+        serde_json::from_slice(&buf).unwrap()
+    }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        serde_json::to_vec(self).unwrap()
+    }
+
+    pub fn get(&self, name: &str) -> Result<&LabeledDirEntry> {
         self.mappings.get(name).ok_or(Error::BadPath)
     }
 
-    pub fn get_mut(&mut self, name: &str) -> Result<&mut DirEntry> {
-        self.mappings.get_mut(name).ok_or(Error::BadPath)
-    }
-
-    pub fn create(&mut self, name: &str, cur_label: &DCLabel, new_entry: DirEntry) -> Result<()> {
-        if cur_label.can_flow_to(&new_entry.label()) {
+    pub fn create(&mut self, name: &str, cur_label: &DCLabel, entry_type: DirEntry, label: DCLabel) -> Result<u64> {
+        if cur_label.can_flow_to(&label) {
             if let Some(_) = self.mappings.get(name) {
-                 Err(Error::BadPath)
+                Err(Error::BadPath)
             } else {
-                 assert!(self.mappings.insert(name.to_string(), new_entry).is_none());
-                 Ok(())
+                let new_entry = LabeledDirEntry::new(label, entry_type);
+                let uid = new_entry.uid();
+                let _ = self.mappings.insert(name.to_string(), new_entry);
+                Ok(uid)
             }
         } else {
             Err(Error::Unauthorized)
