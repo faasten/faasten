@@ -83,11 +83,11 @@ pub fn list(path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
 }
 
 /// create_dir only fails when `cur_label` cannot flow to `label` or target directory's label
-pub fn create_dir(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<()> {
+pub fn create_dir(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
     let db = DBENV.open_db(None).unwrap();
     let mut txn = DBENV.begin_rw_txn().unwrap();
     let res = get_direntry(dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
-        let entry = labeled.unlabel_write_check(cur_label, privilege)?;
+        let entry = labeled.unlabel_write_check(cur_label)?;
         match entry.entry_type() {
             DirEntry::D => {
                 let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
@@ -104,11 +104,11 @@ pub fn create_dir(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel
 }
 
 /// create_file only fails when `cur_label` cannot flow to `label` or target directory's label
-pub fn create_file(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<()> {
+pub fn create_file(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
     let db = DBENV.open_db(None).unwrap();
     let mut txn = DBENV.begin_rw_txn().unwrap();
     let res = get_direntry(dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
-        let entry = labeled.unlabel_write_check(cur_label, privilege)?;
+        let entry = labeled.unlabel_write_check(cur_label)?;
         match entry.entry_type() {
             DirEntry::D => {
                 let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
@@ -125,11 +125,11 @@ pub fn create_file(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabe
 }
 
 /// write fails when `cur_label` cannot flow to the target file's label 
-pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<()> { 
+pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> { 
     let db = DBENV.open_db(None).unwrap();
     let mut txn = DBENV.begin_rw_txn().unwrap();
     let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
-        let entry = labeled.unlabel_write_check(cur_label, privilege)?;
+        let entry = labeled.unlabel_write_check(cur_label)?;
         match entry.entry_type() {
             DirEntry::F => {
                 let mut file = get_val_db(entry.uid(), &txn, db).map(File::from_vec).unwrap();
@@ -188,22 +188,12 @@ where T: Transaction
 mod tests {
     use super::*;
 
-    fn root_privilege() -> DCLabel {
-        DCLabel::bottom()
-    }
-
-    fn empty_privilege() -> DCLabel {
-        DCLabel::top()
-    }
-
     #[test]
     fn test_storage_create_dir_list_fail() {
         // create `/gh_repo`
         let target_label = DCLabel::new(true, [["gh_repo"]]);
-        let mut cur_label = root_privilege();
-        let old_label = cur_label.clone();
-        assert!(create_dir("/", "gh_repo", target_label, &mut cur_label, empty_privilege()).is_ok());
-        assert_eq!(cur_label, old_label);
+        let mut cur_label = DCLabel::bottom();
+        assert!(create_dir("/", "gh_repo", target_label, &mut cur_label).is_ok());
 
         // list
         let mut cur_label = DCLabel::public();
@@ -211,15 +201,33 @@ mod tests {
 
         // already exists
         let target_label = DCLabel::new(true, [["gh_repo"]]);
-        let mut cur_label = root_privilege();
-        assert_eq!(create_dir("/", "gh_repo", target_label, &mut cur_label, empty_privilege()).unwrap_err(), Error::BadPath);
+        let mut cur_label = DCLabel::bottom();
+        assert_eq!(create_dir("/", "gh_repo", target_label, &mut cur_label).unwrap_err(), Error::BadPath);
 
         // missing path components
         let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
         let mut cur_label = DCLabel::public();
-        let old_label = cur_label.clone();
-        assert_eq!(create_dir("/gh_repo/yue", "yue", target_label, &mut cur_label, root_privilege()).unwrap_err(), Error::BadPath);
-        assert_eq!(cur_label, old_label);
+        assert_eq!(create_dir("/gh_repo/yue", "yue", target_label, &mut cur_label).unwrap_err(), Error::BadPath);
+
+        // label too high
+        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
+        let mut cur_label = target_label.clone();
+        assert_eq!(create_dir("/gh_repo", "yue", target_label, &mut cur_label).unwrap_err(), Error::Unauthorized);
+
+        // label too high
+        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
+        let mut cur_label = DCLabel::new([["yue"]], true);
+        assert_eq!(create_dir("/gh_repo", "yue", target_label, &mut cur_label).unwrap_err(), Error::Unauthorized);
+
+        // create /gh_repo/yue
+        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
+        let mut cur_label = DCLabel::new(true, [["gh_repo"]]);
+        assert!(create_dir("/gh_repo", "yue", target_label, &mut cur_label).is_ok());
+
+        // Unauthorized not BadPath
+        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
+        let mut cur_label = DCLabel::public();
+        assert_eq!(create_dir("/gh_repo", "yue", target_label, &mut cur_label).unwrap_err(), Error::Unauthorized);
     }
 
     #[test]
@@ -227,23 +235,23 @@ mod tests {
         // create `/gh_repo/yue`
         let mut cur_label = DCLabel::new([["yue"]], [["gh_repo"]]);
         let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        assert!(create_dir("/gh_repo", "yue", target_label, &mut cur_label, empty_privilege()).is_ok());
+        assert!(create_dir("/gh_repo", "yue", target_label, &mut cur_label).is_ok());
 
         // create `/gh_repo/yue/mydata.txt`
         let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        assert!(create_file("/gh_repo/yue", "mydata.txt", target_label, &mut cur_label, empty_privilege()).is_ok());
+        assert!(create_file("/gh_repo/yue", "mydata.txt", target_label, &mut cur_label).is_ok());
         assert_eq!(read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), Vec::<u8>::new());
     
         // write read
         let text = "test message";
         let data = text.as_bytes().to_vec();
-        assert!(write("/gh_repo/yue/mydata.txt", data.clone(), &mut cur_label, empty_privilege()).is_ok());
+        assert!(write("/gh_repo/yue/mydata.txt", data.clone(), &mut cur_label).is_ok());
         assert_eq!(read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), data);
 
         // overwrite read
         let text = "test message test message";
         let data = text.as_bytes().to_vec();
-        assert!(write("/gh_repo/yue/mydata.txt", data.clone(), &mut cur_label, empty_privilege()).is_ok());
+        assert!(write("/gh_repo/yue/mydata.txt", data.clone(), &mut cur_label).is_ok());
         assert_eq!(read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), data);
     }
 }

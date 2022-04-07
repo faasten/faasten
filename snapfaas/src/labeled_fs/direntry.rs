@@ -36,13 +36,12 @@ impl LabeledDirEntry {
 
     /// First read and raise label if needed, then apply privilege to check if write can happen.
     /// This function always updates `cur_label` to privilege applied.
-    pub fn unlabel_write_check(&self, cur_label: &mut DCLabel, privilege: DCLabel) -> Result<&Self> {
+    pub fn unlabel_write_check(&self, cur_label: &mut DCLabel) -> Result<&Self> {
+        // write implies read
         if !self.label.can_flow_to(cur_label) {
             *cur_label = self.label.clone().lub(cur_label.clone());
         }
-        let new_label = cur_label.clone().glb(privilege);
-        if new_label.can_flow_to(cur_label) {
-            *cur_label = new_label;    
+        if cur_label.can_flow_to(&self.label) {
             Ok(&self)
         } else {
             Err(Error::Unauthorized)

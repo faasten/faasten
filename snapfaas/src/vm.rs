@@ -448,12 +448,7 @@ impl Vm {
                 Some(SC::FsWrite(req)) => {
                     println!("fsw\t{:?}", self.current_label);
                     let result = syscalls::WriteKeyResponse {
-                        success: labeled_fs::write(
-                            req.path.as_str(), req.data,
-                            &mut self.current_label,
-                            //DCLabel::new([[&self.function_name]], [[&self.function_name]])
-                            DCLabel::top()
-                        ).is_ok(),
+                        success: labeled_fs::write(req.path.as_str(), req.data, &mut self.current_label).is_ok(),
                     }
                     .encode_to_vec();
                     println!("fs2\t{:?}", self.current_label);
@@ -464,9 +459,7 @@ impl Vm {
                     let label = proto_label_to_dc_label(req.label.expect("label"));
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::create_dir(
-                            req.base_dir.as_str(), req.name.as_str(), label,
-                            &mut self.current_label,
-                            DCLabel::new([[&self.function_name]], [[&self.function_name]])
+                            req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
                         ).is_ok(),
                     }
                     .encode_to_vec();
@@ -477,9 +470,7 @@ impl Vm {
                     let label = proto_label_to_dc_label(req.label.expect("label"));
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::create_file(
-                            req.base_dir.as_str(), req.name.as_str(), label,
-                            &mut self.current_label,
-                            DCLabel::new([[&self.function_name]], [[&self.function_name]])
+                            req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
                         ).is_ok(),
                     }
                     .encode_to_vec();
