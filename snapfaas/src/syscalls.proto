@@ -95,6 +95,10 @@ message FSCreateFile {
   DcLabel label = 3;
 }
 
+message ExercisePrivilege {
+  DcLabel target = 1;
+}
+
 message Syscall {
   oneof syscall {
     Response response = 1;
@@ -108,6 +112,7 @@ message Syscall {
     FSWrite fsWrite = 9;
     FSCreateDir fsCreateDir = 10;
     FSCreateFile fsCreateFile = 11;
+    DcLabel exercisePrivilege = 12;
   }
 }
 

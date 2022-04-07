@@ -55,6 +55,33 @@ fn proto_label_to_dc_label(label: syscalls::DcLabel) -> DCLabel {
     }
 }
 
+fn dc_label_to_proto_label(label: &DCLabel) -> syscalls::DcLabel {
+    syscalls::DcLabel {
+        secrecy: match &label.secrecy {
+            Component::DCFalse => None,
+            Component::DCFormula(set) => Some(syscalls::Component {
+                clauses: set
+                    .iter()
+                    .map(|clause| syscalls::Clause {
+                        principals: clause.0.iter().map(Clone::clone).collect(),
+                    })
+                    .collect(),
+            }),
+        },
+        integrity: match &label.integrity {
+            Component::DCFalse => None,
+            Component::DCFormula(set) => Some(syscalls::Component {
+                clauses: set
+                    .iter()
+                    .map(|clause| syscalls::Clause {
+                        principals: clause.0.iter().map(Clone::clone).collect(),
+                    })
+                    .collect(),
+            }),
+        },
+    }
+}
+
 #[derive(Debug)]
 pub enum Error {
     ProcessSpawn(std::io::Error),
@@ -100,6 +127,7 @@ pub struct Vm {
     function_name: String,
     function_config: FunctionConfig,
     current_label: DCLabel,
+    privilege: Component,
     handle: Option<VmHandle>,
 }
 
@@ -121,7 +149,8 @@ impl Vm {
             // We should also probably have a clearance to mitigate side channel attacks, but
             // meh for now...
             /// Starting label with public secrecy and integrity has app-name
-            current_label: DCLabel::new(true, [[function_name]]),
+            current_label: DCLabel::new(true, [[function_name.clone()]]),
+            privilege: Component::formula([[function_name]]),
             handle: None,
         }
     }
@@ -489,30 +518,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::GetCurrentLabel(_)) => {
-                    let result = syscalls::DcLabel {
-                        secrecy: match &self.current_label.secrecy {
-                            Component::DCFalse => None,
-                            Component::DCFormula(set) => Some(syscalls::Component {
-                                clauses: set
-                                    .iter()
-                                    .map(|clause| syscalls::Clause {
-                                        principals: clause.0.iter().map(Clone::clone).collect(),
-                                    })
-                                    .collect(),
-                            }),
-                        },
-                        integrity: match &self.current_label.integrity {
-                            Component::DCFalse => None,
-                            Component::DCFormula(set) => Some(syscalls::Component {
-                                clauses: set
-                                    .iter()
-                                    .map(|clause| syscalls::Clause {
-                                        principals: clause.0.iter().map(Clone::clone).collect(),
-                                    })
-                                    .collect(),
-                            }),
-                        },
-                    };
+                    let result = dc_label_to_proto_label(&self.current_label);
                     println!("gcl\t{:?} {:?}", self.current_label, result);
                     let result = result.encode_to_vec();
 
@@ -522,31 +528,17 @@ impl Vm {
                     let dclabel = proto_label_to_dc_label(label);
                     println!("twl\t{:?} {:?}", self.current_label, dclabel);
                     self.current_label = self.current_label.clone().lub(dclabel);
-                    let result = syscalls::DcLabel {
-                        secrecy: match &self.current_label.secrecy {
-                            Component::DCFalse => None,
-                            Component::DCFormula(set) => Some(syscalls::Component {
-                                clauses: set
-                                    .iter()
-                                    .map(|clause| syscalls::Clause {
-                                        principals: clause.0.iter().map(Clone::clone).collect(),
-                                    })
-                                    .collect(),
-                            }),
-                        },
-                        integrity: match &self.current_label.integrity {
-                            Component::DCFalse => None,
-                            Component::DCFormula(set) => Some(syscalls::Component {
-                                clauses: set
-                                    .iter()
-                                    .map(|clause| syscalls::Clause {
-                                        principals: clause.0.iter().map(Clone::clone).collect(),
-                                    })
-                                    .collect(),
-                            }),
-                        },
+                    let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
+
+                    self.send_into_vm(result)?;
+                }
+                Some(SC::ExercisePrivilege(target)) => {
+                    let dclabel = proto_label_to_dc_label(target);
+                    println!("priv\t{:?} {:?}", self.current_label, dclabel);
+                    if self.current_label.can_flow_to_with_privilege(&dclabel, &self.privilege) {
+                        self.current_label = dclabel;
                     }
-                    .encode_to_vec();
+                    let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
 
                     self.send_into_vm(result)?;
                 }
