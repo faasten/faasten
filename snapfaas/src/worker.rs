@@ -150,7 +150,7 @@ fn handle_vm_error(vme: vm::Error) {
     match vme {
         vm::Error::ProcessSpawn(_) | vm::Error::VsockListen(_) =>
             error!("[Worker {:?}] Failed to start vm due to: {:?}", id, vme),
-        vm::Error::VsockRead(_) | vm::Error::VsockWrite(_) =>
+        vm::Error::VsockRead(_, _) | vm::Error::VsockWrite(_) =>
             error!("[Worker {:?}] Vm failed to process request due to: {:?}", id, vme),
         _ => (),
     }
