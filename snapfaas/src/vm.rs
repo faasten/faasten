@@ -88,7 +88,7 @@ pub enum Error {
     Rpc(prost::DecodeError),
     VsockListen(std::io::Error),
     VsockWrite(std::io::Error),
-    VsockRead(std::io::Error, u32),
+    VsockRead(std::io::Error),
     HttpReq(reqwest::Error),
     AuthTokenInvalid,
     AuthTokenNotExist,
@@ -401,10 +401,10 @@ impl Vm {
             let buf = {
                 let mut lenbuf = [0;4];
                 let mut conn = &self.handle.as_ref().unwrap().conn;
-                conn.read_exact(&mut lenbuf).map_err(|e| Error::VsockRead(e, 4))?;
+                conn.read_exact(&mut lenbuf).map_err(|e| Error::VsockRead(e))?;
                 let size = u32::from_be_bytes(lenbuf);
                 let mut buf = vec![0u8; size as usize];
-                conn.read_exact(&mut buf).map_err(|e| Error::VsockRead(e, size))?;
+                conn.read_exact(&mut buf).map_err(|e| Error::VsockRead(e))?;
                 buf
             };
             match Syscall::decode(buf.as_ref()).map_err(|e| Error::Rpc(e))?.syscall {
