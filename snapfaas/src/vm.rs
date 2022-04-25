@@ -26,7 +26,7 @@ const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
 const USER_AGENT: &str = "snapfaas";
 
 use labeled::dclabel::{Clause, Component, DCLabel};
-use labeled::Label;
+use labeled::{Label, HasPrivilege};
 
 fn proto_label_to_dc_label(label: syscalls::DcLabel) -> DCLabel {
     DCLabel {

@@ -29,7 +29,7 @@ path = "bins/sfdb/main.rs"
 [dependencies]
 ctrlc = "^3.2.0"
 reqwest = { version = "0.11", features = ["blocking"] }
-labeled = { git = "https://github.com/tan-yue/labeled" }
+labeled = { git = "https://github.com/alevy/labeled" }
 bytes = "1.1.0"
 byteorder = "1.2.1"
 prost = "0.9.0"

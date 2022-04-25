@@ -19,7 +19,7 @@ lazy_static::lazy_static! {
     static ref NEXT_UID: AtomicU64 = AtomicU64::new(0);
     pub static ref DBENV: lmdb::Environment = {
         let dbenv = lmdb::Environment::new()
-            .set_map_size(4096 * 1024 * 1024)
+            .set_map_size(100 * 1024 * 1024 * 1024)
             .open(std::path::Path::new("storage"))
             .unwrap();
 
