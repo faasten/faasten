@@ -58,10 +58,13 @@ impl<D: Digest> Blobstore<D> {
         hpath.push(dir);
         let _ = std::fs::create_dir_all(hpath.clone());
         hpath.push(fname);
-
+        let file = new_blob.file.persist(hpath)?;
+        let mut perms = file.metadata()?.permissions();
+        perms.set_readonly(true);
+        file.set_permissions(perms)?;
         Ok(Blob {
             name,
-            file: new_blob.file.persist(hpath)?
+            file
         })
     }
 }
