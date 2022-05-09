@@ -1,9 +1,7 @@
 # Machine Setup
-
-SnapFaaS depends on `docker` so make sure `docker` is installed.
-
 ## launch docker service
 
+SnapFaaS depends on `docker` so make sure `docker` is installed.
 With `docker` installed, start `dockerd`:
 
 ```bash
@@ -16,154 +14,142 @@ The last line gives access permissions to `$USER`
 but requires the user to log out the current ssh session and then log back in
 to take effect.
 
-## network setup
+## network setup (optional)
 
-SnapFaaS uses `docker0` bridge. `docker0` should be automatically
-up when `docker` service is launched.
+Virtual machines use TAP devices as their Ethernet cards. TAP devices must be
+connected to a bridge network. We use `docker0` the default bridge device
+of `docker`. It should be automatically configured and launched
+when the `docker` daemon starts.
 
+To set up NUMBER_OF_TAPS TAP devices, execute:
 ```bash
 scripts/setup-tap-bridge.sh NUMBER_OF_TAPS
 ```
 
-The command aboves sets up NUMBER_OF_TAPS tap devices.
-
-# Initialize Submodules
-
-```bash
-git submodule init
-git submodule update
-```
-
 # Build Binaries
-
 This project is written in Rust. You can install Rust by following instructions [here](https://www.rust-lang.org/tools/install).
-The recommended way is to run and follow the on-screen instructions:
+The recommended way is to execute the command as below and follow the on-screen instructions:
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-This repo contains binaries `snapctr`, `fc_wrapper`, and `firerunner`.
+This repo contains binaries `multivm`, `singlevm`, and `firerunner`.
 
-To build binary `snapctr`, execute
-
+To build all binaries, execute
 ```bash
-cargo build --release --bin snapctr
+cargo build
 ```
 
-To build binary `fc_wrapper`, execute
-
+To build a specific binary, execute
 ```bash
-cargo build --release --bin fc_wrapper
+cargo build --bin NAME
 ```
 
-To build binary `firerunner`, execute
+Binaries will be placed in `target/debug` under the project's root directory.
+`cargo build --release` will build release version and place binaries in `target/release`.
 
-```bash
-cargo build --release --bin firerunner
-```
+# Build File Systems
 
-Following the instructions above places all binaries under `target/release` directory.
+Please refer to [snapfaas-images](https://www.github.com/princeton-sns/snapfaas-images)
 
-# Build Root Filesystems and Application Filesystems
+# Basic Usage
+Use the command below to invoke a Python3 hello world function with requests from `resources/hello.json`
+located in the project's root directory.
 
-SnapFaaS uses `docker` to build both kinds of filesystems.
-The Linux distro used is Alpine Linux v3.10.
-
-## root filesystem
-
-Currently Python3.7 and Node.js10 are supported. To build a root filesystem, execute
-
-```bash
-cd snapfaas-images/separate
-# replace the path `/ssd/rootfs/python3.ext4` with the path at which you want to place the root filesystem.
-./mk_rt_images [python3|nodejs] /ssd/rootfs/[python3|nodejs].ext4
-```
-
-## application filesystem
-
-```bash
-# use hello as example
-cd snapfaas-images/appfs/hellopy2
-make
-```
-
-The command above generates `output.ext2` in the `hellopy2` directory.
-
-# Execution
-
-`firerunner` should *not* be directly executed through command line.
-
-`snapctr` and `fc_wrapper` both internally execute `firerunner` binary. `firerunner` binary is
-expected to be at `target/release` directory, which is the case if the build instructions above are followed.
-
-## launch a single VM or generate snapshots
-
-`fc_wrapper` launches a single VM instance and reads in requests from `stdin`.
-It is good for testing out new language and new applications.
-Users should use `fc_wrapper` to generate VM snapshots.
-
-0. Before executing `fc_wrapper`, make sure `tap0` exists on the host by running
-
-```bash
-scripts/setup-tap-bridge.sh 1
-```
-
-1. To conduct a regular boot, execute:
-
+You need to first build a root file system that contains the Python3 hello world function.
 ```bash
 # run hello function
-sudo target/release/fc_wrapper \
+sudo target/debug/singlevm \
     --kernel resources/vmlinux-4.20.0 \
-    --rootfs /ssd/ext4/python3.ext4 \
-    --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
-    --network 'tap0/aa:bb:cc:dd:ff:00' \
+    --rootfs /path/to/root/file/system/hello-python3.ext4 \
     --mem_size 128 \
     --vcpu_count 1 < resources/hello.json
 ```
+`singlevm` launches a single VM instance and reads in requests from `stdin`.
+It is good for testing out new language and new applications.
 
-2. To generate a Python3 snapshot, execute:
+The command boots a virtual machine with one VCPU and 128MB memory using `resources/vmlinux-4.20.0`
+as the uncompressed kernel and a root file system named `hello-python3.ext4` that contains
+the Python3 hello world function.
+The virtual machine manager will listen on `stdin` for line-delimited json requests and
+forward them into the virtual machine. `resources/hello.json` contains example one-line
+json requests.
 
+Note: Users should *not* run `firerunner` directly through the command line. Instead,
+`multivm` and `singlevm` both fork and run `firerunner` as child processes.
+
+# Cluster Mode
+## Quick try-out
+To quickly try out `multivm`, run
+
+```bash
+scripts/run-multivm-example.sh
+```
+## More on `multivm`
+
+### the `multivm` binary
+The `multivm` binary takes three arguments:
+
+* -\-config|-c /path/to/a/controller/configuration/ymal/file
+
+An example configuration file is at `resources/example-controller-config.yaml`
+
+* -\-mem TOTAL_MEMORY_IN_MB_AVAILABLE_TO_THE_CLUSTER
+
+* -\-listen|-l [ADDR:]PORT
+
+### YAML configuration file
+The YAML file specifies the paths to `firerunner` binary, uncompressed kernel, the directory that
+stores all root file systems and a list of functions. `multivm` currently only registers functions
+statically through the YAML configuration file.
+
+# Working with Snapshots (optional)
+## Generate snapshots
+Users should use `singlevm` to generate VM snapshots. `singlevm` supports different kinds of snapshots.
+All kinds require the use of corresponding file systems.
+### language snapshots or fullapp snapshots
 ```bash
 # create the target snapshot directory
 mkdir /ssd/snapshots/python3
-# generate a snapshot
-sudo target/release/fc_wrapper \
+# generate a Python3 snapshot
+sudo target/release/singlevm \
     --kernel resources/images/vmlinux-4.20.0 \
     --rootfs /ssd/rootfs/python3.ext4 \
-    --appfs snapfaas-images/appfs/empty/output.ext2 \
-    --network 'tap0/aa:bb:cc:dd:ff:00' \
     --mem_size 128 \
     --vcpu_count 1 \
     --dump_dir /ssd/snapshot/python3 \
     --force_exit
 ```
-
-3. To generate a diff snapshot for a function, execute:
+`--rootfs` should be the path to the corresponding root file system, either a language snapshot
+version file system or a fullapp snapshot version file system.
 
 ```bash
 # create the target snapshot directory
-mkdir -p /ssd/snapshots/diff/hello-python3
+mkdir /ssd/snapshots/python3
+# generate a Python3 snapshot
+sudo target/release/singlevm \
+    --kernel resources/images/vmlinux-4.20.0 \
+    --rootfs /ssd/rootfs/python3.ext4 \
+    --appfs snapfaas-images/appfs/empty/output.ext2 \
+    --mem_size 128 \
+    --vcpu_count 1 \
+    --dump_dir /ssd/snapshot/python3 \
+    --force_exit
 # generate the diff snapshot
-sudo target/release/fc_wrapper \
+sudo target/release/singlevm \
     --kernel resources/images/vmlinux-4.20.0 \
     --rootfs /ssd/rootfs/python3.ext4 \
     --appfs /ssd/appfs/hello-python3.ext2 \
-    --network 'tap0/aa:bb:cc:dd:ff:00' \
     --mem_size 128 \
     --vcpu_count 1 \
     --load_dir /ssd/snapshot/python3 \
     --dump_dir /ssd/snapshot/diff/hello-python3 \
     --force_exit
-```
-
-4. To generate a working set for a function, excute:
-
-```bash
-sudo target/release/fc_wrapper \
+# generate working set
+sudo target/release/singlevm \
     --kernel resources/images/vmlinux-4.20.0 \
     --rootfs /ssd/rootfs/python3.ext4 \
     --appfs /ssd/appfs/hello-python3.ext2 \
-    --network 'tap0/aa:bb:cc:dd:ff:00' \
     --mem_size 128 \
     --vcpu_count 1 \
     --load_dir /ssd/snapshot/python3 \
@@ -171,142 +157,22 @@ sudo target/release/fc_wrapper \
     --dump_ws /ssd/snapshot/diff/hello-python3 \
     < resources/requests/hello-python3.json
 ```
+`rootfs` is the path to the root file system that contains a language runtime (e.g., Python3).
+`appfs` is the path to the empty placeholder file system or a file system that contain the function.
 
-4. To boot a VM from a snapshot without the working set optimization, execute:
-
+## Use snapshots
 ```bash
 # run hello function
-sudo target/release/fc_wrapper \
+sudo target/release/singlevm \
     --kernel resources/images/vmlinux-4.20.0 \
     --rootfs /ssd/rootfs/python3.ext4 \
     --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
-    --network 'tap0/aa:bb:cc:dd:ff:00' \
     --mem_size 128 \
     --vcpu_count 1 \
     --load_dir /ssd/snapshot/python3 \
-    --diff_dirs /ssd/snapshot/diff/hello-python3 < resources/requests/hello-python3.json
+    [--diff_dirs /ssd/snapshot/diff/hello-python3] \
+    [--load_ws] < resources/requests/hello-python3.json
 ```
+Option `--diff_dirs` is optional. Its presence dictates the diff snapshot should be used.
 
-4. To boot a VM from a snapshot with the working set optimization, execute:
-
-```bash
-# run hello function
-sudo target/release/fc_wrapper \
-    --kernel resources/images/vmlinux-4.20.0 \
-    --rootfs /ssd/rootfs/python3.ext4 \
-    --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
-    --network 'tap0/aa:bb:cc:dd:ff:00' \
-    --mem_size 128 \
-    --vcpu_count 1 \
-    --load_dir /ssd/snapshot/python3 \
-    --diff_dirs /ssd/snapshot/diff/hello-python3 \
-    --load_ws < resources/requests/hello-python3.json
-```
-
-5. For debugging, one can turn on guest VM console allowing guest VM output,
-
-```bash
-sudo target/release/fc_wrapper \
-    --kernel resources/vmlinux-4.20.0 \
-    --kernel_args 'console=ttyS0' \
-    --rootfs /ssd/ext4/python3.ext4 \
-    --appfs snapfaas-images/appfs/hellopy2/output.ext2 \
-    --network 'tap0/aa:bb:cc:dd:ff:00' \
-    --mem_size 128 \
-    --vcpu_count 1 < resources/hello.json
-```
-
-## `snapctr` quick try-out
-
-To quickly try out `snapctr`, run
-
-```bash
-scripts/run-snapctr-example.sh
-```
-
-The command above boots app `hello` from kernel and process three requests.
-
-```bash
-scripts/run-snapctr-snapshot-example.sh
-```
-
-The command above boots app `hello` from base + diff snapshots and process three requests.
-
-## `snapctr` setup details
-
-### `snapctr` command
-
-`snapctr` should be used to run a single machine macrobenchmark. It always takes three arguments:
-
-1. --config \<path to controller configuration file\> (e.g., `resources/example-controller-config.yaml`). The config file specifies:
-
-```txt
-kernel_path: url or path to the uncompressed kernel binary
-runtimfs_dir: url or path to root filesystem base directory
-appfs_dir: url or path to application filesystem base directory
-snapshot_dir: url or path to snapshot base directory
-function_config: url or path to function configuration file
-```
-
-2. --mem <total memory available to this `snapctr`\>
-
-3. --requests_file \<a regular json file contains a workload\>,
-example workload file: `resources/example-requests.json`.
-
-### `snapctr` architecture
-
-![snapctr logical architecture](snapctr.png)
-`snapctr` currently statically registers all functions listed 
-in the function configuration file (e.g., `resources/example-function-configs.yaml`)
-and assumes that all functions require the same VM size. It 
-statically creates `total memory/VM size` worker threads at 
-initialization time.
-
-### clean up unix domain socket listeners
-
-Each worker thread holds at most one VM handle at a time. It 
-holds a unix domain socket that sends requests to and receives 
-responses from the VM. Such a connection is established by the 
-guest VM connects to the Unix domain socket listener unique to 
-each worker thread. All Unix domain socket listeners must be 
-removed after `snapctr` exits (see the last line in `scripts/run-snapctr-example.sh`).
-
-### right number of tap devices must exist
-
-Each guest VM has the network interface `eth0` configured. 
-Each `eth0` is backed by a unique tap device pre-configured on 
-the host. Each tap device is associated with a worker thread. 
-`scripts/setup-tap-bridge.sh NUMBER_OF_TAPS` does the job.
-In addition, `scripts/cleanup-taps.sh NUMBER_OF_TAPS` removes 
-all tap devices previously created.
-
-### function configuration file
-
-A function config file specifies:
-
-```txt
-name: function name
-runtimefs: root filesystem name, expected to be under `runtimefs_dir` specified in controller config file.
-appfs: application filesystem name, expected to be under `appfs_dir` specified in controller config file.
-vcpus: number of vcpus,
-memory: VM memory size,
-concurrency_limit: not in use
-copy_base: whether copy base snapshot memory dump
-copy_diff: whether copy diff snapshot memory dump
-load_dir: **optional**, base snapshot name, expected to be under `snapshot_dir` specified in controller config file.
-diff_dirs: **optional**, comma-separated list of diff snapshot names, expected to be under `snapshot_dir`/diff
-```
-
-Note that "optional" means that the fields do not need to 
-exist. If load_dir and diff_dirs exist, then the function is 
-booted from its base + diff snapshots. If they are missing, 
-then the function goes through the regular boot process.
-
-# SnapFaaS Unit Tests
-
-To compile and run unit tests, execute:
-
-```bash
-cargo test
-```
-Note that unit tests rely on several paths to exist. See resources/README.md for details.
+Option `--load_ws` is optional. Its presence dictates only the working set should be eagerly loaded.
