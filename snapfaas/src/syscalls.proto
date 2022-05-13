@@ -64,6 +64,7 @@ message GithubRest {
   HttpVerb verb = 1;
   string route = 2;
   optional string body = 3;
+  bool toblob = 4;
 }
 
 message GithubRestResponse {
@@ -99,6 +100,40 @@ message ExercisePrivilege {
   DcLabel target = 1;
 }
 
+message BlobCreate {
+  optional uint64 size = 1;
+}
+
+message BlobWrite {
+  uint64 fd = 1;
+  bytes data = 2;
+}
+
+message BlobFinalize {
+  uint64 fd = 1;
+  bytes data = 2;
+}
+
+message BlobResponse {
+  bool success = 1;
+  uint64 fd = 2;
+  bytes data = 3;
+}
+
+message BlobOpen {
+  string name = 1;
+}
+
+message BlobRead {
+  uint64 fd = 1;
+  optional uint64 offset = 2;
+  optional uint64 length = 3;
+}
+
+message BlobClose {
+  uint64 fd = 1;
+}
+
 message Syscall {
   oneof syscall {
     Response response = 1;
@@ -113,6 +148,11 @@ message Syscall {
     FSCreateDir fsCreateDir = 10;
     FSCreateFile fsCreateFile = 11;
     DcLabel exercisePrivilege = 12;
+    BlobCreate createBlob = 13;
+    BlobWrite writeBlob = 14;
+    BlobFinalize finalizeBlob = 15;
+    BlobOpen openBlob = 16;
+    BlobRead readBlob = 17;
+    BlobClose closeBlob = 18;
   }
 }
-

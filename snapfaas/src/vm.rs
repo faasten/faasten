@@ -7,7 +7,8 @@ use std::process::Stdio;
 use std::string::String;
 use std::sync::mpsc::Sender;
 use std::sync::mpsc;
-use std::io::Write;
+use std::io::{Seek, Write};
+use std::collections::HashMap;
 
 use log::{debug, error};
 use tokio::process::{Child, Command};
@@ -15,7 +16,7 @@ use serde_json::Value;
 
 use crate::configs::FunctionConfig;
 use crate::message::Message;
-use crate::syscalls;
+use crate::{blobstore, syscalls};
 use crate::request::Request;
 use crate::labeled_fs::{self, DBENV};
 
@@ -96,6 +97,13 @@ pub enum Error {
     RootfsNotExist,
     AppfsNotExist,
     LoadDirNotExist,
+    IOError(std::io::Error),
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::IOError(e)
+    }
 }
 
 /// Specify the `O_DIRECT` flag when open a disk image which is a regular file
@@ -129,6 +137,10 @@ pub struct Vm {
     current_label: DCLabel,
     privilege: Component,
     handle: Option<VmHandle>,
+    blobstore: blobstore::Blobstore,
+    create_blobs: HashMap<u64, blobstore::NewBlob>,
+    blobs: HashMap<u64, blobstore::Blob>,
+    max_blob_id: u64,
 }
 
 impl Vm {
@@ -152,6 +164,10 @@ impl Vm {
             current_label: DCLabel::new(true, [[function_name.clone()]]),
             privilege: Component::formula([[function_name]]),
             handle: None,
+            blobstore: Default::default(),
+            create_blobs: Default::default(),
+            blobs: Default::default(),
+            max_blob_id: 0,
         }
     }
 
@@ -271,7 +287,8 @@ impl Vm {
                 }
             };
             conn.set_nonblocking(false).map_err(|e| Error::VsockListen(e))?;
-            Ok((conn, vm_process))
+            let x: Result<_, Error> = Ok((conn, vm_process));
+            x
         })?;
 
         let rest_client = reqwest::blocking::Client::new();
@@ -500,10 +517,28 @@ impl Vm {
                             data: format!("`{:?}` not supported", req.verb).as_bytes().to_vec(),
                             status: 0,
                         },
-                        Some(resp) => syscalls::GithubRestResponse {
-                            status: resp.status().as_u16() as u32,
-                            data: resp.bytes().map_err(|e| Error::HttpReq(e))?.to_vec(),
-                        }
+                        Some(mut resp) => {
+                            if req.toblob && resp.status().is_success() {
+                                let mut file = self.blobstore.create()?;
+                                let mut buf = [0; 4096];
+                                while let Ok(len) = resp.read(&mut buf) {
+                                    if len == 0 {
+                                        break;
+                                    }
+                                    let _ = file.write_all(&buf[0..len]);
+                                }
+                                let result = self.blobstore.save(file)?;
+                                syscalls::GithubRestResponse {
+                                    status: resp.status().as_u16() as u32,
+                                    data: Vec::from(result.name),
+                                }
+                            } else {
+                                syscalls::GithubRestResponse {
+                                    status: resp.status().as_u16() as u32,
+                                    data: resp.bytes().map_err(|e| Error::HttpReq(e))?.to_vec(),
+                                }
+                            }
+                        },
                     }.encode_to_vec();
 
                     self.send_into_vm(result)?;
@@ -532,7 +567,133 @@ impl Vm {
                     let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
 
                     self.send_into_vm(result)?;
-                }
+                },
+                Some(SC::CreateBlob(_cb)) => {
+                    if let Ok(newblob) = self.blobstore.create().map_err(|_e| Error::AppfsNotExist) {
+                        self.max_blob_id += 1;
+                        self.create_blobs.insert(self.max_blob_id, newblob);
+
+                        let result = syscalls::BlobResponse {
+                            success: true,
+                            fd: self.max_blob_id,
+                            data: Vec::new(),
+                        };
+                        self.send_into_vm(result.encode_to_vec())?;
+                    } else {
+                        let result = syscalls::BlobResponse {
+                            success: false,
+                            fd: 0,
+                            data: Vec::new(),
+                        };
+                        self.send_into_vm(result.encode_to_vec())?;
+                    }
+                },
+                Some(SC::WriteBlob(wb)) => {
+                    let result = if let Some(newblob) = self.create_blobs.get_mut(&wb.fd) {
+                        let data = wb.data.as_ref();
+                        if newblob.write_all(data).is_ok() {
+                            syscalls::BlobResponse {
+                                success: true,
+                                fd: wb.fd,
+                                data: Vec::new(),
+                            }
+                        } else {
+                            syscalls::BlobResponse {
+                                success: false,
+                                fd: wb.fd,
+                                data: Vec::from("Failed to write"),
+                            }
+                        }
+                    } else {
+                        syscalls::BlobResponse {
+                            success: false,
+                            fd: wb.fd,
+                            data: Vec::from("Blob doesn't exist"),
+                        }
+                    };
+                    self.send_into_vm(result.encode_to_vec())?;
+                },
+                Some(SC::FinalizeBlob(fb)) => {
+                    let result = if let Some(mut newblob) = self.create_blobs.remove(&fb.fd) {
+                        let blob = newblob.write_all(&fb.data).and_then(|_| self.blobstore.save(newblob))?;
+                        syscalls::BlobResponse {
+                            success: true,
+                            fd: fb.fd,
+                            data: Vec::from(blob.name),
+                        }
+                    } else {
+                        syscalls::BlobResponse {
+                            success: false,
+                            fd: fb.fd,
+                            data: Vec::from("Blob doesn't exist"),
+                        }
+                    };
+                    self.send_into_vm(result.encode_to_vec())?;
+                },
+                Some(SC::OpenBlob(ob)) => {
+                    let result = if let Ok(file) = self.blobstore.open(ob.name) {
+                        self.max_blob_id += 1;
+                        self.blobs.insert(self.max_blob_id, file);
+                        syscalls::BlobResponse {
+                            success: true,
+                            fd: self.max_blob_id,
+                            data: Vec::new(),
+                        }
+                    } else {
+                        syscalls::BlobResponse {
+                            success: false,
+                            fd: 0,
+                            data: Vec::new(),
+                        }
+                    };
+                    self.send_into_vm(result.encode_to_vec())?;
+                },
+                Some(SC::ReadBlob(rb)) => {
+                    let result = if let Some(file) = self.blobs.get_mut(&rb.fd) {
+                        let mut buf = Vec::from([0; 4096]);
+                        let limit = std::cmp::min(rb.length.unwrap_or(4096), 4096) as usize;
+                        if let Some(offset) = rb.offset {
+                            file.seek(std::io::SeekFrom::Start(offset))?;
+                        }
+                        if let Ok(len) = file.read(&mut buf[0..limit]) {
+                            buf.truncate(len);
+                            syscalls::BlobResponse {
+                                success: true,
+                                fd: rb.fd,
+                                data: buf,
+                            }
+                        } else {
+                            syscalls::BlobResponse {
+                                success: false,
+                                fd: rb.fd,
+                                data: Vec::new(),
+                            }
+                        }
+                    } else {
+                            syscalls::BlobResponse {
+                                success: false,
+                                fd: rb.fd,
+                                data: Vec::new(),
+                            }
+                    };
+                    self.send_into_vm(result.encode_to_vec())?;
+                },
+                Some(SC::CloseBlob(cb)) => {
+                    let result = if self.blobs.remove(&cb.fd).is_some() {
+                        syscalls::BlobResponse {
+                            success: true,
+                            fd: cb.fd,
+                            data: Vec::new(),
+                        }
+                    } else {
+                        syscalls::BlobResponse {
+                            success: false,
+                            fd: cb.fd,
+                            data: Vec::new(),
+                        }
+                    };
+                    self.send_into_vm(result.encode_to_vec())?;
+                },
                 None => {
                     // Should never happen, so just ignore??
                     eprintln!("received an unknown syscall");
