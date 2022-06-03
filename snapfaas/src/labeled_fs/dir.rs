@@ -40,7 +40,7 @@ impl Directory {
                 Ok(uid)
             }
         } else {
-            Err(Error::Unauthorized)
+            Err(Error::BadTargetLabel)
         }
     }
 

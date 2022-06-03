@@ -19,7 +19,7 @@ pub struct LabeledDirEntry {
 
 impl LabeledDirEntry {
     pub fn new(label: DCLabel, entry_type: DirEntry) -> Self {
-        Self { label, entry_type, uid: super::get_next_uid() }
+        Self { label, entry_type, uid: super::get_uid() }
     }
 
     pub fn root() -> Self {
@@ -34,8 +34,7 @@ impl LabeledDirEntry {
         &self
     }
 
-    /// First read and raise label if needed, then apply privilege to check if write can happen.
-    /// This function always updates `cur_label` to privilege applied.
+    /// First read and raise label if needed then check if the writer can write
     pub fn unlabel_write_check(&self, cur_label: &mut DCLabel) -> Result<&Self> {
         // write implies read
         if !self.label.can_flow_to(cur_label) {

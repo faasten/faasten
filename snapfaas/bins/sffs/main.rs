@@ -42,7 +42,9 @@ fn main() {
     let cmd_arguments = App::new("sffs")
         .version(crate_version!())
         .author(crate_authors!())
-        .about("a wrapper over the labeled_fs module.")
+        .about("This program is a wrapper over the labeled_fs module. \
+            The main goal is to serve as a tool to create and modify files in the file system. \
+            The program outputs reads to any requested path to the stdin.")
         .subcommand(
             SubCommand::with_name("ls")
                 .about("List the given directory")
@@ -162,6 +164,12 @@ fn main() {
                 Err(labeled_fs::Error::Unauthorized) => {
                     eprintln!("Bad endorsement.");
                 },
+                Err(labeled_fs::Error::BadTargetLabel) => {
+                    eprintln!("Bad target label.");
+                },
+                Err(labeled_fs::Error::UidCollision) => {
+                    eprintln!("Uid collision");
+                }
                 Ok(()) => {},
             }
         },
@@ -181,6 +189,12 @@ fn main() {
                 Err(labeled_fs::Error::Unauthorized) => {
                     eprintln!("Bad endorsement.");
                 },
+                Err(labeled_fs::Error::BadTargetLabel) => {
+                    eprintln!("Bad target label.");
+                },
+                Err(labeled_fs::Error::UidCollision) => {
+                    eprintln!("Uid collision");
+                }
                 Ok(()) => {},
             }
         },
@@ -200,6 +214,9 @@ fn main() {
                 },
                 Err(labeled_fs::Error::Unauthorized) => {
                     eprintln!("Bad endorsement.");
+                },
+                Err(labeled_fs::Error::BadTargetLabel) | Err(labeled_fs::Error::UidCollision) => {
+                    eprintln!("write should not reach here.");
                 },
                 Ok(()) => {},
             }
