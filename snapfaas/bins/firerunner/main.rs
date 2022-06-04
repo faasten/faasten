@@ -18,7 +18,6 @@ use vmm::SnapFaaSConfig;
 use memory_model::MemoryFileOption;
 
 use clap::{App, Arg};
-//use log::error;
 
 use snapfaas::firecracker_wrapper::VmmWrapper;
 
@@ -195,7 +194,6 @@ fn main() {
         )
         .get_matches();
 
-    eprintln!("Hello");
     // process command line arguments
     let instance_id = cmd_arguments.value_of("id").expect("id doesn't exist").to_string();
     let kernel = cmd_arguments
