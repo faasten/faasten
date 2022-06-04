@@ -232,7 +232,7 @@ fn main() {
     }
     let t2 = Instant::now();
 
-    println!("VM ready in: {} us", t2.duration_since(t1).as_micros());
+    log::debug!("VM ready in: {} us", t2.duration_since(t1).as_micros());
 
     // create a vector of Request values from stdin
     let mut requests: Vec<serde_json::Value> = Vec::new();
