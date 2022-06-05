@@ -96,10 +96,6 @@ message FSCreateFile {
   DcLabel label = 3;
 }
 
-message ExercisePrivilege {
-  DcLabel target = 1;
-}
-
 message BlobCreate {
   optional uint64 size = 1;
 }

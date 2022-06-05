@@ -27,6 +27,15 @@ fn main() {
         .author(crate_authors!())
         .about("launch a single firerunner vm.")
         .arg(
+            Arg::with_name("function")
+                .long("function")
+                .value_name("FUNCTION")
+                .takes_value(true)
+                .required(true)
+                .default_value("myfunc")
+                .help("function name")
+        )
+        .arg(
             Arg::with_name("kernel")
                 .short("k")
                 .long("kernel")
@@ -222,7 +231,8 @@ fn main() {
 
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
-    let mut vm =  Vm::new(id, firerunner, "myapp".to_string(), vm_app_config, allow_network);
+    let function_name = cmd_arguments.value_of("function").unwrap().to_string();
+    let mut vm =  Vm::new(id, firerunner, function_name, vm_app_config, allow_network);
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
     let force_exit = cmd_arguments.is_present("force_exit");

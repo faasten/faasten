@@ -101,6 +101,7 @@ pub fn create_dir(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut DC
         }
     });
     txn.commit().unwrap();
+    println!("create_dir\t{}/{}\t{:?}", base_dir, name, res);
     res
 }
 
@@ -122,6 +123,7 @@ pub fn create_file(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut D
         }
     });
     txn.commit().unwrap();
+    println!("create_file\t{}/{}\t{:?}", base_dir, name, res);
     res
 }
 
@@ -142,6 +144,7 @@ pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> {
         }
     });
     txn.commit().unwrap();
+    println!("write\t{}\t{:?}", path, res);
     res
 }
 

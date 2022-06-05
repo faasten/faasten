@@ -160,8 +160,8 @@ impl Vm {
             function_config,
             // We should also probably have a clearance to mitigate side channel attacks, but
             // meh for now...
-            /// Starting label with public secrecy and integrity has app-name
-            current_label: DCLabel::new(true, [[function_name.clone()]]),
+            // start with the public label
+            current_label: DCLabel::new(true, true),
             privilege: Component::formula([[function_name]]),
             handle: None,
             blobstore: Default::default(),
@@ -292,7 +292,7 @@ impl Vm {
         })?;
 
         let rest_client = reqwest::blocking::Client::new();
-        
+
         let handle = VmHandle {
             conn,
             rest_client,
@@ -411,7 +411,7 @@ impl Vm {
         use syscalls::syscall::Syscall as SC;
         use syscalls::Syscall;
 
-        
+
         let default_db = DBENV.open_db(None).unwrap();
 
         loop {
@@ -463,12 +463,10 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsWrite(req)) => {
-                    println!("fsw\t{:?}", self.current_label);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::write(req.path.as_str(), req.data, &mut self.current_label).is_ok(),
                     }
                     .encode_to_vec();
-                    println!("fs2\t{:?}", self.current_label);
 
                     self.send_into_vm(result)?;
                 },
@@ -545,7 +543,7 @@ impl Vm {
                 },
                 Some(SC::GetCurrentLabel(_)) => {
                     let result = dc_label_to_proto_label(&self.current_label);
-                    println!("gcl\t{:?} {:?}", self.current_label, result);
+                    println!("gcl\t{:?}", result);
                     let result = result.encode_to_vec();
 
                     self.send_into_vm(result)?;
@@ -560,8 +558,9 @@ impl Vm {
                 }
                 Some(SC::ExercisePrivilege(target)) => {
                     let dclabel = proto_label_to_dc_label(target);
-                    println!("priv\t{:?} {:?}", self.current_label, dclabel);
+                    println!("cur\t{:?}\tpriv\t{:?}", self.current_label, dclabel);
                     if self.current_label.can_flow_to_with_privilege(&dclabel, &self.privilege) {
+                        println!("priv succeed");
                         self.current_label = dclabel;
                     }
                     let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
