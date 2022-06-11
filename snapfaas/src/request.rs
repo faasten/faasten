@@ -24,6 +24,7 @@ impl Response {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Request {
+    pub end_users: Vec<String>,
     pub function: String,
     pub payload: Value,
 }

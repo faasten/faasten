@@ -87,8 +87,8 @@ impl ResourceManager {
                 match self.receiver.recv() {
                     Ok(msg) => {
                         match msg {
-                            Message::GetVm(function, vm_sender) => {
-                                vm_sender.send(self.acquire_vm(&function)).expect("Failed to send VM");
+                            Message::GetVm(end_users, function, vm_sender) => {
+                                vm_sender.send(self.acquire_vm(end_users, &function)).expect("Failed to send VM");
                             },
                             Message::ReleaseVm(vm) => {
                                 self.release(vm);
@@ -116,6 +116,7 @@ impl ResourceManager {
     // function's idle list, and then allocate a new unlaunched VM.
     fn acquire_vm(
         &mut self,
+        end_users: Vec<String>,
         function_name: &str,
     )-> Result<Vm, Error> {
         let func_memory = self.get_function_config(function_name)?.memory;
@@ -125,12 +126,12 @@ impl ResourceManager {
                 match e {
                    // No Idle vm for this function. Try to allocate a new vm.
                     Error::NoIdleVm => {
-                        self.allocate(function_name)
+                        self.allocate(end_users, function_name)
                     },
                     // Not enough free memory to allocate. Try eviction
                     Error::LowMemory(_) => {
                         if self.evict(func_memory) {
-                            self.allocate(function_name)
+                            self.allocate(end_users, function_name)
                         } else {
                             Err(Error::InsufficientEvict)
                         }
@@ -167,6 +168,7 @@ impl ResourceManager {
     // when there's not enough resources on the machine (Err(Error::LowMemory))
     fn allocate(
         &mut self,
+        end_users: Vec<String>,
         function_name: &str,
     ) -> Result<Vm, Error> {
         let function_config = self.get_function_config(function_name)?.clone();
@@ -176,7 +178,7 @@ impl ResourceManager {
             self.free_mem -= function_config.memory;
 
             debug!("Allocating new VM. ID: {:?}, App: {:?}", id, function_name);
-            Ok(Vm::new(id, self.config.firerunner_path.clone(), function_name.to_string(), function_config, self.config.allow_network))
+            Ok(Vm::new(id, self.config.firerunner_path.clone(), end_users, function_name.to_string(), function_config, self.config.allow_network))
         } else {
             Err(Error::LowMemory(self.free_mem))
         }

@@ -9,6 +9,7 @@ use std::sync::mpsc::Sender;
 use std::sync::mpsc;
 use std::io::{Seek, Write};
 use std::collections::HashMap;
+use std::path::Path;
 
 use log::{debug, error};
 use tokio::process::{Child, Command};
@@ -29,34 +30,28 @@ const USER_AGENT: &str = "snapfaas";
 use labeled::dclabel::{Clause, Component, DCLabel};
 use labeled::{Label, HasPrivilege};
 
-fn proto_label_to_dc_label(label: syscalls::DcLabel) -> DCLabel {
-    DCLabel {
-        secrecy: match label.secrecy {
-            None => Component::DCFalse,
-            Some(set) => Component::DCFormula(
-                set.clauses
-                    .iter()
-                    .map(|c| {
-                        Clause(c.principals.iter().map(Clone::clone).collect())
-                    })
-                    .collect(),
-            ),
-        },
-        integrity: match label.integrity {
-            None => Component::DCFalse,
-            Some(set) => Component::DCFormula(
-                set.clauses
-                    .iter()
-                    .map(|c| {
-                        Clause(c.principals.iter().map(Clone::clone).collect())
-                    })
-                    .collect(),
-            ),
-        },
+fn proto_component_to_rust_component(component: Option<syscalls::Component>) -> Component {
+    match component {
+        None => Component::DCFalse,
+        Some(set) => Component::DCFormula(
+            set.clauses
+                .iter()
+                .map(|c| {
+                    Clause(c.principals.iter().map(Clone::clone).collect())
+                })
+                .collect(),
+        ),
     }
 }
 
-fn dc_label_to_proto_label(label: &DCLabel) -> syscalls::DcLabel {
+fn proto_label_to_rust_label(label: syscalls::DcLabel) -> DCLabel {
+    DCLabel {
+        secrecy: proto_component_to_rust_component(label.secrecy),
+        integrity: proto_component_to_rust_component(label.integrity),
+    }
+}
+
+fn rust_label_to_proto_label(label: &DCLabel) -> syscalls::DcLabel {
     syscalls::DcLabel {
         secrecy: match &label.secrecy {
             Component::DCFalse => None,
@@ -132,6 +127,7 @@ pub struct Vm {
     id: usize,
     firerunner: String,
     allow_network: bool,
+    end_users: Vec<String>,
     function_name: String,
     function_config: FunctionConfig,
     current_label: DCLabel,
@@ -148,21 +144,24 @@ impl Vm {
     pub fn new(
         id: usize,
         firerunner: String,
+        end_users: Vec<String>,
         function_name: String,
         function_config: FunctionConfig,
         allow_network: bool,
     ) -> Self {
+        // We should also probably have a clearance to mitigate side channel attacks, but
+        // meh for now...
+        let current_label = DCLabel::new([end_users.clone()], true);
+        let privilege: Component = [[function_name.clone()]].into();
         Vm {
             id,
             allow_network,
             firerunner,
+            end_users,
             function_name: function_name.clone(),
             function_config,
-            // We should also probably have a clearance to mitigate side channel attacks, but
-            // meh for now...
-            // start with the public label
-            current_label: DCLabel::new(true, true),
-            privilege: Component::formula([[function_name]]),
+            current_label,
+            privilege,
             handle: None,
             blobstore: Default::default(),
             create_blobs: Default::default(),
@@ -388,6 +387,7 @@ impl Vm {
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
             let (tx, _) = mpsc::channel();
             let req = Request {
+                end_users: self.end_users.clone(),
                 function: invoke.function,
                 payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
             };
@@ -455,42 +455,70 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsRead(req)) => {
+                    let sc_path = req.path.unwrap();
+                    let path = if sc_path.path_t == syscalls::PathType::Abs as i32 {
+                        sc_path.value
+                    } else {
+                        std::path::Path::new("/").join(&self.function_name).join(sc_path.value)
+                            .into_os_string().into_string().unwrap()
+                    };
                     let result = syscalls::ReadKeyResponse {
-                        value: labeled_fs::read(req.path.as_str(), &mut self.current_label).ok(),
-                    }
-                    .encode_to_vec();
+                        value: labeled_fs::read(path.as_str(), &mut self.current_label).ok(),
+                    };
 
-                    self.send_into_vm(result)?;
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::FsWrite(req)) => {
+                    let sc_path = req.path.unwrap();
+                    self.current_label = self.current_label.clone().endorse(&self.privilege);
+                    let path = if sc_path.path_t == syscalls::PathType::Abs as i32 {
+                        sc_path.value
+                    } else {
+                        Path::new("/").join(&self.function_name)
+                            .join(self.end_users.join("_"))
+                            .join(sc_path.value)
+                            .into_os_string().into_string().unwrap()
+                    };
                     let result = syscalls::WriteKeyResponse {
-                        success: labeled_fs::write(req.path.as_str(), req.data, &mut self.current_label).is_ok(),
-                    }
-                    .encode_to_vec();
+                        success: labeled_fs::write(path.as_str(), req.data, &mut self.current_label).is_ok(),
+                    };
 
-                    self.send_into_vm(result)?;
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
-                Some(SC::FsCreateDir(req)) => {
-                    let label = proto_label_to_dc_label(req.label.expect("label"));
-                    let result = syscalls::WriteKeyResponse {
-                        success: labeled_fs::create_dir(
-                            req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
-                        ).is_ok(),
-                    }
-                    .encode_to_vec();
+                Some(SC::FsCreate(req)) => {
+                    let sc_path = req.base_path.unwrap();
+                    self.current_label = self.current_label.clone().endorse(&self.privilege);
+                    let label = req.label.map_or_else(|| self.current_label.clone(),
+                        |l| proto_label_to_rust_label(l));
+                    let base_dir = if sc_path.path_t == syscalls::PathType::Abs as i32 {
+                        sc_path.value
+                    } else {
+                        Path::new("/").join(&self.function_name)
+                            .join(self.end_users.join("_"))
+                            .join(sc_path.value)
+                            .into_os_string().into_string().unwrap()
+                    };
+                    let success = if req.entry_t == syscalls::DentryType::Dir as i32 {
+                        labeled_fs::create_dir(base_dir.as_str(), req.name.as_str(), label,
+                            &mut self.current_label).is_ok()
+                    } else {
+                        labeled_fs::create_file(base_dir.as_str(), req.name.as_str(), label,
+                            &mut self.current_label).is_ok()
+                    };
 
-                    self.send_into_vm(result)?;
+                    let result = syscalls::WriteKeyResponse{ success };
+
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
-                Some(SC::FsCreateFile(req)) => {
-                    let label = proto_label_to_dc_label(req.label.expect("label"));
-                    let result = syscalls::WriteKeyResponse {
-                        success: labeled_fs::create_file(
-                            req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
-                        ).is_ok(),
-                    }
-                    .encode_to_vec();
+                Some(SC::WorkspaceAbspath(req)) => {
+                    let result = syscalls::WorkspaceAbspathResponse {
+                        abspath: Path::new("/").join(&self.function_name)
+                            .join(self.end_users.join("_"))
+                            .join(req.relpath)
+                            .into_os_string().into_string().unwrap()
+                    };
 
-                    self.send_into_vm(result)?;
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::GithubRest(req)) => {
                     let resp = match syscalls::HttpVerb::from_i32(req.verb) {
@@ -542,30 +570,30 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::GetCurrentLabel(_)) => {
-                    let result = dc_label_to_proto_label(&self.current_label);
+                    let result = rust_label_to_proto_label(&self.current_label);
                     println!("gcl\t{:?}", result);
                     let result = result.encode_to_vec();
 
                     self.send_into_vm(result)?;
                 }
                 Some(SC::TaintWithLabel(label)) => {
-                    let dclabel = proto_label_to_dc_label(label);
+                    let dclabel = proto_label_to_rust_label(label);
                     println!("twl\t{:?} {:?}", self.current_label, dclabel);
                     self.current_label = self.current_label.clone().lub(dclabel);
-                    let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
+                    let result = rust_label_to_proto_label(&self.current_label).encode_to_vec();
 
                     self.send_into_vm(result)?;
                 }
-                Some(SC::ExercisePrivilege(target)) => {
-                    let dclabel = proto_label_to_dc_label(target);
-                    println!("cur\t{:?}\tpriv\t{:?}", self.current_label, dclabel);
-                    if self.current_label.can_flow_to_with_privilege(&dclabel, &self.privilege) {
-                        println!("priv succeed");
-                        self.current_label = dclabel;
+                Some(SC::Declassify(secrecy)) => {
+                    let secrecy = proto_component_to_rust_component(secrecy.value);
+                    let label = DCLabel::new(secrecy, self.current_label.integrity.clone());
+                    let result = syscalls::WriteKeyResponse {
+                        success: self.current_label.can_flow_to_with_privilege(&label, &self.privilege),
+                    };
+                    if result.success {
+                        self.current_label = label;
                     }
-                    let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
-
-                    self.send_into_vm(result)?;
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::CreateBlob(_cb)) => {
                     if let Ok(newblob) = self.blobstore.create().map_err(|_e| Error::AppfsNotExist) {

@@ -28,15 +28,27 @@ fn main() -> std::io::Result<()> {
                 .required(true)
                 .help("Function name"),
         )
+        .arg(
+            Arg::with_name("end users")
+                .value_name("USERS")
+                .long("end_users")
+                .short("u")
+                .multiple(true)
+                .takes_value(true)
+                .required(true)
+                .help("A comma-separated list of end users.")
+        )
         .get_matches();
 
 
     let addr = cmd_arguments.value_of("server address").unwrap();
     let function = cmd_arguments.value_of("function").unwrap().to_string();
+    let end_users = cmd_arguments.values_of("end users").unwrap().map(String::from).collect();
     let mut input = Vec::new();
     stdin().read_to_end(&mut input)?;
     let payload = serde_json::from_slice(&input)?;
     let request = request::Request {
+        end_users,
         function,
         payload,
     };

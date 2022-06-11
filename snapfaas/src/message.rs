@@ -11,7 +11,7 @@ pub type RequestInfo = (Request, Sender<Response>, RequestTimestamps);
 pub enum Message {
     Shutdown,
     Request(RequestInfo),
-    GetVm(String, Sender<Result<Vm, resource_manager::Error>>),
+    GetVm(Vec<String>, String, Sender<Result<Vm, resource_manager::Error>>),
     ReleaseVm(Vm),
     DeleteVm(Vm),
 }

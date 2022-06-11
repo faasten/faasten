@@ -36,6 +36,16 @@ fn main() {
                 .help("function name")
         )
         .arg(
+            Arg::with_name("end users")
+                .value_name("USERS")
+                .long("end_users")
+                .short("u")
+                .multiple(true)
+                .takes_value(true)
+                .required(true)
+                .help("A comma-separated list of end users.")
+        )
+        .arg(
             Arg::with_name("kernel")
                 .short("k")
                 .long("kernel")
@@ -232,7 +242,8 @@ fn main() {
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
     let function_name = cmd_arguments.value_of("function").unwrap().to_string();
-    let mut vm =  Vm::new(id, firerunner, function_name, vm_app_config, allow_network);
+    let end_users = cmd_arguments.values_of("end users").unwrap().map(String::from).collect();
+    let mut vm =  Vm::new(id, firerunner, end_users, function_name, vm_app_config, allow_network);
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
     let force_exit = cmd_arguments.is_present("force_exit");

@@ -67,7 +67,7 @@ impl Worker {
 
                         let function_name = req.function.clone();
                         let (tx, rx) = mpsc::channel();
-                        vm_req_sender.send(Message::GetVm(function_name.clone(), tx)).expect("Failed to send GetVm request");
+                        vm_req_sender.send(Message::GetVm(req.end_users.clone(), function_name.clone(), tx)).expect("Failed to send GetVm request");
                         match rx.recv().expect("Failed to receive GetVm response") {
                             Ok(mut vm) => {
                                 tsps.allocated = precise_time_ns();
