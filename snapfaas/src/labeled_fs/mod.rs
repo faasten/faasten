@@ -41,7 +41,6 @@ pub enum Error {
     BadPath,
     Unauthorized,
     BadTargetLabel,
-    UidCollision,
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -87,44 +86,12 @@ pub fn list(path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
 
 /// create_dir only fails when `cur_label` cannot flow to `label` or target directory's label
 pub fn create_dir(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
-    let db = DBENV.open_db(None).unwrap();
-    let mut txn = DBENV.begin_rw_txn().unwrap();
-    let res = get_direntry(base_dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
-        let entry = labeled.unlabel_write_check(cur_label)?;
-        match entry.entry_type() {
-            DirEntry::D => {
-                let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
-                let uid = dir.create(name, cur_label, DirEntry::D, label)?;
-                put_val_db_no_overwrite(uid, Directory::new().to_vec(), &mut txn, db).map_err(|_| Error::UidCollision)?;
-                let _ = put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
-                Ok(())
-            },
-            DirEntry::F => Err(Error::BadPath),
-        }
-    });
-    txn.commit().unwrap();
-    res
+    create_common(base_dir, name, label, cur_label, Directory::new().to_vec(), DirEntry::D)
 }
 
 /// create_file only fails when `cur_label` cannot flow to `label` or target directory's label
 pub fn create_file(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
-    let db = DBENV.open_db(None).unwrap();
-    let mut txn = DBENV.begin_rw_txn().unwrap();
-    let res = get_direntry(base_dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
-        let entry = labeled.unlabel_write_check(cur_label)?;
-        match entry.entry_type() {
-            DirEntry::D => {
-                let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
-                let uid = dir.create(name, cur_label, DirEntry::F, label)?;
-                put_val_db_no_overwrite(uid, File::new().to_vec(), &mut txn, db).map_err(|_| Error::UidCollision)?;
-                let _ = put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
-                Ok(())
-            },
-            DirEntry::F => Err(Error::BadPath),
-        }
-    });
-    txn.commit().unwrap();
-    res
+    create_common(base_dir, name, label, cur_label, File::new().to_vec(), DirEntry::F)
 }
 
 /// write fails when `cur_label` cannot flow to the target file's label 
@@ -194,6 +161,36 @@ where T: Transaction
         }
     }
     Ok(labeled)
+}
+
+fn create_common(
+    base_dir: &str,
+    name: &str,
+    label: DCLabel,
+    cur_label: &mut DCLabel,
+    obj_vec: Vec<u8>,
+    entry_type: DirEntry,
+) -> Result<()> {
+    let db = DBENV.open_db(None).unwrap();
+    let mut txn = DBENV.begin_rw_txn().unwrap();
+    let res = get_direntry(base_dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
+        let entry = labeled.unlabel_write_check(cur_label)?;
+        match entry.entry_type() {
+            DirEntry::D => {
+                let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
+                let mut uid = get_uid();
+                while put_val_db_no_overwrite(uid, obj_vec.clone(), &mut txn, db).is_err() {
+                    uid = get_uid();
+                }
+                dir.create(name, cur_label, entry_type, label, uid)?;
+                let _ = put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
+                Ok(())
+            },
+            DirEntry::F => Err(Error::BadPath),
+        }
+    });
+    txn.commit().unwrap();
+    res
 }
 
 #[cfg(test)]
