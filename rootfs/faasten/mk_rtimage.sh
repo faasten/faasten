@@ -8,10 +8,16 @@
 ## Usage
 ## -----
 ##
-## $ ./mk_rtimage.sh RUNTIME OUTPUT_FILE
+## $ ./mk_rtimage.sh [--local-snapfaas PATH] [--force_protoc] RUNTIME OUTPUT_FILE
 ##
 ## Where RUNTIME is one of the runtimes defined in `runtimes`, without the `.sh`
 ## extension, and OUTPUT is the file with the resulting root file system.
+##
+## The optional --local-snapfaas PATH indicates Makefiles of the runtime to use
+## the given snapfaas repository instead of downloading from GitHub. The snapfaas
+## respository contains the syscalls.proto file that `protoc` uses to generate the
+## protobuf definitions for the target runtime. See runtimes/python3/Makefile for
+## example.
 ##
 ## Running this script requires super user privileges to mount the target file
 ## system, but you don't have to run with `sudo`, the script uses `sudo` explicitly.
@@ -26,10 +32,44 @@ function print_runtimes() {
   done
 }
 
+function print_options() {
+  echo
+  echo "Options:"
+  echo -e "    --local-snapfaas PATH\tpath of the local snapfaas repository's root"
+  echo -e "    --force-protoc\tforce building protobuf definitions for the targer runtime"
+}
+
+PARAMS=""
+while (( "$#" )); do
+  case "$1" in
+    --local-snapfaas)
+      shift
+      LOCALPATH="$1"
+      shift
+      ;;
+    --force-protoc)
+      FORCE='-B'
+      shift
+      ;;
+    -*|--*=) # unsupported flags
+      echo "Error: Unsupported flag $1" >&2
+      print_options
+      exit 1
+      ;;
+    *) # preserve positional arguments
+      PARAMS="$PARAMS $1"
+      shift
+      ;;
+  esac
+done
+
+eval set -- "$PARAMS"
+
 ## Check command line argument length
 if [ "$#" -ne 2 ]; then
-  echo "Usage: $0 [RUNTIME] [OUTPUT_FS_IMAGE]"
+  echo "Usage: $0 [options] RUNTIME OUTPUT_FS_IMAGE"
   print_runtimes
+  print_options
   exit 1
 fi
 
@@ -45,7 +85,7 @@ fi
 RUNTIME=$(realpath $RUNTIME)
 MYDIR=$(dirname $(realpath $0))
 
-make -C $RUNTIME
+make LOCALPATH=$LOCALPATH $FORCE -C $RUNTIME
 make -C $MYDIR/../common
 
 ## Create a temporary directory to mount the filesystem
