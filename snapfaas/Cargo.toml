@@ -34,7 +34,7 @@ path = "bins/sffs/main.rs"
 rand = "^0.8.5"
 ctrlc = "^3.2.0"
 reqwest = { version = "0.11", features = ["blocking"] }
-labeled = { git = "https://github.com/tan-yue/labeled", rev = "dd0766fe864f9cc9f7d777b4861a69687fa8e3aa" }
+labeled = { git = "https://github.com/tan-yue/labeled", rev = "38782d7d0ebc437e0d7ae0e84a8a7b62207909fa" }
 bytes = "1.1.0"
 byteorder = "1.2.1"
 prost = "0.9.0"

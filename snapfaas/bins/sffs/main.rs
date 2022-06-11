@@ -3,6 +3,7 @@ extern crate clap;
 use clap::{App, Arg, SubCommand};
 use labeled::dclabel::{self, DCLabel};
 use std::io::{Read, Write};
+use std::collections::BTreeSet;
 
 use snapfaas::labeled_fs;
 
@@ -14,12 +15,12 @@ fn input_to_dclabel(si_clauses: [Vec<&str>; 2]) -> DCLabel {
         } else if clauses[0].to_lowercase() == "false" {
             false.into()
         } else {
-            let mut s_vec = Vec::new();
+            let mut s = BTreeSet::new();
             for clause in clauses {
-                let c: Vec<String> = clause.split(",").map(|s| s.to_lowercase()).collect();
-                s_vec.push(c);
+                let c: BTreeSet<String> = clause.split(",").map(|s| s.to_lowercase()).collect();
+                s.insert(dclabel::Clause::from(c));
             }
-            s_vec.into()
+            dclabel::Component::from(s)
         };
         components.push(component);
     }

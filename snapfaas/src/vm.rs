@@ -151,7 +151,8 @@ impl Vm {
     ) -> Self {
         // We should also probably have a clearance to mitigate side channel attacks, but
         // meh for now...
-        let current_label = DCLabel::new([end_users.clone()], true);
+        use std::collections::BTreeSet;
+        let current_label = DCLabel::new([end_users.iter().cloned().collect::<BTreeSet<String>>()], true);
         let privilege: Component = [[function_name.clone()]].into();
         Vm {
             id,

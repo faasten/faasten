@@ -877,7 +877,7 @@ dependencies = [
 [[package]]
 name = "labeled"
 version = "0.1.0"
-source = "git+https://github.com/tan-yue/labeled?rev=dd0766fe864f9cc9f7d777b4861a69687fa8e3aa#dd0766fe864f9cc9f7d777b4861a69687fa8e3aa"
+source = "git+https://github.com/tan-yue/labeled?rev=38782d7d0ebc437e0d7ae0e84a8a7b62207909fa#38782d7d0ebc437e0d7ae0e84a8a7b62207909fa"
 dependencies = [
  "serde",
 ]
