@@ -1,7 +1,6 @@
 use std::path::Path;
-use std::sync::Mutex;
 
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{self, RngCore};
 use lazy_static;
 use lmdb;
 use lmdb::{Transaction, WriteFlags};
@@ -17,7 +16,6 @@ use self::dir::Directory;
 use self::file::File;
 
 lazy_static::lazy_static! {
-    pub static ref RNG: Mutex<StdRng> = Mutex::new(StdRng::from_entropy());
     pub static ref DBENV: lmdb::Environment = {
         let dbenv = lmdb::Environment::new()
             .set_map_size(100 * 1024 * 1024 * 1024)
@@ -150,7 +148,12 @@ pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> {
 /////////////
 // return a random u64
 fn get_uid() -> u64 {
-    RNG.lock().unwrap().gen_range(1..=u64::MAX)
+    let mut ret = rand::thread_rng().next_u64();
+    // 0 is reserved by the system for the root directory
+    if ret == 0 {
+        ret = rand::thread_rng().next_u64();
+    }
+    ret
 }
 
 fn get_val_db<T>(uid: u64, txn: &T, db: lmdb::Database) -> std::result::Result<Vec<u8>, lmdb::Error>
