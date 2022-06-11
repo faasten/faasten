@@ -3,6 +3,7 @@ import socket
 import struct
 import json
 
+### helper functions ###
 def recvall(sock, n):
     # Helper function to recv n bytes or return None if EOF is hit
     data = bytearray()
@@ -12,6 +13,19 @@ def recvall(sock, n):
             return None
         data.extend(packet)
     return data
+
+def protorelpath(value):
+    ret = syscalls_pb2.Path()
+    ret.value = value
+    ret.pathT = syscalls_pb2.PathType.REL_WORKSPACE
+    return ret
+
+def protoabspath(value):
+    ret = syscalls_pb2.Path()
+    ret.value = value
+    ret.pathT = syscalls_pb2.PathType.ABS
+    return ret
+### end of helper functions ###
 
 class Syscall():
     def __init__(self, sock):
@@ -54,6 +68,7 @@ class Syscall():
         response = self._recv(syscalls_pb2.ReadKeyResponse())
         return response.value
 
+    ### label APIs ###
     def get_current_label(self):
         req = syscalls_pb2.Syscall(getCurrentLabel = syscalls_pb2.GetCurrentLabel())
         self._send(req)
@@ -66,6 +81,16 @@ class Syscall():
         response = self._recv(syscalls_pb2.DcLabel())
         return response
 
+    def declassify(self, secrecy: syscalls_pb2.DcComponent):
+        """Declassify to the target secrecy and leave integrity untouched.
+        """
+        req = syscalls_pb2.Syscall(declassify = syscalls_pb2.DcComponent(value=secrecy))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+    ### end of label APIs ###
+
+    ### github APIs ###
     def github_rest_get(self, route):
         req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.GET, route = route, body = None))
         self._send(req)
@@ -92,6 +117,7 @@ class Syscall():
         self._send(req)
         response= self._recv(syscalls_pb2.GithubRestResponse())
         return response
+    ### end of github APIs ###
 
     def invoke(self, function, payload):
         req = syscalls_pb2.Syscall(invoke = syscalls_pb2.Invoke(function = function, payload = payload))
@@ -99,58 +125,122 @@ class Syscall():
         response= self._recv(syscalls_pb2.InvokeResponse())
         return response.success
 
-    def fsread(self, path):
-        req = syscalls_pb2.Syscall(fsRead = syscalls_pb2.FSRead(path = path))
+    ### file system APIs ###
+    def fs_read(self, path):
+        """Read the file at path `path`."""
+        req = syscalls_pb2.Syscall(fsRead = syscalls_pb2.FSRead(path = protoabspath(path)))
         self._send(req)
         response = self._recv(syscalls_pb2.ReadKeyResponse())
         return response.value
 
-    def fswrite(self, path, data):
-        req = syscalls_pb2.Syscall(fsWrite = syscalls_pb2.FSWrite(path = path, data = data))
+    def fs_write(self, path, data):
+        """Overwrite the file at path `path` with data `data`.
+        The backend handler always endorse before writing.
+        """
+        req = syscalls_pb2.Syscall(fsWrite = syscalls_pb2.FSWrite(path = protoabspath(path), data = data))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fscreate_dir(self, path, name, label):
-        req = syscalls_pb2.Syscall(fsCreateDir = syscalls_pb2.FSCreateDir(baseDir = path, name = name, label = label))
+    def fs_createdir(self, name, path, label: syscalls_pb2.DcLabel=None):
+        """Create a directory `name` with label `label` in the path `path`.
+        The backend handler always endorse before creating the directory.
+        """
+        req = syscalls_pb2.Syscall(fsCreateDir = syscalls_pb2.FSCreate(
+            basePath=protoabspath(path), name=name, label=label,
+            entryT=syscalls_pb2.DentryType.DIR))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fscreate_file(self, path, name, label):
-        req = syscalls_pb2.Syscall(fsCreateFile = syscalls_pb2.FSCreateFile(baseDir = path, name = name, label = label))
+    def fs_createfile(self, name, path, label: syscalls_pb2.DcLabel=None):
+        """Create a file `name` with label `label` in the path `path`.
+        The backend handler always endorse before creating the file.
+        """
+        req = syscalls_pb2.Syscall(fsCreateFile = syscalls_pb2.FSCreate(
+            basePath=protoabspath(path), name=name, label=label,
+            entryT=syscalls_pb2.DentryType.FILE))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def endorse_with(self, clauses):
-        cur_label = self.get_current_label()
-        target = syscalls_pb2.DcLabel()
-        target.secrecy.CopyFrom(cur_label.secrecy)
-        target.integrity.CopyFrom(cur_label.integrity)
-        for c in clauses:
-            target.integrity.clauses.add().principals.extend(c)
-        return self.exercise_privilege(target)
+    def workspace_createdir(self, name, path='.', label: syscalls_pb2.DcLabel=None):
+        """Create a directory `name` labeled `label` in $workspace/`path`.
 
-    def declassify_to(self, secrecy):
-        cur_label = self.get_current_label()
-        target = syscalls_pb2.DcLabel()
-        for c in secrecy:
-            target.secrecy.clauses.add().principals.extend(c)
-        target.integrity.CopyFrom(cur_label.integrity)
-        return self.exercise_privilege(target)
+        The current workspace directory $workspace is /$functionName/$endUser.
+        The backend handler is responsible for substituting the correct values.
+        The backend handler always endorses with the function's full privilege
+        before creating the directory.
 
-    def exercise_privilege(self, label):
-        req = syscalls_pb2.Syscall(exercisePrivilege = label)
+        Args:
+            name:
+                The name of the new directory.
+            path:
+                The path of the new directory's base directory, relative to the workspace directory.
+                The default value is '.', the workspace directory itself.
+            label:
+                The new directory's label. The default value is None, indicating
+                the backend handler to use the function's label after endorsement.
+
+        Returns:
+            A bool that indicates whether the creation succeeds or not.
+        """
+        req = syscalls_pb2.Syscall(fsCreate=syscalls_pb2.FSCreate(
+            basePath=protorelpath(path), name=name, label=label,
+            entryT=syscalls_pb2.DentryType.DIR))
         self._send(req)
-        response = self._recv(syscalls_pb2.DcLabel())
-        return response
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
 
-    @staticmethod
-    def new_dclabel(secrecy, integrity):
-        label = syscalls_pb2.DcLabel()
-        for c in secrecy:
-            label.secrecy.clauses.add().principals.extend(c)
-        for c in integrity:
-            label.integrity.clauses.add().principals.extend(c)
-        return label
+    def workspace_createfile(self, name, path='.', label: syscalls_pb2.DcLabel=None):
+        """See workspace_createdir."""
+        req = syscalls_pb2.Syscall(fsCreate=syscalls_pb2.FSCreate(
+            basePath=protorelpath(path), name=name, label=label,
+            entryT=syscalls_pb2.DentryType.FILE))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+    def workspace_write(self, path, data):
+        """ Overwrite the file at $workspace/`path` with `data`.
+        
+        More details, see workspace_createdir.
+
+        Args:
+            path:
+                The path of the file, relative to the workspace directory.
+            data:
+                The data to overwrite with.
+
+        Returns:
+            A bool that indicates whether the write succeeds or not.
+        """
+        req = syscalls_pb2.Syscall(fsWrite=syscalls_pb2.FSWrite(path=protorelpath(path), data=data))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+    def workspace_read(self, path):
+        """Read the file at $workspace/`path`.
+        
+        More details about $workspace, see workspace_createdir.
+
+        Args:
+            path:
+                The path of the file, relative to the workspace directory.
+
+        Returns:
+            A [u8] holding the data if the read succeeds. None, otherwise.
+        """
+        req = syscalls_pb2.Syscall(fsWrite=syscalls_pb2.FSWrite(path=protorelpath(path), data=data))
+        self._send(req)
+        response = self._recv(syscalls_pb2.ReadKeyResponse())
+        return response.value
+
+    def workspace_abspath(self, relpath):
+        """Return the absolute path of the `relpath`."""
+        req = syscalls_pb2.Syscall(workspaceAbspath=syscalls_pb2.WorkspaceAbspath(relpath=relpath))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WorkspaceAbspathResponse())
+        return response.abspath
+    ### end of file system APIs ###
