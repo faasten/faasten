@@ -22,6 +22,10 @@ lazy_static::lazy_static! {
             .open(std::path::Path::new("storage"))
             .unwrap();
 
+        // Create the root directory object at key 0 if not already exists.
+        // `put_val_db_no_overwrite` uses `NO_OVERWRITE` as the write flag to make sure that it
+        // will be a noop if the root already exists at key 0. And we can safely ignore the
+        // returned `Result` here which if an error is an KeyExist error.
         let default_db = dbenv.open_db(None).unwrap();
         let mut txn = dbenv.begin_rw_txn().unwrap();
         let root_uid = 0;
