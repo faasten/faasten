@@ -29,18 +29,25 @@ impl Directory {
         self.mappings.get(name).ok_or(Error::BadPath)
     }
 
-    pub fn create(&mut self, name: &str, cur_label: &DCLabel, entry_type: DirEntry, label: DCLabel) -> Result<u64> {
+    pub fn create(
+        &mut self,
+        name: &str,
+        cur_label: &DCLabel,
+        entry_type: DirEntry,
+        label: DCLabel,
+        uid: u64
+    ) -> Result<u64> {
         if cur_label.can_flow_to(&label) {
             if let Some(_) = self.mappings.get(name) {
                 Err(Error::BadPath)
             } else {
-                let new_entry = LabeledDirEntry::new(label, entry_type);
+                let new_entry = LabeledDirEntry::new(label, entry_type, uid);
                 let uid = new_entry.uid();
                 let _ = self.mappings.insert(name.to_string(), new_entry);
                 Ok(uid)
             }
         } else {
-            Err(Error::Unauthorized)
+            Err(Error::BadTargetLabel)
         }
     }
 

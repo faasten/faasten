@@ -877,7 +877,7 @@ dependencies = [
 [[package]]
 name = "labeled"
 version = "0.1.0"
-source = "git+https://github.com/alevy/labeled#98caa38bd59c23be0ab10574286858860d06000c"
+source = "git+https://github.com/tan-yue/labeled?rev=8d9fb2069e1ac7eb111f05d657af4427db600219#8d9fb2069e1ac7eb111f05d657af4427db600219"
 dependencies = [
  "serde",
 ]
@@ -1781,6 +1781,7 @@ dependencies = [
  "net_util",
  "prost",
  "prost-build",
+ "rand",
  "reqwest",
  "serde",
  "serde_json",

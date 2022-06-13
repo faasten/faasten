@@ -24,12 +24,17 @@ path = "bins/sfclient/main.rs"
 name = "sfdb"
 path = "bins/sfdb/main.rs"
 
+[[bin]]
+name = "sffs"
+path = "bins/sffs/main.rs"
+
 [lib]
 
 [dependencies]
+rand = "^0.8.5"
 ctrlc = "^3.2.0"
 reqwest = { version = "0.11", features = ["blocking"] }
-labeled = { git = "https://github.com/alevy/labeled" }
+labeled = { git = "https://github.com/tan-yue/labeled", rev = "8d9fb2069e1ac7eb111f05d657af4427db600219" }
 bytes = "1.1.0"
 byteorder = "1.2.1"
 prost = "0.9.0"

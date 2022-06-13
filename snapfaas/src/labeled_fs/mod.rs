@@ -1,6 +1,6 @@
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 
+use rand::{self, RngCore};
 use lazy_static;
 use lmdb;
 use lmdb::{Transaction, WriteFlags};
@@ -16,19 +16,20 @@ use self::dir::Directory;
 use self::file::File;
 
 lazy_static::lazy_static! {
-    static ref NEXT_UID: AtomicU64 = AtomicU64::new(0);
     pub static ref DBENV: lmdb::Environment = {
         let dbenv = lmdb::Environment::new()
             .set_map_size(100 * 1024 * 1024 * 1024)
             .open(std::path::Path::new("storage"))
             .unwrap();
 
+        // Create the root directory object at key 0 if not already exists.
+        // `put_val_db_no_overwrite` uses `NO_OVERWRITE` as the write flag to make sure that it
+        // will be a noop if the root already exists at key 0. And we can safely ignore the
+        // returned `Result` here which if an error is an KeyExist error.
         let default_db = dbenv.open_db(None).unwrap();
         let mut txn = dbenv.begin_rw_txn().unwrap();
-        let root_uid = get_next_uid();
-        if let Err(lmdb::Error::NotFound) = get_val_db(root_uid, &txn, default_db) {
-            put_val_db(root_uid, Directory::new().to_vec(), &mut txn, default_db);
-        }
+        let root_uid = 0;
+        let _ = put_val_db_no_overwrite(root_uid, Directory::new().to_vec(), &mut txn, default_db);
         txn.commit().unwrap();
 
         dbenv
@@ -39,6 +40,7 @@ lazy_static::lazy_static! {
 pub enum Error {
     BadPath,
     Unauthorized,
+    BadTargetLabel,
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -83,45 +85,13 @@ pub fn list(path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
 }
 
 /// create_dir only fails when `cur_label` cannot flow to `label` or target directory's label
-pub fn create_dir(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
-    let db = DBENV.open_db(None).unwrap();
-    let mut txn = DBENV.begin_rw_txn().unwrap();
-    let res = get_direntry(dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
-        let entry = labeled.unlabel_write_check(cur_label)?;
-        match entry.entry_type() {
-            DirEntry::D => {
-                let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
-                let uid = dir.create(name, cur_label, DirEntry::D, label)?;
-                put_val_db(uid, Directory::new().to_vec(), &mut txn, db);
-                put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
-                Ok(())
-            },
-            DirEntry::F => Err(Error::BadPath),
-        }
-    });
-    txn.commit().unwrap();
-    res
+pub fn create_dir(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
+    create_common(base_dir, name, label, cur_label, Directory::new().to_vec(), DirEntry::D)
 }
 
 /// create_file only fails when `cur_label` cannot flow to `label` or target directory's label
-pub fn create_file(dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
-    let db = DBENV.open_db(None).unwrap();
-    let mut txn = DBENV.begin_rw_txn().unwrap();
-    let res = get_direntry(dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
-        let entry = labeled.unlabel_write_check(cur_label)?;
-        match entry.entry_type() {
-            DirEntry::D => {
-                let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
-                let uid = dir.create(name, cur_label, DirEntry::F, label)?;
-                put_val_db(uid, File::new().to_vec(), &mut txn, db);
-                put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
-                Ok(())
-            },
-            DirEntry::F => Err(Error::BadPath),
-        }
-    });
-    txn.commit().unwrap();
-    res
+pub fn create_file(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
+    create_common(base_dir, name, label, cur_label, File::new().to_vec(), DirEntry::F)
 }
 
 /// write fails when `cur_label` cannot flow to the target file's label 
@@ -134,7 +104,7 @@ pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> {
             DirEntry::F => {
                 let mut file = get_val_db(entry.uid(), &txn, db).map(File::from_vec).unwrap();
                 file.write(data);
-                put_val_db(entry.uid(), file.to_vec(), &mut txn, db);
+                let _ = put_val_db(entry.uid(), file.to_vec(), &mut txn, db);
                 Ok(())
             }
             DirEntry::D => Err(Error::BadPath),
@@ -147,9 +117,14 @@ pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> {
 /////////////
 // helpers //
 /////////////
-// return a uid in big-endian bytes
-fn get_next_uid() -> u64 {
-    NEXT_UID.fetch_add(1, Ordering::Relaxed)
+// return a random u64
+fn get_uid() -> u64 {
+    let mut ret = rand::thread_rng().next_u64();
+    // 0 is reserved by the system for the root directory
+    if ret == 0 {
+        ret = rand::thread_rng().next_u64();
+    }
+    ret
 }
 
 fn get_val_db<T>(uid: u64, txn: &T, db: lmdb::Database) -> std::result::Result<Vec<u8>, lmdb::Error>
@@ -157,8 +132,12 @@ where T: Transaction {
     txn.get(db, &uid.to_be_bytes()).map(Vec::from)
 }
 
-fn put_val_db(uid: u64, val: Vec<u8>, txn: &mut lmdb::RwTransaction, db: lmdb::Database) {
-    let _ = txn.put(db, &uid.to_be_bytes(), &val, WriteFlags::empty());
+fn put_val_db_no_overwrite(uid: u64, val: Vec<u8>, txn: &mut lmdb::RwTransaction, db: lmdb::Database) -> std::result::Result<(), lmdb::Error> {
+    txn.put(db, &uid.to_be_bytes(), &val, WriteFlags::NO_OVERWRITE)
+}
+
+fn put_val_db(uid: u64, val: Vec<u8>, txn: &mut lmdb::RwTransaction, db: lmdb::Database) -> std::result::Result<(), lmdb::Error> {
+    txn.put(db, &uid.to_be_bytes(), &val, WriteFlags::empty())
 }
 
 // return the labeled direntry named by the path
@@ -182,6 +161,36 @@ where T: Transaction
         }
     }
     Ok(labeled)
+}
+
+fn create_common(
+    base_dir: &str,
+    name: &str,
+    label: DCLabel,
+    cur_label: &mut DCLabel,
+    obj_vec: Vec<u8>,
+    entry_type: DirEntry,
+) -> Result<()> {
+    let db = DBENV.open_db(None).unwrap();
+    let mut txn = DBENV.begin_rw_txn().unwrap();
+    let res = get_direntry(base_dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
+        let entry = labeled.unlabel_write_check(cur_label)?;
+        match entry.entry_type() {
+            DirEntry::D => {
+                let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
+                let mut uid = get_uid();
+                while put_val_db_no_overwrite(uid, obj_vec.clone(), &mut txn, db).is_err() {
+                    uid = get_uid();
+                }
+                dir.create(name, cur_label, entry_type, label, uid)?;
+                let _ = put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
+                Ok(())
+            },
+            DirEntry::F => Err(Error::BadPath),
+        }
+    });
+    txn.commit().unwrap();
+    res
 }
 
 #[cfg(test)]
@@ -232,26 +241,32 @@ mod tests {
 
     #[test]
     fn test_storage_create_file_write_read() {
-        // create `/gh_repo/yue`
-        let mut cur_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        assert!(create_dir("/gh_repo", "yue", target_label, &mut cur_label).is_ok());
+        // create `/func2`
+        let mut cur_label = DCLabel::bottom();
+        let target_label = DCLabel::new([["func2"]], [["func2"]]);
+        assert!(create_dir("/", "func2", target_label, &mut cur_label).is_ok());
 
-        // create `/gh_repo/yue/mydata.txt`
-        let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
-        assert!(create_file("/gh_repo/yue", "mydata.txt", target_label, &mut cur_label).is_ok());
-        assert_eq!(read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), Vec::<u8>::new());
+        // create `/func2/mydata.txt`
+        // after reading the directory /func2, cur_label gets raised to <func2, func2> and
+        // cannot flow to the target label <user2, func2>
+        let mut cur_label = DCLabel::new(true, [["func2"]]);
+        let target_label = DCLabel::new([["user2"]], [["func2"]]);
+        assert_eq!(create_file("/func2", "mydata.txt", target_label, &mut cur_label).unwrap_err(), Error::BadTargetLabel);
+        // <func2, func2> can flow to <user2/\func2, func2>
+        let target_label = DCLabel::new([["user2"], ["func2"]], [["func2"]]);
+        assert!(create_file("/func2", "mydata.txt", target_label, &mut cur_label).is_ok());
+        assert_eq!(read("/func2/mydata.txt", &mut cur_label).unwrap(), Vec::<u8>::new());
     
         // write read
         let text = "test message";
         let data = text.as_bytes().to_vec();
-        assert!(write("/gh_repo/yue/mydata.txt", data.clone(), &mut cur_label).is_ok());
-        assert_eq!(read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), data);
+        assert!(write("/func2/mydata.txt", data.clone(), &mut cur_label).is_ok());
+        assert_eq!(read("/func2/mydata.txt", &mut cur_label).unwrap(), data);
 
-        // overwrite read
+        //// overwrite read
         let text = "test message test message";
         let data = text.as_bytes().to_vec();
-        assert!(write("/gh_repo/yue/mydata.txt", data.clone(), &mut cur_label).is_ok());
-        assert_eq!(read("/gh_repo/yue/mydata.txt", &mut cur_label).unwrap(), data);
+        assert!(write("/func2/mydata.txt", data.clone(), &mut cur_label).is_ok());
+        assert_eq!(read("/func2/mydata.txt", &mut cur_label).unwrap(), data);
     }
 }
