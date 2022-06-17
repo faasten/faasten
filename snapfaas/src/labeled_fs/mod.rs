@@ -1,7 +1,6 @@
 use std::path::Path;
-use std::sync::Mutex;
 
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{self, RngCore};
 use lazy_static;
 use lmdb;
 use lmdb::{Transaction, WriteFlags};
@@ -17,13 +16,16 @@ use self::dir::Directory;
 use self::file::File;
 
 lazy_static::lazy_static! {
-    pub static ref RNG: Mutex<StdRng> = Mutex::new(StdRng::from_entropy());
     pub static ref DBENV: lmdb::Environment = {
         let dbenv = lmdb::Environment::new()
             .set_map_size(100 * 1024 * 1024 * 1024)
             .open(std::path::Path::new("storage"))
             .unwrap();
 
+        // Create the root directory object at key 0 if not already exists.
+        // `put_val_db_no_overwrite` uses `NO_OVERWRITE` as the write flag to make sure that it
+        // will be a noop if the root already exists at key 0. And we can safely ignore the
+        // returned `Result` here which if an error is an KeyExist error.
         let default_db = dbenv.open_db(None).unwrap();
         let mut txn = dbenv.begin_rw_txn().unwrap();
         let root_uid = 0;
@@ -39,7 +41,6 @@ pub enum Error {
     BadPath,
     Unauthorized,
     BadTargetLabel,
-    UidCollision,
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -85,46 +86,12 @@ pub fn list(path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
 
 /// create_dir only fails when `cur_label` cannot flow to `label` or target directory's label
 pub fn create_dir(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
-    let db = DBENV.open_db(None).unwrap();
-    let mut txn = DBENV.begin_rw_txn().unwrap();
-    let res = get_direntry(base_dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
-        let entry = labeled.unlabel_write_check(cur_label)?;
-        match entry.entry_type() {
-            DirEntry::D => {
-                let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
-                let uid = dir.create(name, cur_label, DirEntry::D, label)?;
-                put_val_db_no_overwrite(uid, Directory::new().to_vec(), &mut txn, db).map_err(|_| Error::UidCollision)?;
-                let _ = put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
-                Ok(())
-            },
-            DirEntry::F => Err(Error::BadPath),
-        }
-    });
-    txn.commit().unwrap();
-    println!("create_dir\t{}/{}\t{:?}", base_dir, name, res);
-    res
+    create_common(base_dir, name, label, cur_label, Directory::new().to_vec(), DirEntry::D)
 }
 
 /// create_file only fails when `cur_label` cannot flow to `label` or target directory's label
 pub fn create_file(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
-    let db = DBENV.open_db(None).unwrap();
-    let mut txn = DBENV.begin_rw_txn().unwrap();
-    let res = get_direntry(base_dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
-        let entry = labeled.unlabel_write_check(cur_label)?;
-        match entry.entry_type() {
-            DirEntry::D => {
-                let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
-                let uid = dir.create(name, cur_label, DirEntry::F, label)?;
-                put_val_db_no_overwrite(uid, File::new().to_vec(), &mut txn, db).map_err(|_| Error::UidCollision)?;
-                let _ = put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
-                Ok(())
-            },
-            DirEntry::F => Err(Error::BadPath),
-        }
-    });
-    txn.commit().unwrap();
-    println!("create_file\t{}/{}\t{:?}", base_dir, name, res);
-    res
+    create_common(base_dir, name, label, cur_label, File::new().to_vec(), DirEntry::F)
 }
 
 /// write fails when `cur_label` cannot flow to the target file's label 
@@ -153,7 +120,12 @@ pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> {
 /////////////
 // return a random u64
 fn get_uid() -> u64 {
-    RNG.lock().unwrap().gen_range(1..=u64::MAX)
+    let mut ret = rand::thread_rng().next_u64();
+    // 0 is reserved by the system for the root directory
+    if ret == 0 {
+        ret = rand::thread_rng().next_u64();
+    }
+    ret
 }
 
 fn get_val_db<T>(uid: u64, txn: &T, db: lmdb::Database) -> std::result::Result<Vec<u8>, lmdb::Error>
@@ -190,6 +162,36 @@ where T: Transaction
         }
     }
     Ok(labeled)
+}
+
+fn create_common(
+    base_dir: &str,
+    name: &str,
+    label: DCLabel,
+    cur_label: &mut DCLabel,
+    obj_vec: Vec<u8>,
+    entry_type: DirEntry,
+) -> Result<()> {
+    let db = DBENV.open_db(None).unwrap();
+    let mut txn = DBENV.begin_rw_txn().unwrap();
+    let res = get_direntry(base_dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
+        let entry = labeled.unlabel_write_check(cur_label)?;
+        match entry.entry_type() {
+            DirEntry::D => {
+                let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
+                let mut uid = get_uid();
+                while put_val_db_no_overwrite(uid, obj_vec.clone(), &mut txn, db).is_err() {
+                    uid = get_uid();
+                }
+                dir.create(name, cur_label, entry_type, label, uid)?;
+                let _ = put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
+                Ok(())
+            },
+            DirEntry::F => Err(Error::BadPath),
+        }
+    });
+    txn.commit().unwrap();
+    res
 }
 
 #[cfg(test)]

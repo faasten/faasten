@@ -167,9 +167,6 @@ fn main() {
                 Err(labeled_fs::Error::BadTargetLabel) => {
                     eprintln!("Bad target label.");
                 },
-                Err(labeled_fs::Error::UidCollision) => {
-                    eprintln!("Uid collision");
-                }
                 Ok(()) => {},
             }
         },
@@ -192,9 +189,6 @@ fn main() {
                 Err(labeled_fs::Error::BadTargetLabel) => {
                     eprintln!("Bad target label.");
                 },
-                Err(labeled_fs::Error::UidCollision) => {
-                    eprintln!("Uid collision");
-                }
                 Ok(()) => {},
             }
         },
@@ -215,7 +209,7 @@ fn main() {
                 Err(labeled_fs::Error::Unauthorized) => {
                     eprintln!("Bad endorsement.");
                 },
-                Err(labeled_fs::Error::BadTargetLabel) | Err(labeled_fs::Error::UidCollision) => {
+                Err(labeled_fs::Error::BadTargetLabel) => {
                     eprintln!("write should not reach here.");
                 },
                 Ok(()) => {},

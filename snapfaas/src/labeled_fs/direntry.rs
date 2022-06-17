@@ -18,8 +18,8 @@ pub struct LabeledDirEntry {
 }
 
 impl LabeledDirEntry {
-    pub fn new(label: DCLabel, entry_type: DirEntry) -> Self {
-        Self { label, entry_type, uid: super::get_uid() }
+    pub fn new(label: DCLabel, entry_type: DirEntry, uid: u64) -> Self {
+        Self { label, entry_type, uid }
     }
 
     pub fn root() -> Self {
