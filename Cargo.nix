@@ -532,21 +532,7 @@ rec {
           "parallel" = [ "jobserver" ];
         };
       };
-      "cfg-if 0.1.10" = rec {
-        crateName = "cfg-if";
-        version = "0.1.10";
-        edition = "2018";
-        sha256 = "08h80ihs74jcyp24cd75wwabygbbdgl05k6p5dmq8akbr78vv1a7";
-        authors = [
-          "Alex Crichton <alex@alexcrichton.com>"
-        ];
-        features = {
-          "compiler_builtins" = [ "dep:compiler_builtins" ];
-          "core" = [ "dep:core" ];
-          "rustc-dep-of-std" = [ "core" "compiler_builtins" ];
-        };
-      };
-      "cfg-if 1.0.0" = rec {
+      "cfg-if" = rec {
         crateName = "cfg-if";
         version = "1.0.0";
         edition = "2018";
@@ -810,7 +796,7 @@ rec {
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
         ];
         features = {
@@ -820,55 +806,51 @@ rec {
       };
       "crossbeam-channel" = rec {
         crateName = "crossbeam-channel";
-        version = "0.4.4";
-        edition = "2015";
-        sha256 = "11zvmp8p94vaqp4xyhzymw8xndnpwq12x5qgvxkway7lprygwlxi";
-        authors = [
-          "The Crossbeam Project Developers"
-        ];
-        dependencies = [
-          {
-            name = "crossbeam-utils";
-            packageId = "crossbeam-utils";
-          }
-          {
-            name = "maybe-uninit";
-            packageId = "maybe-uninit";
-          }
-        ];
-
-      };
-      "crossbeam-utils" = rec {
-        crateName = "crossbeam-utils";
-        version = "0.7.2";
-        edition = "2015";
-        sha256 = "1a31wbrda1320gj2a6az1lin2d34xfc3xf88da4c17qy5lxcgiy3";
-        authors = [
-          "The Crossbeam Project Developers"
-        ];
+        version = "0.5.5";
+        edition = "2018";
+        sha256 = "0p6qq6j6q0m7yb0g47y8himgsqqm75jj51zl5hcrq00r33bs80jc";
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 0.1.10";
+            packageId = "cfg-if";
           }
           {
-            name = "lazy_static";
-            packageId = "lazy_static";
+            name = "crossbeam-utils";
+            packageId = "crossbeam-utils";
             optional = true;
+            usesDefaultFeatures = false;
           }
         ];
-        buildDependencies = [
+        features = {
+          "crossbeam-utils" = [ "dep:crossbeam-utils" ];
+          "default" = [ "std" ];
+          "std" = [ "crossbeam-utils/std" ];
+        };
+        resolvedDefaultFeatures = [ "crossbeam-utils" "default" "std" ];
+      };
+      "crossbeam-utils" = rec {
+        crateName = "crossbeam-utils";
+        version = "0.8.9";
+        edition = "2018";
+        sha256 = "0y3rr0rl308abzagc29fqffdk67fg8yd0lj0amm2i1vpjn0gkwcg";
+        dependencies = [
           {
-            name = "autocfg";
-            packageId = "autocfg";
+            name = "cfg-if";
+            packageId = "cfg-if";
+          }
+          {
+            name = "once_cell";
+            packageId = "once_cell";
+            optional = true;
           }
         ];
         features = {
           "default" = [ "std" ];
-          "lazy_static" = [ "dep:lazy_static" ];
-          "std" = [ "lazy_static" ];
+          "loom" = [ "dep:loom" ];
+          "once_cell" = [ "dep:once_cell" ];
+          "std" = [ "once_cell" ];
         };
-        resolvedDefaultFeatures = [ "default" "lazy_static" "std" ];
+        resolvedDefaultFeatures = [ "once_cell" "std" ];
       };
       "crypto-common" = rec {
         crateName = "crypto-common";
@@ -1220,7 +1202,7 @@ rec {
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
         ];
         features = {
@@ -1355,7 +1337,7 @@ rec {
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
           {
             name = "libc";
@@ -1629,7 +1611,7 @@ rec {
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
           {
             name = "libc";
@@ -2224,7 +2206,7 @@ rec {
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
         ];
         features = {
@@ -2465,9 +2447,9 @@ rec {
         edition = "2018";
         workspace_member = null;
         src = pkgs.fetchgit {
-          url = "https://github.com/alevy/labeled";
-          rev = "98caa38bd59c23be0ab10574286858860d06000c";
-          sha256 = "0carfsw1dk1m7pxgzvavbzg339wh5lgpbr3canxil6nmywyjiyvm";
+          url = "https://github.com/tan-yue/labeled";
+          rev = "8d9fb2069e1ac7eb111f05d657af4427db600219";
+          sha256 = "029wcvxglpwqnf31v48n5j7cby0ky8b4kdwfkz29hjv9h3i42di7";
         };
         authors = [
           "Amit Aryeh Levy <amit@amitlevy.com>"
@@ -2634,7 +2616,7 @@ rec {
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
         ];
         features = {
@@ -2706,17 +2688,6 @@ rec {
         libPath = "lib.rs";
         authors = [
           "Simon Sapin <simon.sapin@exyr.org>"
-        ];
-
-      };
-      "maybe-uninit" = rec {
-        crateName = "maybe-uninit";
-        version = "2.0.0";
-        edition = "2015";
-        sha256 = "004y0nzmpfdrhz251278341z6ql34iv1k6dp1h6af7d6nd6jwc30";
-        authors = [
-          "est31 <MTest31@outlook.com>"
-          "The Rust Project Developers"
         ];
 
       };
@@ -3173,7 +3144,7 @@ rec {
           }
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
           {
             name = "libc";
@@ -3344,7 +3315,7 @@ rec {
           }
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
           {
             name = "foreign-types";
@@ -3462,7 +3433,7 @@ rec {
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
           {
             name = "instant";
@@ -4898,7 +4869,7 @@ rec {
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
           {
             name = "cpufeatures";
@@ -4941,7 +4912,7 @@ rec {
           }
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
           {
             name = "cpufeatures";
@@ -5056,6 +5027,7 @@ rec {
           { name = "multivm"; path = "bins/multivm/main.rs"; }
           { name = "sfclient"; path = "bins/sfclient/main.rs"; }
           { name = "sfdb"; path = "bins/sfdb/main.rs"; }
+          { name = "sffs"; path = "bins/sffs/main.rs"; }
         ];
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./snapfaas; };
         authors = [
@@ -5135,6 +5107,10 @@ rec {
           {
             name = "prost";
             packageId = "prost";
+          }
+          {
+            name = "rand";
+            packageId = "rand";
           }
           {
             name = "reqwest";
@@ -5359,7 +5335,7 @@ rec {
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
           {
             name = "fastrand";
@@ -5847,7 +5823,7 @@ rec {
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
           {
             name = "pin-project-lite";
@@ -6416,7 +6392,7 @@ rec {
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
           {
             name = "wasm-bindgen-macro";
@@ -6490,7 +6466,7 @@ rec {
         dependencies = [
           {
             name = "cfg-if";
-            packageId = "cfg-if 1.0.0";
+            packageId = "cfg-if";
           }
           {
             name = "js-sys";
