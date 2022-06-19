@@ -224,6 +224,7 @@ fn main() {
     let t1 = Instant::now();
     let mut vm =  Vm::new(id, firerunner, "myapp".to_string(), vm_app_config, allow_network);
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
+    let _ = std::fs::remove_file(&vm_listener_path);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
     let force_exit = cmd_arguments.is_present("force_exit");
     if let Err(e) = vm.launch(None, vm_listener, CID, force_exit, Some(odirect)) {
