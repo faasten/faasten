@@ -41,7 +41,9 @@ impl Worker {
             let mut stat = metrics::WorkerMetrics::new(log_file);
             stat.start_timed_flush(FLUSH_INTERVAL_SECS);
 
-            let vm_listener = match UnixListener::bind(format!("worker-{}.sock_1234", cid)) {
+            let vm_listener_path = format!("worker-{}.sock_1234", cid);
+            let _ = std::fs::remove_file(&vm_listener_path);
+            let vm_listener = match UnixListener::bind(vm_listener_path) {
                 Ok(listener) => listener,
                 Err(e) => panic!("Failed to bind to unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
             };

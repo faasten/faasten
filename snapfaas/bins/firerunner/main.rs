@@ -372,10 +372,12 @@ fn main() {
     }
 
     if let Some(cid) = cid.clone() {
+        let vsock_path = format!("worker-{}.sock", cid);
+        let _ = std::fs::remove_file(&vsock_path);
         let vsock_config = VsockDeviceConfig {
             vsock_id: "vsock0".to_string(),
             guest_cid: cid,
-            uds_path: format!("worker-{}.sock", cid).to_string(),
+            uds_path: vsock_path.to_string(),
         };
         if let Err(e) = vmm.add_vsock(vsock_config) {
             eprintln!("Vmm failed to add vsock due to: {:?}", e);
