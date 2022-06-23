@@ -28,6 +28,15 @@ fn main() {
         .version(crate_version!())
         .author(crate_authors!())
         .about("launch a single firerunner vm.")
+        .arg(Arg::with_name("data")
+            .long("data")
+            .multiple(true)
+            .value_delimiter(";")
+            .require_delimiter(true)
+            .value_name("DESCRIP:HANDLE")
+            .help("A data entry is a key:value pair. The key is a description string. The value \
+                is a serialized handle. Multiple data entries are delimited by semi-colons.")
+        )
         .arg(Arg::with_name("secrecy")
             .short("s")
             .long("secrecy")
@@ -287,13 +296,19 @@ fn main() {
     let dump_working_set = true && cmd_arguments.is_present("dump working set");
     let s_clauses: Vec<&str> = cmd_arguments.values_of("secrecy").unwrap().collect();
     let i_clauses: Vec<&str> = cmd_arguments.values_of("integrity").unwrap().collect();
+    let data_handles: std::collections::HashMap<String, String> = cmd_arguments.values_of("data").unwrap()
+        .map(|s| -> (String, String) {
+            println!("{}", s);
+            let mut split: Vec<&str> = s.split(":").collect();
+            (split.remove(0).to_string(), split.remove(0).to_string())
+        }).collect();
     for payload in payloads {
         let t1 = Instant::now();
         let req = Request {
             function: function_name.clone(),
             payload,
             label: input_to_dclabel([s_clauses.clone(), i_clauses.clone()]),
-            data_handles: std::collections::HashMap::new(),
+            data_handles: data_handles.clone(),
         };
         log::debug!("request: {:?}", req);
         match vm.process_req(req) {
