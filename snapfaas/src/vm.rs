@@ -332,6 +332,7 @@ impl Vm {
     pub fn process_req(&mut self, req: Request) -> Result<String, Error> {
         use prost::Message;
 
+        self.current_label = self.current_label.clone().lub(req.label);
         let sys_req = syscalls::Request {
             payload: req.payload.to_string(),
             data_handles: req.data_handles
