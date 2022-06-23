@@ -12,7 +12,6 @@ use std::collections::HashMap;
 
 use log::{debug, error};
 use tokio::process::{Child, Command};
-use serde_json::Value;
 
 use crate::configs::FunctionConfig;
 use crate::message::Message;
@@ -265,7 +264,7 @@ impl Vm {
                 .map_err(|e| Error::ProcessSpawn(e))?;
 
             if force_exit {
-                let output = vm_process .wait_with_output().await
+                let output = vm_process.wait_with_output().await
                     .expect("failed to wait on child");
                 let mut status = 0;
                 if !output.status.success() {
@@ -282,6 +281,11 @@ impl Vm {
                     res.unwrap().0.into_std().unwrap()
                 },
                 _ = vm_process.wait() => {
+                    let mut stderr_pipe = vm_process.stderr.take().unwrap();
+                    use tokio::io::AsyncReadExt;
+                    let mut buf = String::new();
+                    stderr_pipe.read_to_string(&mut buf).await?;
+                    debug!("Guest function exited: {}", buf);
                     crate::unlink_unix_sockets();
                     std::process::exit(1);
                 }
@@ -325,11 +329,12 @@ impl Vm {
     }
 
     /// Send request to vm and wait for its response
-    pub fn process_req(&mut self, req: Value) -> Result<String, Error> {
+    pub fn process_req(&mut self, req: Request) -> Result<String, Error> {
         use prost::Message;
 
         let sys_req = syscalls::Request {
-            payload: req.to_string(),
+            payload: req.payload.to_string(),
+            data_handles: req.data_handles
         }
         .encode_to_vec();
 
@@ -388,8 +393,10 @@ impl Vm {
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
             let (tx, _) = mpsc::channel();
             let req = Request {
+                label: self.current_label.clone(),
                 function: invoke.function,
-                payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
+                payload: serde_json::from_str(invoke.request.clone().unwrap().payload.as_str()).expect("json"),
+                data_handles: invoke.request.unwrap().data_handles,
             };
             use crate::metrics::RequestTimestamps;
             let timestamps = RequestTimestamps {

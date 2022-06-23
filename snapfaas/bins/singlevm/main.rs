@@ -7,6 +7,8 @@ extern crate clap;
 use snapfaas::vm::Vm;
 use snapfaas::unlink_unix_sockets;
 use snapfaas::configs::FunctionConfig;
+use snapfaas::request::Request;
+use snapfaas::cli_utils::input_to_dclabel;
 use std::io::{BufRead};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Instant;
@@ -26,6 +28,24 @@ fn main() {
         .version(crate_version!())
         .author(crate_authors!())
         .about("launch a single firerunner vm.")
+        .arg(Arg::with_name("secrecy")
+            .short("s")
+            .long("secrecy")
+            .multiple(true)
+            .value_delimiter(";")
+            .require_delimiter(true)
+            .value_name("SECRECY CLAUSE")
+            .required(true)
+            .help("A DCLabel clause is a string of comma-delimited principals. Multiple clauses must be delimited by semi-colons."))
+        .arg(Arg::with_name("integrity")
+            .short("i")
+            .long("integrity")
+            .multiple(true)
+            .value_delimiter(";")
+            .require_delimiter(true)
+            .value_name("INTEGRITY CLAUSE")
+            .required(true)
+            .help("A DCLabel clause is a string of comma-delimited principals. Multiple clauses must be delimited by semi-colons."))
         .arg(
             Arg::with_name("function")
                 .long("function")
@@ -232,7 +252,7 @@ fn main() {
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
     let function_name = cmd_arguments.value_of("function").unwrap().to_string();
-    let mut vm =  Vm::new(id, firerunner, function_name, vm_app_config, allow_network);
+    let mut vm =  Vm::new(id, firerunner, function_name.clone(), vm_app_config, allow_network);
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
     let force_exit = cmd_arguments.is_present("force_exit");
@@ -245,12 +265,12 @@ fn main() {
     log::debug!("VM ready in: {} us", t2.duration_since(t1).as_micros());
 
     // create a vector of Request values from stdin
-    let mut requests: Vec<serde_json::Value> = Vec::new();
+    let mut payloads: Vec<serde_json::Value> = Vec::new();
     let stdin = std::io::stdin();
     for line in std::io::BufReader::new(stdin).lines().map(|l| l.unwrap()) {
         match serde_json::from_str(&line) {
             Ok(j) => {
-                requests.push(j);
+                payloads.push(j);
             }
             Err(e) => {
                 eprintln!("invalid requests: {:?}", e);
@@ -260,13 +280,21 @@ fn main() {
             }
         }
     }
-    let num_req = requests.len();
+    let num_req = payloads.len();
     let mut num_rsp = 0;
 
     // Synchronously send the request to vm and wait for a response
     let dump_working_set = true && cmd_arguments.is_present("dump working set");
-    for req in requests {
+    let s_clauses: Vec<&str> = cmd_arguments.values_of("secrecy").unwrap().collect();
+    let i_clauses: Vec<&str> = cmd_arguments.values_of("integrity").unwrap().collect();
+    for payload in payloads {
         let t1 = Instant::now();
+        let req = Request {
+            function: function_name.clone(),
+            payload,
+            label: input_to_dclabel([s_clauses.clone(), i_clauses.clone()]),
+            data_handles: std::collections::HashMap::new(),
+        };
         log::debug!("request: {:?}", req);
         match vm.process_req(req) {
             Ok(rsp) => {

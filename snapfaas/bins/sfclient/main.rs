@@ -4,6 +4,8 @@ use clap::{App, Arg};
 use snapfaas::request;
 use std::net::TcpStream;
 use std::io::{Read, stdin};
+use std::collections::HashMap;
+use labeled::dclabel::DCLabel;
 
 fn main() -> std::io::Result<()> {
     let cmd_arguments = App::new("SnapFaaS CLI Client")
@@ -39,6 +41,8 @@ fn main() -> std::io::Result<()> {
     let request = request::Request {
         function,
         payload,
+        label: DCLabel::public(),
+        data_handles: HashMap::new(),
     };
 
     let mut connection = TcpStream::connect(addr)?;

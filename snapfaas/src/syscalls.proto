@@ -4,7 +4,7 @@ package snapfaas.syscalls;
 
 message Invoke {
   string function = 1;
-  string payload = 2;
+  Request request = 2;
 }
 
 message InvokeResponse {
@@ -30,6 +30,7 @@ message DcLabel {
 
 message Request {
   string payload = 1;
+  map<string, string> dataHandles = 2;
 }
 
 message Response {
