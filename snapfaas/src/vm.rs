@@ -487,6 +487,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsWrite(req)) => {
+                    self.current_label = self.current_label.clone().endorse(&self.privilege);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::write(req.path.as_str(), req.data, &mut self.current_label).is_ok(),
                     }
