@@ -439,6 +439,23 @@ impl Vm {
                     let result = syscalls::InvokeResponse { success: self.send_req(invoke) };
                     self.send_into_vm(result.encode_to_vec())?;
                 }
+                Some(SC::Declassify(s)) => {
+                    let secrecy = Component::DCFormula(
+                        s.clauses
+                            .iter()
+                            .map(|c| {
+                                Clause(c.principals.iter().map(Clone::clone).collect())
+                            })
+                            .collect()
+                    );
+                    let target_label = DCLabel::new(secrecy, self.current_label.integrity.clone());
+                    let success = target_label.can_flow_to_with_privilege(&self.current_label, &self.privilege);
+                    if success {
+                        self.current_label = target_label;
+                        debug!("declassification succeeded\t{:?}", self.current_label.secrecy);
+                    }
+                    self.send_into_vm(syscalls::WriteKeyResponse{ success }.encode_to_vec())?;
+                }
                 Some(SC::ReadKey(rk)) => {
                     let txn = DBENV.begin_ro_txn().unwrap();
                     let result = syscalls::ReadKeyResponse {
