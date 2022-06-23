@@ -5028,6 +5028,7 @@ rec {
           { name = "sfclient"; path = "bins/sfclient/main.rs"; }
           { name = "sfdb"; path = "bins/sfdb/main.rs"; }
           { name = "sffs"; path = "bins/sffs/main.rs"; }
+          { name = "sfblob"; path = "bins/sfblob/main.rs"; }
         ];
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./snapfaas; };
         authors = [

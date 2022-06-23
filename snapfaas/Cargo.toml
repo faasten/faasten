@@ -28,6 +28,10 @@ path = "bins/sfdb/main.rs"
 name = "sffs"
 path = "bins/sffs/main.rs"
 
+[[bin]]
+name = "sfblob"
+path = "bins/sfblob/main.rs"
+
 [lib]
 
 [dependencies]
