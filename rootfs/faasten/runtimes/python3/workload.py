@@ -25,7 +25,7 @@ while True:
     start = time.monotonic_ns()
     try:
         # return value from Lambda can be not JSON serializable
-        response = app.handle(json.loads(request.payload), sc)
+        response = app.handle(json.loads(request.payload), request.dataHandles, sc)
         response['duration'] = time.monotonic_ns() - start
         sc.respond(response)
     except:

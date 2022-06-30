@@ -108,8 +108,9 @@ class Syscall():
         return response
     ### end of github APIs ###
 
-    def invoke(self, function, payload):
-        req = syscalls_pb2.Syscall(invoke = syscalls_pb2.Invoke(function = function, payload = payload))
+    def invoke(self, function, payload, dataHandles):
+        request = syscalls_pb2.Request(payload = payload, dataHandles = dataHandles)
+        req = syscalls_pb2.Syscall(invoke = syscalls_pb2.Invoke(function = function, request = request))
         self._send(req)
         response= self._recv(syscalls_pb2.InvokeResponse())
         return response.success
