@@ -3,6 +3,7 @@ import socket
 import struct
 import json
 from contextlib import contextmanager
+import os.path
 
 ### helper functions ###
 def recvall(sock, n):
@@ -132,22 +133,24 @@ class Syscall():
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_createdir(self, name, path, label: syscalls_pb2.DcLabel=None):
-        """Create a directory `name` with label `label` in the path `path`.
+    def fs_createdir(self, path, label: syscalls_pb2.DcLabel=None):
+        """Create a directory at the `path` with the `label`.
         The backend handler always endorse before creating the directory.
         """
+        basePath, name = os.path.split(path)
         req = syscalls_pb2.Syscall(fsCreateDir = syscalls_pb2.FSCreateDir(
-            basePath = path, name = name, label = label))
+            basePath = basePath, name = name, label = label))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_createfile(self, name, path, label: syscalls_pb2.DcLabel=None):
-        """Create a file `name` with label `label` in the directory `path`.
+    def fs_createfile(self, path, label: syscalls_pb2.DcLabel=None):
+        """Create a file at the `path` with the `label`.
         The backend handler always endorse before creating the file.
         """
+        basePath, name = os.path.split(path)
         req = syscalls_pb2.Syscall(fsCreateFile = syscalls_pb2.FSCreateFile(
-            basePath = path, name = name, label = label))
+            basePath = basePath, name = name, label = label))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
