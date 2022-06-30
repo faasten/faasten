@@ -70,10 +70,10 @@ class Syscall():
         response = self._recv(syscalls_pb2.DcLabel())
         return response
 
-    def declassify(self, secrecy: syscalls_pb2.DcComponent):
+    def declassify(self, secrecy: syscalls_pb2.Component):
         """Declassify to the target secrecy and leave integrity untouched.
         """
-        req = syscalls_pb2.Syscall(declassify = syscalls_pb2.DcComponent(value=secrecy))
+        req = syscalls_pb2.Syscall(declassify = secrecy)
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
