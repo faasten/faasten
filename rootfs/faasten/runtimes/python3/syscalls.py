@@ -14,18 +14,6 @@ def recvall(sock, n):
             return None
         data.extend(packet)
     return data
-
-def protorelpath(value):
-    ret = syscalls_pb2.Path()
-    ret.value = value
-    ret.pathT = syscalls_pb2.PathType.REL_WORKSPACE
-    return ret
-
-def protoabspath(value):
-    ret = syscalls_pb2.Path()
-    ret.value = value
-    ret.pathT = syscalls_pb2.PathType.ABS
-    return ret
 ### end of helper functions ###
 
 class Syscall():
@@ -126,10 +114,10 @@ class Syscall():
         response= self._recv(syscalls_pb2.InvokeResponse())
         return response.success
 
-    ### file system APIs ###
+    ### named data object syscalls ###
     def fs_read(self, path):
         """Read the file at path `path`."""
-        req = syscalls_pb2.Syscall(fsRead = syscalls_pb2.FSRead(path = protoabspath(path)))
+        req = syscalls_pb2.Syscall(fsRead = syscalls_pb2.FSRead(path = path))
         self._send(req)
         response = self._recv(syscalls_pb2.ReadKeyResponse())
         return response.value
@@ -138,7 +126,7 @@ class Syscall():
         """Overwrite the file at path `path` with data `data`.
         The backend handler always endorse before writing.
         """
-        req = syscalls_pb2.Syscall(fsWrite = syscalls_pb2.FSWrite(path = protoabspath(path), data = data))
+        req = syscalls_pb2.Syscall(fsWrite = syscalls_pb2.FSWrite(path = path, data = data))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
@@ -147,23 +135,22 @@ class Syscall():
         """Create a directory `name` with label `label` in the path `path`.
         The backend handler always endorse before creating the directory.
         """
-        req = syscalls_pb2.Syscall(fsCreateDir = syscalls_pb2.FSCreate(
-            basePath=protoabspath(path), name=name, label=label,
-            entryT=syscalls_pb2.DentryType.DIR))
+        req = syscalls_pb2.Syscall(fsCreateDir = syscalls_pb2.FSCreateDir(
+            basePath = path, name = name, label = label))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
     def fs_createfile(self, name, path, label: syscalls_pb2.DcLabel=None):
-        """Create a file `name` with label `label` in the path `path`.
+        """Create a file `name` with label `label` in the directory `path`.
         The backend handler always endorse before creating the file.
         """
-        req = syscalls_pb2.Syscall(fsCreateFile = syscalls_pb2.FSCreate(
-            basePath=protoabspath(path), name=name, label=label,
-            entryT=syscalls_pb2.DentryType.FILE))
+        req = syscalls_pb2.Syscall(fsCreateFile = syscalls_pb2.FSCreateFile(
+            basePath = path, name = name, label = label))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
+    ### end of named data object syscalls ###
 
     ### unnamed data object syscalls #
     @contextmanager
