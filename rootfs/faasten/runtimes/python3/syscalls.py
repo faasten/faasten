@@ -118,15 +118,30 @@ class Syscall():
 
     ### named data object syscalls ###
     def fs_read(self, path):
-        """Read the file at path `path`."""
+        """Read the file at the `path`.
+
+        Args:
+            path (str): slash separated string starting with a slash.
+
+        Returns:
+            bytes: if success
+            None: otherwise
+        """
         req = syscalls_pb2.Syscall(fsRead = syscalls_pb2.FSRead(path = path))
         self._send(req)
         response = self._recv(syscalls_pb2.ReadKeyResponse())
         return response.value
 
     def fs_write(self, path, data):
-        """Overwrite the file at path `path` with data `data`.
-        The backend handler always endorse before writing.
+        """Overwrite the file at the `path` with the `data`.
+        The host-side handler always endorse before writing.
+
+        Args:
+            path (str): slash separated string starting with a slash.
+            data (bytes): data to write
+
+        Returns:
+            bool: True for success, False otherwise
         """
         req = syscalls_pb2.Syscall(fsWrite = syscalls_pb2.FSWrite(path = path, data = data))
         self._send(req)
@@ -135,7 +150,15 @@ class Syscall():
 
     def fs_createdir(self, path, label: syscalls_pb2.DcLabel=None):
         """Create a directory at the `path` with the `label`.
-        The backend handler always endorse before creating the directory.
+        The host-side handler always endorse before creating the directory.
+
+        Args:
+            path (str): slash separated string starting with a slash.
+            label (syscalls_pb2.DcLabel, optional): Defaults to None.
+                The default None instructs the host-side handler to use the function's current label.
+
+        Returns:
+            bool: True for success, False otherwise
         """
         basePath, name = os.path.split(path)
         req = syscalls_pb2.Syscall(fsCreateDir = syscalls_pb2.FSCreateDir(
@@ -146,7 +169,15 @@ class Syscall():
 
     def fs_createfile(self, path, label: syscalls_pb2.DcLabel=None):
         """Create a file at the `path` with the `label`.
-        The backend handler always endorse before creating the file.
+        The host-side handler always endorse before creating the file.
+
+        Args:
+            path (str): slash separated string starting with a slash.
+            label (syscalls_pb2.DcLabel, optional): Defaults to None.
+                The default None instructs the host-side handler to use the function's current label.
+
+        Returns:
+            bool: True for success, False otherwise
         """
         basePath, name = os.path.split(path)
         req = syscalls_pb2.Syscall(fsCreateFile = syscalls_pb2.FSCreateFile(
