@@ -2,6 +2,7 @@ import syscalls_pb2
 import socket
 import struct
 import json
+from contextlib import contextmanager
 
 ### helper functions ###
 def recvall(sock, n):
@@ -164,83 +165,97 @@ class Syscall():
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def workspace_createdir(self, name, path='.', label: syscalls_pb2.DcLabel=None):
-        """Create a directory `name` labeled `label` in $workspace/`path`.
+    ### unnamed data object syscalls #
+    @contextmanager
+    def create_unnamed(self, size: int = None):
+        """Create a nameless data object.
 
-        The current workspace directory $workspace is /$functionName/$endUser.
-        The backend handler is responsible for substituting the correct values.
-        The backend handler always endorses with the function's full privilege
-        before creating the directory.
+        The implementation uses the content-addressed blob store.
 
-        Args:
-            name:
-                The name of the new directory.
-            path:
-                The path of the new directory's base directory, relative to the workspace directory.
-                The default value is '.', the workspace directory itself.
-            label:
-                The new directory's label. The default value is None, indicating
-                the backend handler to use the function's label after endorsement.
-
-        Returns:
-            A bool that indicates whether the creation succeeds or not.
+        Yield:
+            An instance of class NewBlob
         """
-        req = syscalls_pb2.Syscall(fsCreate=syscalls_pb2.FSCreate(
-            basePath=protorelpath(path), name=name, label=label,
-            entryT=syscalls_pb2.DentryType.DIR))
+        req = syscalls_pb2.Syscall(createBlob=syscalls_pb2.BlobCreate(size=size))
         self._send(req)
-        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        response = self._recv(syscalls_pb2.BlobResponse())
+        if response.success:
+            fd = response.fd
+            yield NewBlob(fd, self)
+            syscalls_pb2.Syscall(closeBlob=syscalls_pb2.BlobClose(fd=fd))
+            self._send(req)
+            response = self._recv(syscalls_pb2.BlobResponse())
+        else:
+            raise CreateUnnamedError
+
+    @contextmanager
+    def open_unnamed(self, name):
+        """Open an existing nameless data object read-only.
+
+        The implementation uses the content-addressed blob store.
+
+        Yield:
+            An instance of class Blob
+        """
+        req = syscalls_pb2.Syscall(openBlob=syscalls_pb2.BlobOpen(name=name))
+        self._send(req)
+        response = self._recv(syscalls_pb2.BlobResponse())
+        fd = response.fd
+        yield Blob(fd, self)
+        req = syscalls_pb2.Syscall(closeBlob=syscalls_pb2.BlobClose(fd=fd))
+        self._send(req)
+        response = self._recv(syscalls_pb2.BlobResponse())
+    ### end of unnamed object syscalls ###
+
+class NewBlob():
+    def __init__(self, fd, syscall):
+        self.fd = fd
+        self.syscall = syscall
+
+    def write(self, data):
+        req = syscalls_pb2.Syscall(writeBlob=syscalls_pb2.BlobWrite(fd=self.fd, data=data))
+        self.syscall._send(req)
+        response = self.syscall._recv(syscalls_pb2.BlobResponse())
         return response.success
 
-    def workspace_createfile(self, name, path='.', label: syscalls_pb2.DcLabel=None):
-        """See workspace_createdir."""
-        req = syscalls_pb2.Syscall(fsCreate=syscalls_pb2.FSCreate(
-            basePath=protorelpath(path), name=name, label=label,
-            entryT=syscalls_pb2.DentryType.FILE))
-        self._send(req)
-        response = self._recv(syscalls_pb2.WriteKeyResponse())
-        return response.success
+    def finalize(self, data):
+        req = syscalls_pb2.Syscall(finalizeBlob=syscalls_pb2.BlobFinalize(fd=self.fd, data=data))
+        self.syscall._send(req)
+        response = self.syscall._recv(syscalls_pb2.BlobResponse())
+        return response.data.decode("utf-8")
 
-    def workspace_write(self, path, data):
-        """ Overwrite the file at $workspace/`path` with `data`.
-        
-        More details, see workspace_createdir.
+class Blob():
+    def __init__(self, fd, syscall):
+        self.fd = fd
+        self.syscall = syscall
 
-        Args:
-            path:
-                The path of the file, relative to the workspace directory.
-            data:
-                The data to overwrite with.
+    def _blob_read(self, offset=None, length=None):
+        req = syscalls_pb2.Syscall(readBlob=syscalls_pb2.BlobRead(fd=self.fd, offset=offset, length=length))
+        self.syscall._send(req)
+        response = self.syscall._recv(syscalls_pb2.BlobResponse())
+        if response.success:
+            return response.data
+        raise ReadUnnamedError
 
-        Returns:
-            A bool that indicates whether the write succeeds or not.
-        """
-        req = syscalls_pb2.Syscall(fsWrite=syscalls_pb2.FSWrite(path=protorelpath(path), data=data))
-        self._send(req)
-        response = self._recv(syscalls_pb2.WriteKeyResponse())
-        return response.success
+    def read(self, size=None):
+        buf = []
+        # if size is unspecified, implementation-dependent
+        # faasten now returns at most one block (4K) data
+        if size is None:
+            return self._blob_read()
+        else:
+            while size > 0:
+                data = self._blob_read(size)
+                # reaches EOF
+                if len(data) == 0:
+                    return buf
+                buf.extend(data)
+                offset += len(data)
+                size -= len(data)
+        # size = 0
+        return buf
 
-    def workspace_read(self, path):
-        """Read the file at $workspace/`path`.
-        
-        More details about $workspace, see workspace_createdir.
+class CreateUnnamedError(Exception):
+    pass
 
-        Args:
-            path:
-                The path of the file, relative to the workspace directory.
-
-        Returns:
-            A [u8] holding the data if the read succeeds. None, otherwise.
-        """
-        req = syscalls_pb2.Syscall(fsWrite=syscalls_pb2.FSWrite(path=protorelpath(path), data=data))
-        self._send(req)
-        response = self._recv(syscalls_pb2.ReadKeyResponse())
-        return response.value
-
-    def workspace_abspath(self, relpath):
-        """Return the absolute path of the `relpath`."""
-        req = syscalls_pb2.Syscall(workspaceAbspath=syscalls_pb2.WorkspaceAbspath(relpath=relpath))
-        self._send(req)
-        response = self._recv(syscalls_pb2.WorkspaceAbspathResponse())
-        return response.abspath
-    ### end of file system APIs ###
+class ReadUnnamedError(Exception):
+    pass
