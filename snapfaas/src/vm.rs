@@ -1,6 +1,5 @@
 //! Host-side VM handle that transfer data in and out of the VM through VSOCK socket and
 //! implements syscall API
-use std::env;
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Stdio;
@@ -89,7 +88,6 @@ pub enum Error {
     VsockListen(std::io::Error),
     VsockWrite(std::io::Error),
     VsockRead(std::io::Error),
-    HttpReq(reqwest::Error),
     AuthTokenInvalid,
     AuthTokenNotExist,
     KernelNotExist,
@@ -117,7 +115,7 @@ pub struct OdirectOption {
 struct VmHandle {
     conn: UnixStream,
     //currently every VM instance opens a connection to the REST server
-    rest_client: reqwest::blocking::Client,
+    gh_client: crate::github::Client,
     #[allow(dead_code)]
     // This field is never used, but we need to it make sure the Child isn't dropped and, thus,
     // killed, before the VmHandle is dropped.
@@ -295,11 +293,11 @@ impl Vm {
             x
         })?;
 
-        let rest_client = reqwest::blocking::Client::new();
+        let gh_client = crate::github::Client::new();
 
         let handle = VmHandle {
             conn,
-            rest_client,
+            gh_client,
             vm_process,
             invoke_handle,
         };
@@ -342,51 +340,6 @@ impl Vm {
         self.send_into_vm(sys_req)?;
 
         self.process_syscalls()
-    }
-
-    /// Send a HTTP GET request no matter if an authentication token is present
-    fn http_get(&self, sc_req: &syscalls::GithubRest) -> Result<reqwest::blocking::Response, Error> {
-        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
-        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
-        url.set_path(&sc_req.route);
-        let rest_client = &self.handle.as_ref().unwrap().rest_client;
-        let mut req = rest_client.get(url)
-            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
-            .header(reqwest::header::USER_AGENT, USER_AGENT);
-        req = match env::var_os(GITHUB_AUTH_TOKEN) {
-            Some(t_osstr) => {
-                match t_osstr.into_string() {
-                    Ok(t_str) => req.bearer_auth(t_str),
-                    Err(_) => req,
-                }
-            },
-            None => req
-        };
-        req.send().map_err(|e| Error::HttpReq(e))
-    }
-
-    /// Send a HTTP POST request only if an authentication token is present
-    fn http_post(&self, sc_req: &syscalls::GithubRest, method: reqwest::Method) -> Result<reqwest::blocking::Response, Error> {
-        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
-        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
-        url.set_path(&sc_req.route);
-        match env::var_os(GITHUB_AUTH_TOKEN) {
-            Some(t_osstr) => {
-                match t_osstr.into_string() {
-                    Ok(t_str) => {
-                        let rest_client = &self.handle.as_ref().unwrap().rest_client;
-                        rest_client.request(method, url)
-                            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
-                            .header(reqwest::header::USER_AGENT, USER_AGENT)
-                            .body(std::string::String::from(sc_req.body.as_ref().unwrap()))
-                            .bearer_auth(t_str)
-                            .send().map_err(|e| Error::HttpReq(e))
-                    },
-                    Err(_) => Err(Error::AuthTokenInvalid),
-                }
-            }
-            None => Err(Error::AuthTokenNotExist),
-        }
     }
 
     fn send_req(&self, invoke: syscalls::Invoke) -> bool {
@@ -550,29 +503,9 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::GithubRest(req)) => {
-                    let resp = match syscalls::HttpVerb::from_i32(req.verb) {
-                        Some(syscalls::HttpVerb::Get) => {
-                            Some(self.http_get(&req)?)
-                        },
-                        Some(syscalls::HttpVerb::Post) => {
-                            Some(self.http_post(&req, reqwest::Method::POST)?)
-                        },
-                        Some(syscalls::HttpVerb::Put) => {
-                            Some(self.http_post(&req, reqwest::Method::PUT)?)
-                        },
-                        Some(syscalls::HttpVerb::Delete) => {
-                            Some(self.http_post(&req, reqwest::Method::DELETE)?)
-                        },
-                        None => {
-                           None
-                        }
-                    };
-                    let result = match resp {
-                        None => syscalls::GithubRestResponse {
-                            data: format!("`{:?}` not supported", req.verb).as_bytes().to_vec(),
-                            status: 0,
-                        },
-                        Some(mut resp) => {
+                    let result = match self.handle.as_ref().unwrap().gh_client
+                        .process(&req, &mut self.current_label, &self.privilege) {
+                        Ok(mut resp) => {
                             if req.toblob && resp.status().is_success() {
                                 let mut file = self.blobstore.create()?;
                                 let mut buf = [0; 4096];
@@ -590,13 +523,16 @@ impl Vm {
                             } else {
                                 syscalls::GithubRestResponse {
                                     status: resp.status().as_u16() as u32,
-                                    data: resp.bytes().map_err(|e| Error::HttpReq(e))?.to_vec(),
+                                    data: resp.bytes().unwrap().to_vec(),
                                 }
                             }
                         },
-                    }.encode_to_vec();
-
-                    self.send_into_vm(result)?;
+                        Err(e) => syscalls::GithubRestResponse {
+                            data: format!("{:?}", e).as_bytes().to_vec(),
+                            status: 0,
+                        }
+                    };
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::GetCurrentLabel(_)) => {
                     let result = dc_label_to_proto_label(&self.current_label);

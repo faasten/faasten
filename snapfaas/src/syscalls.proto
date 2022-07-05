@@ -74,6 +74,7 @@ message GithubRest {
   string route = 2;
   optional string body = 3;
   bool toblob = 4;
+  string token = 5;
 }
 
 message GithubRestResponse {
