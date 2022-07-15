@@ -4442,7 +4442,7 @@ rec {
           }
           {
             name = "time";
-            packageId = "time 0.3.9";
+            packageId = "time 0.3.10";
             features = [ "local-offset" ];
           }
           {
@@ -5456,11 +5456,11 @@ rec {
           "rustc-serialize" = [ "dep:rustc-serialize" ];
         };
       };
-      "time 0.3.9" = rec {
+      "time 0.3.10" = rec {
         crateName = "time";
-        version = "0.3.9";
-        edition = "2018";
-        sha256 = "1p8dsb0zwa2r9bz2f31kxfsij6qhmkf1as3ch82z0q58lw42ww62";
+        version = "0.3.10";
+        edition = "2021";
+        sha256 = "1c175s84m1i1kl12k85c6x9frx84lbba6xp1lr0dcc033i61ll42";
         authors = [
           "Jacob Pratt <open-source@jhpratt.dev>"
           "Time contributors"
