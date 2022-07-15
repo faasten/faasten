@@ -209,6 +209,7 @@ impl App {
         struct Input {
             assignment: String,
             users: Vec<String>,
+            course: String,
         }
         let input_json: Input = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
 
@@ -234,6 +235,7 @@ impl App {
             payload: serde_json::json!({
                 "assignment": input_json.assignment,
                 "users": input_json.users,
+                "course": input_json.course,
                 "gh_handles": gh_handles,
             }),
         };
