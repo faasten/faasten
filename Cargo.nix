@@ -5056,6 +5056,7 @@ rec {
           { name = "multivm"; path = "bins/multivm/main.rs"; }
           { name = "sfclient"; path = "bins/sfclient/main.rs"; }
           { name = "sfdb"; path = "bins/sfdb/main.rs"; }
+          { name = "uiserver"; path = "bins/uiserver/main.rs"; }
         ];
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./snapfaas; };
         authors = [

@@ -28,6 +28,10 @@ path = "bins/sfdb/main.rs"
 name = "sffs"
 path = "bins/sffs/main.rs"
 
+[[bins]]
+name = "uiserver"
+path = "bins/uiserver/main.rs"
+
 [lib]
 
 [dependencies]
