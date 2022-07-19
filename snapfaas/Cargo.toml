@@ -28,7 +28,7 @@ path = "bins/sfdb/main.rs"
 name = "sffs"
 path = "bins/sffs/main.rs"
 
-[[bins]]
+[[bin]]
 name = "uiserver"
 path = "bins/uiserver/main.rs"
 
