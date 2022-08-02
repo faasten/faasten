@@ -14,7 +14,7 @@ def recvall(sock, n):
         if not packet:
             return None
         data.extend(packet)
-    return data
+    return bytes(data)
 ### end of helper functions ###
 
 class Syscall():
@@ -81,37 +81,36 @@ class Syscall():
     ### end of label APIs ###
 
     ### github APIs ###
-    def github_rest_get(self, route):
-        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.GET, route = route, body = None))
+    def github_rest_get(self, route, toblob=False):
+        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.GET, route = route, body = None, toblob=toblob))
         self._send(req)
         response= self._recv(syscalls_pb2.GithubRestResponse())
         return response
 
-    def github_rest_post(self, route, body):
+    def github_rest_post(self, route, body, toblob=False):
         bodyJson = json.dumps(body)
-        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.POST, route = route, body = bodyJson))
+        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.POST, route = route, body = bodyJson, toblob=toblob))
         self._send(req)
         response= self._recv(syscalls_pb2.GithubRestResponse())
         return response
 
-    def github_rest_put(self, route, body):
+    def github_rest_put(self, route, body, toblob=False):
         bodyJson = json.dumps(body)
-        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.PUT, route = route, body = bodyJson))
+        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.PUT, route = route, body = bodyJson, toblob=toblob))
         self._send(req)
         response= self._recv(syscalls_pb2.GithubRestResponse())
         return response
 
-    def github_rest_delete(self, route, body):
+    def github_rest_delete(self, route, body, toblob=False):
         bodyJson = json.dumps(body)
-        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.DELETE, route = route, body = bodyJson))
+        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.DELETE, route = route, body = bodyJson, toblob=toblob))
         self._send(req)
         response= self._recv(syscalls_pb2.GithubRestResponse())
         return response
     ### end of github APIs ###
 
-    def invoke(self, function, payload, dataHandles):
-        request = syscalls_pb2.Request(payload = payload, dataHandles = dataHandles)
-        req = syscalls_pb2.Syscall(invoke = syscalls_pb2.Invoke(function = function, request = request))
+    def invoke(self, function, payload):
+        req = syscalls_pb2.Syscall(invoke = syscalls_pb2.Invoke(function = function, payload = payload))
         self._send(req)
         response= self._recv(syscalls_pb2.InvokeResponse())
         return response.success
