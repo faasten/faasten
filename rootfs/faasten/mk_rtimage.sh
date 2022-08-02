@@ -21,7 +21,7 @@
 ##
 ## Running this script requires super user privileges to mount the target file
 ## system, but you don't have to run with `sudo`, the script uses `sudo` explicitly.
-ALPINE=3.10
+ALPINE=3.16
 REV=0
 
 function print_runtimes() {
