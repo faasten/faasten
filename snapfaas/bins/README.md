@@ -5,4 +5,4 @@
 4. sfdb: a tool that injects key-value pairs into the specified lmdb database.
 5. sfclient: a tool that sends requests over a TCP connection to `multivm`.
 6. sffs: a tool that interacts with the labeled file system atop a lmdb database.
-7. uiserver: a tool that implements a dropbox-like UI for interacting with faasten's labeled file system.
+7. dropboxui: a tool that implements a dropbox-like UI for interacting with faasten's labeled file system.
