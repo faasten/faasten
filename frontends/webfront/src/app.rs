@@ -86,9 +86,9 @@ impl App {
 
     fn legal_path_for_user<T: Transaction>(&self, key: &str, login: &String, txn: &T) -> bool {
         let regexps = regex::RegexSet::new(&[
-            format!("cos316/enrollments.json"),
-            format!("cos316/assignments"),
-            format!("cos316/assignments/[^/]/{}", login),
+            format!("^[^/]+/enrollments.json$"),
+            format!("^[^/]+/assignments$"),
+            format!("^[^/]+/assignments/[^/]+/{}$", login),
         ]).unwrap();
         if regexps.is_match(key) {
             return true;
