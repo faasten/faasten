@@ -57,8 +57,9 @@ impl App {
             .get("x-github-event")
             .ok_or(StatusCode::BAD_REQUEST)?;
         debug!("Headers contain x-github-event key.");
-        match event_type.as_bytes() {
-            b"ping" => {
+        let etype = event_type.to_str().or(Err(StatusCode::BAD_REQUEST))?;
+        match etype {
+            "ping" => {
                 verify_github_request(
                     &self.secret,
                     &request.body(),
@@ -71,8 +72,8 @@ impl App {
                 debug!("GitHub pinged.");
                 Ok(Bytes::new())
             }
-            b"push" => {
-                debug!("Push event.");
+            _ => {
+                debug!("{} event.", etype);
                 verify_github_request(
                     &self.secret,
                     &request.body(),
@@ -85,10 +86,13 @@ impl App {
                 // TODO: use the event body to set a label?
                 /*let event_body: PushEvent =
                     serde_json::from_slice(request.body().as_ref()).or(Err(StatusCode::BAD_REQUEST))?;*/
+                let mut event_body: serde_json::Map<String, serde_json::Value> =
+                    serde_json::from_slice(request.body().as_ref()).or(Err(StatusCode::BAD_REQUEST))?;
+                event_body.insert(String::from("event"), etype.into());
 
                 let req = request::Request {
                     function: "gh_repo".to_string(),
-                    payload: serde_json::from_slice(request.body()).unwrap(),
+                    payload: event_body.into(),
                 };
 
                 let conn = &mut self.conn.get().expect("Lock failed");
@@ -114,7 +118,6 @@ impl App {
                     },
                 }
             },
-            _ => Err(StatusCode::BAD_REQUEST),
         }
     }
 }
