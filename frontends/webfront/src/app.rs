@@ -61,7 +61,6 @@ pub struct App {
     pubkey: PKey<pkey::Public>,
     dbenv: Arc<lmdb::Environment>,
     default_db: Arc<lmdb::Database>,
-    user_db: Arc<lmdb::Database>,
     base_url: String,
     conn: r2d2::Pool<SnapFaasManager>,
 }
@@ -70,13 +69,11 @@ impl App {
     pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment, base_url: String, snapfaas_address: String) -> App {
         let dbenv = Arc::new(dbenv);
         let default_db = Arc::new(dbenv.open_db(None).unwrap());
-        let user_db = Arc::new(dbenv.create_db(Some("users"), lmdb::DatabaseFlags::empty()).unwrap());
         let conn = r2d2::Pool::builder().max_size(10).build(SnapFaasManager { address: snapfaas_address }).expect("pool");
         App {
             conn,
             dbenv,
             default_db,
-            user_db,
             pkey, 
             pubkey,
             gh_creds,
@@ -183,7 +180,7 @@ impl App {
             github: Option<String>,
         }
         let txn = self.dbenv.begin_ro_txn().unwrap();
-        let github: Option<String> = txn.get(*self.user_db, &format!("github/for/user/{}", login).as_bytes()).ok().map(|l| String::from_utf8_lossy(l).to_string());
+        let github: Option<String> = txn.get(*self.default_db, &format!("users/github/for/user/{}", login).as_bytes()).ok().map(|l| String::from_utf8_lossy(l).to_string());
         Ok(Response::json(&User { login, github }))
     }
 
@@ -214,14 +211,14 @@ impl App {
         let input_json: Input = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
 
         let txn = self.dbenv.begin_ro_txn().unwrap();
-        let admins: Vec<String> = txn.get(*self.user_db, &"admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
         if !(input_json.users.contains(&login) || admins.contains(&login)) {
             return Err(Response::json(&serde_json::json!({ "error": "user not authorized to make request" })).with_status_code(401))
         }
 
         let mut gh_handles = vec![];
         for user in input_json.users.iter() {
-            let gh_handle = txn.get(*self.user_db, &format!("github/for/user/{}", user).as_str()).or(
+            let gh_handle = txn.get(*self.default_db, &format!("users/github/for/user/{}", user).as_str()).or(
                 Err(
                     Response::json(&serde_json::json!({ "error": format!("no github handle for \"{}\"", user) })).with_status_code(400)
                 )
@@ -260,7 +257,7 @@ impl App {
 
         let keys = request.get_param("keys").unwrap_or(String::new());
         let txn = self.dbenv.begin_ro_txn().unwrap();
-        let admins: Vec<String> = txn.get(*self.user_db, &"admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
         let val = {
             let mut results = BTreeMap::new();
             for ref key in keys.split(",") {
@@ -284,7 +281,7 @@ impl App {
         let mut input = rouille::input::multipart::get_multipart_input(request).or(Err(Response::empty_400()))?;
 
         let mut txn = self.dbenv.begin_rw_txn().unwrap();
-        let admins: Vec<String> = txn.get(*self.user_db, &"admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
         let res = if admins.iter().find(|l| **l == login).is_some() {
             while let Some(mut field) = input.next() {
                 let mut data = Vec::new();
@@ -370,10 +367,9 @@ impl App {
             .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", input.github_token))
             .send().expect("reqwest").json().unwrap();
         let mut txn = self.dbenv.begin_rw_txn().unwrap();
-        let user_db = *self.user_db;
-        txn.put(user_db, &format!("github/for/user/{}", &local_user).as_str(), &github_user.login.as_str(), lmdb::WriteFlags::empty()).expect("store user");
-        txn.put(user_db, &format!("github/user/{}/token", &github_user.login).as_str(), &input.github_token.as_str(), lmdb::WriteFlags::empty()).expect("store user");
-        txn.put(user_db, &format!("github/from/{}", &github_user.login).as_str(), &local_user.as_str(), lmdb::WriteFlags::empty()).expect("store user");
+        txn.put(*self.default_db, &format!("users/github/for/user/{}", &local_user).as_str(), &github_user.login.as_str(), lmdb::WriteFlags::empty()).expect("store user");
+        txn.put(*self.default_db, &format!("users/github/user/{}/token", &github_user.login).as_str(), &input.github_token.as_str(), lmdb::WriteFlags::empty()).expect("store user");
+        txn.put(*self.default_db, &format!("users/github/from/{}", &github_user.login).as_str(), &local_user.as_str(), lmdb::WriteFlags::empty()).expect("store user");
         txn.commit().expect("commit");
         Ok(Response::json(&github_user.login))
     }
