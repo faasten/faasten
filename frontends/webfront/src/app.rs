@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::SystemTime;
 use std::io::Read;
 use std::net::TcpStream;
@@ -11,6 +13,7 @@ use jwt::{PKeyWithDigest, SignWithKey, VerifyWithKey};
 use openssl::pkey::{self, PKey};
 use lmdb::{Transaction};
 
+use snapfaas::blobstore::Blobstore;
 use snapfaas::request;
 
 struct SnapFaasManager {
@@ -61,19 +64,22 @@ pub struct App {
     pubkey: PKey<pkey::Public>,
     dbenv: Arc<lmdb::Environment>,
     default_db: Arc<lmdb::Database>,
+    blobstore: Arc<Mutex<Blobstore>>,
     base_url: String,
     conn: r2d2::Pool<SnapFaasManager>,
 }
 
 impl App {
-    pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment, base_url: String, snapfaas_address: String) -> App {
+    pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment, blobstore: Blobstore, base_url: String, snapfaas_address: String) -> App {
         let dbenv = Arc::new(dbenv);
         let default_db = Arc::new(dbenv.open_db(None).unwrap());
         let conn = r2d2::Pool::builder().max_size(10).build(SnapFaasManager { address: snapfaas_address }).expect("pool");
+        let blobstore = Arc::new(Mutex::new(blobstore));
         App {
             conn,
             dbenv,
             default_db,
+            blobstore,
             pkey, 
             pubkey,
             gh_creds,
@@ -161,6 +167,9 @@ impl App {
             },
             (POST) (/put) => {
                 self.put(request)
+            },
+            (POST) (/put_blob) => {
+                self.put_blob(request)
             },
             (GET) (/assignments) => {
                 self.assignments(request)
@@ -294,6 +303,23 @@ impl App {
         };
         txn.commit().expect("commit");
         Ok(res)
+    }
+
+    fn put_blob(&self, request: &Request) -> Result<Response, Response> {
+        let login = self.verify_jwt(request)?;
+
+        let txn = self.dbenv.begin_ro_txn().unwrap();
+        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+        if admins.iter().find(|l| **l == login).is_some() {
+            let mut input = request.data().ok_or(Response::empty_406())?;
+            let mut blob = self.blobstore.lock().expect("lock").create().or(Err(Response::empty_406()))?;
+            std::io::copy(&mut input, &mut blob).or(Err(Response::empty_406()))?;
+            blob.flush().or(Err(Response::empty_406()))?;
+            let blob = self.blobstore.lock().expect("lock").save(blob).or(Err(Response::empty_406()))?;
+            Ok(Response::json(&blob.name))
+        } else {
+            Ok(Response::empty_400())
+        }
     }
 
     fn authenticate_cas(&self, request: &Request) -> Result<Response, Response> {

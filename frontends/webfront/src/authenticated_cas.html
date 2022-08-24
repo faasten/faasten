@@ -3,13 +3,45 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Document</title>
+  <title>Authentication Successful</title>
+  <style>
+   body {{
+     max-width: 600px;
+     margin: 0 auto;
+     font-size: 22pt;
+     font-family: sans-serif;
+   }}
+   #token {{
+     display: block;
+     font-style: oblique;
+     font-family: monospace;
+     padding: 1em;
+     background-color: #ccc;
+     line-break: anywhere;
+   }}
+
+   #token + button {{
+     border: 1px solid #ccc;
+     border-color: #ddd #999 #999 #ddd;
+     border-radius: 3px;
+     padding: 1em;
+   }}
+  </style>
 </head>
 <body>
-  
+  <p>
+    You've successfully authenticated!
+  </p>
+  <p>
+    <span id="token" style="display: none">{}</span>
+    <button onClick="document.getElementById('token').style.display = 'block'; this.style.display = 'none'">Reveal Token</button>
+  </p>
   <script language="javascript">
-    window.opener.postMessage("{}", "*");
-    window.close();
+    var token = document.getElementById("token").textContent;
+    if (window.opener) {{
+      window.opener.postMessage(token, "*");
+      window.close();
+    }}
   </script>
 </body>
 </html>
