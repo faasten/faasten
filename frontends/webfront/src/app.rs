@@ -7,6 +7,7 @@ use std::io::Read;
 use std::net::TcpStream;
 
 use reqwest::blocking::Client;
+use rouille::ResponseBody;
 use serde::{Deserialize, Serialize};
 use rouille::{Request, Response};
 use jwt::{PKeyWithDigest, SignWithKey, VerifyWithKey};
@@ -165,6 +166,9 @@ impl App {
             (GET) (/get) => {
                 self.get(request)
             },
+            (GET) (/get_blob) => {
+                self.get_blob(request)
+            },
             (POST) (/put) => {
                 self.put(request)
             },
@@ -307,16 +311,53 @@ impl App {
 
     fn put_blob(&self, request: &Request) -> Result<Response, Response> {
         let login = self.verify_jwt(request)?;
+        if let Some(key) = request.get_param("key") {
 
-        let txn = self.dbenv.begin_ro_txn().unwrap();
-        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
-        if admins.iter().find(|l| **l == login).is_some() {
-            let mut input = request.data().ok_or(Response::empty_406())?;
-            let mut blob = self.blobstore.lock().expect("lock").create().or(Err(Response::empty_406()))?;
-            std::io::copy(&mut input, &mut blob).or(Err(Response::empty_406()))?;
-            blob.flush().or(Err(Response::empty_406()))?;
-            let blob = self.blobstore.lock().expect("lock").save(blob).or(Err(Response::empty_406()))?;
-            Ok(Response::json(&blob.name))
+            let mut txn = self.dbenv.begin_rw_txn().unwrap();
+            let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+            if admins.iter().find(|l| **l == login).is_some() {
+                let mut input = request.data().ok_or(Response::empty_406())?;
+                let mut blob = self.blobstore.lock().expect("lock").create().or(Err(Response::empty_406()))?;
+                std::io::copy(&mut input, &mut blob).or(Err(Response::empty_406()))?;
+                blob.flush().or(Err(Response::empty_406()))?;
+                let blob = self.blobstore.lock().expect("lock").save(blob).or(Err(Response::empty_406()))?;
+                txn.put(*self.default_db, &key.as_bytes(), &blob.name.as_bytes(), lmdb::WriteFlags::empty()).expect("store data");
+                txn.commit().expect("commit");
+                Ok(Response::json(&blob.name))
+            } else {
+                txn.abort();
+                Ok(Response::empty_400())
+            }
+        } else {
+            Ok(Response::empty_400())
+        }
+    }
+
+    fn get_blob(&self, request: &Request) -> Result<Response, Response> {
+        let login = self.verify_jwt(request)?;
+        if let Some(key) = request.get_param("key") {
+
+            let txn = self.dbenv.begin_ro_txn().unwrap();
+            let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+            if admins.iter().find(|l| **l == login).is_some() {
+                if let Some(blob_key) = txn.get(*self.default_db, &key.as_bytes()).ok() {
+                    let blob = self.blobstore
+                                   .lock()
+                                   .expect("lock")
+                                   .open(String::from_utf8(blob_key.to_vec()).or(Err(Response::empty_406()))?)
+                                   .or(Err(Response::empty_406()))?;
+                    Ok(Response {
+                        status_code: 200,
+                        headers: vec![("Content-Type".into(), "application/octet-stream".into())],
+                        data: ResponseBody::from_reader(blob),
+                        upgrade: None,
+                    })
+                } else {
+                    Ok(Response::empty_400())
+                }
+            } else {
+                Ok(Response::empty_400())
+            }
         } else {
             Ok(Response::empty_400())
         }
