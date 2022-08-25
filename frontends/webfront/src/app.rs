@@ -299,13 +299,15 @@ impl App {
             while let Some(mut field) = input.next() {
                 let mut data = Vec::new();
                 field.data.read_to_end(&mut data).expect("read");
+                println!("{:?}", field.headers.name);
                 txn.put(*self.default_db, &field.headers.name.as_bytes(), &data.as_slice(), lmdb::WriteFlags::empty()).expect("store data");
             }
+            txn.commit().expect("commit");
             Response::empty_204()
         } else {
+            txn.abort();
             Response::empty_400()
         };
-        txn.commit().expect("commit");
         Ok(res)
     }
 
