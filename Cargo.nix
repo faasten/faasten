@@ -5056,7 +5056,8 @@ rec {
           { name = "multivm"; path = "bins/multivm/main.rs"; }
           { name = "sfclient"; path = "bins/sfclient/main.rs"; }
           { name = "sfdb"; path = "bins/sfdb/main.rs"; }
-          { name = "dropboxui"; path = "bins/dropboxui/server/main.rs"; }
+          { name = "httpserver"; path = "bins/httpserver/server/main.rs"; }
+          { name = "faasten"; path = "bins/faasten/server/main.rs"; }
         ];
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./snapfaas; };
         authors = [

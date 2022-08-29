@@ -1,7 +1,7 @@
 [package]
 name = "snapfaas"
 version = "0.1.0"
-authors = ["David H. Liu<hl7@cs.princeton.edu>", "Yue Tan<yuetan@cs.princeton.edu"]
+authors = ["David H. Liu<hl7@cs.princeton.edu>", "Yue Tan<yuetan@cs.princeton.edu", "Natalie Popescu<npopescu@cs.princeton.edu>"]
 edition = "2018"
 
 [[bin]]
@@ -29,8 +29,12 @@ name = "sffs"
 path = "bins/sffs/main.rs"
 
 [[bin]]
-name = "dropboxui"
-path = "bins/dropboxui/server/main.rs"
+name = "httpserver"
+path = "bins/httpserver/main.rs"
+
+[[bin]]
+name = "faasten"
+path = "bins/faasten/main.rs"
 
 [lib]
 

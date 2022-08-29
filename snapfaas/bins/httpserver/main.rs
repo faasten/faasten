@@ -3,12 +3,20 @@ use std::io::prelude::*;
 use std::net::TcpListener;
 use std::net::TcpStream;
 
+#[macro_use(crate_version, crate_authors)]
+extern crate clap;
+use clap::{App, SubCommand, Arg};
+
+const IP:           &str = "127.0.0.1";
+const COLON:        &str = ":";
+const DEFAULT_PORT: &str = "8080";
+
 const BUFSIZE: usize = 1024;
 
 const GET:    &str = "GET";    // fs read()
 const DELETE: &str = "DELETE"; // fs delete()
-const POST:   &str = "POST";   // fs create()
-const PUT:    &str = "PUT";    // fs write()
+const POST:   &str = "POST";   // fs write()
+const PUT:    &str = "PUT";    // fs create() (b/c idempotent)
 
 const STATUS_OK:          &str = "HTTP/1.1 200 Ok\r\n\r\n";
 #[allow(dead_code)] // FIXME remove when implement function(s) to access fs
@@ -20,7 +28,27 @@ const STATUS_NOT_FOUND:   &str = "HTTP/1.1 404 Not Found\r\n\r\n";
 const STATUS_NOT_ALLOWED: &str = "HTTP/1.1 505 Method Not Allowed\r\n\r\n";
 
 fn main() {
-  let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+  let cmd_arguments = App::new("httpserver")
+      .version(crate_version!())
+      .author(crate_authors!())
+      .subcommand(
+        SubCommand::with_name("port")
+          .about("Specify port on which to listen for incoming connections")
+          .arg(Arg::with_name("PORTNUM"))
+      )
+      .get_matches();
+
+  let port = match cmd_arguments.subcommand() {
+    ("port", Some(sub_m)) => {
+      sub_m.value_of("PORTNUM").unwrap()
+    },
+    (&_, _) => {
+      DEFAULT_PORT
+    }
+  };
+
+  let addr: String = vec![IP, COLON, port].concat();
+  let listener = TcpListener::bind(addr).unwrap();
 
   for stream in listener.incoming() {
     match stream {
