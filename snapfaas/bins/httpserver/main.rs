@@ -15,8 +15,8 @@ const BUFSIZE: usize = 1024;
 
 const GET:    &str = "GET";    // fs read()
 const DELETE: &str = "DELETE"; // fs delete()
-const POST:   &str = "POST";   // fs write()
 const PUT:    &str = "PUT";    // fs create() (b/c idempotent)
+const POST:   &str = "POST";   // fs write()
 
 const STATUS_OK:          &str = "HTTP/1.1 200 Ok\r\n\r\n";
 #[allow(dead_code)] // FIXME remove when implement function(s) to access fs
@@ -86,15 +86,15 @@ fn handle_connection(mut stream: TcpStream) {
                       println!("DELETE req for path: {:?}", req.path);
                       (STATUS_OK, None)
                     },
-                    POST => {
-                      // TODO access labeled fs
-                      println!("POST req for path: {:?}", req.path);
-                      println!("  data: {}", body_str_trimmed);
-                      (STATUS_OK, None)
-                    },
                     PUT => {
                       // TODO access labeled fs
                       println!("PUT req for path: {:?}", req.path);
+                      println!("  data: {}", body_str_trimmed);
+                      (STATUS_OK, None)
+                    },
+                    POST => {
+                      // TODO access labeled fs
+                      println!("POST req for path: {:?}", req.path);
                       println!("  data: {}", body_str_trimmed);
                       (STATUS_OK, None)
                     },
