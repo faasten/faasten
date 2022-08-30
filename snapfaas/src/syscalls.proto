@@ -53,6 +53,14 @@ message WriteKeyResponse {
   bool success = 1;
 }
 
+message ReadDir {
+  bytes dir = 1;
+}
+
+message ReadDirResponse {
+  repeated bytes keys = 1;
+}
+
 enum HttpVerb {
   GET = 0;
   POST = 1;
@@ -154,5 +162,6 @@ message Syscall {
     BlobOpen openBlob = 16;
     BlobRead readBlob = 17;
     BlobClose closeBlob = 18;
+    ReadDir readDir = 19;
   }
 }

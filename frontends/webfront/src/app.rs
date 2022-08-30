@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -89,6 +90,10 @@ impl App {
     }
 
     fn legal_path_for_user<T: Transaction>(&self, key: &str, login: &String, txn: &T) -> bool {
+        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+        if admins.contains(login) {
+            return true;
+        }
         let regexps = regex::RegexSet::new(&[
             format!("^[^/]+/enrollments.json$"),
             format!("^[^/]+/assignments$"),
@@ -168,6 +173,9 @@ impl App {
             },
             (GET) (/get_blob) => {
                 self.get_blob(request)
+            },
+            (GET) (/read_dir) => {
+                self.read_dir(request)
             },
             (POST) (/put) => {
                 self.put(request)
@@ -270,11 +278,10 @@ impl App {
 
         let keys = request.get_param("keys").unwrap_or(String::new());
         let txn = self.dbenv.begin_ro_txn().unwrap();
-        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
         let val = {
             let mut results = BTreeMap::new();
             for ref key in keys.split(",") {
-                if admins.contains(&login) || self.legal_path_for_user(key, &login, &txn) {
+                if self.legal_path_for_user(key, &login, &txn) {
                     results.insert(*key,
                         txn.get(*self.default_db, &key).ok()
                             .map(String::from_utf8_lossy)
@@ -286,6 +293,36 @@ impl App {
         let res = Response::json(&val);
         txn.commit().expect("commit");
         Ok(res)
+    }
+
+    fn read_dir(&self, request: &Request) -> Result<Response, Response> {
+        use lmdb::Cursor;
+
+        let login = self.verify_jwt(request)?;
+
+        let mut keys: HashSet<String> = HashSet::new();
+        let mut dir = request.get_param("dir").ok_or(Response::empty_404())?;
+        if !dir.ends_with('/') {
+           dir = dir + "/";
+        }
+
+        let txn = self.dbenv.begin_ro_txn().unwrap();
+        if self.legal_path_for_user(dir.as_str(), &login, &txn) {
+            let mut cursor = txn.open_ro_cursor(*self.default_db).or(Err(Response::empty_400()))?.iter_from(&dir);
+            while let Some(Ok((key, _))) = cursor.next() {
+                if !key.starts_with(dir.as_bytes()) {
+                    break
+                }
+                if let Some(entry) = key.split_at(dir.len()).1.split_inclusive(|c| *c == b'/').next() {
+                    if !entry.is_empty() && self.legal_path_for_user(&String::from_utf8_lossy(key).to_owned(), &login, &txn) {
+                        keys.insert(String::from_utf8_lossy(entry).into());
+                    }
+                }
+            }
+        }
+        let _ = txn.commit();
+
+        Ok(Response::json(&keys))
     }
 
     fn put(&self, request: &Request) -> Result<Response, Response> {
