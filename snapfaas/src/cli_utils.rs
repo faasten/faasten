@@ -7,6 +7,9 @@ use labeled::dclabel::{self, DCLabel};
 
 use std::collections::BTreeSet;
 
+use crate::syscalls::PathComponent;
+use crate::syscalls::path_component::Component::{Facet, Name};
+
 pub fn input_to_dclabel(si_clauses: [Vec<&str>; 2]) -> DCLabel {
     let mut components = Vec::new();
     for clauses in si_clauses {
@@ -37,4 +40,23 @@ pub fn input_to_endorsement(endorse: &str) -> DCLabel {
     } else {
         DCLabel::new(true, [[endorse.to_lowercase()]])
     }
+}
+
+pub fn input_to_path(input: &str) -> Vec<PathComponent> {
+    input.strip_prefix('/').expect("Path must start with /")
+        .split('/').map(|s| {
+            if s.starts_with('[') {
+                let label = s.strip_prefix('[').unwrap();
+                let label = label.strip_suffix(']').expect("Malformed label: missing ]");
+                let si_clauses: Vec<&str> = label.split('#').collect();
+                let s_clauses = si_clauses.get(0).expect("Malformed label: missing #")
+                    .split(';').collect::<Vec<&str>>();
+                let i_clauses = si_clauses.get(1).expect("Malformed label: missing #")
+                    .split(';').collect::<Vec<&str>>();
+                let label = input_to_dclabel([s_clauses, i_clauses]);
+                PathComponent { component: Some(Facet(crate::vm::dc_label_to_proto_label(&label))) }
+            } else {
+                PathComponent { component: Some(Name(s.to_string())) }
+            }
+        }).collect()
 }

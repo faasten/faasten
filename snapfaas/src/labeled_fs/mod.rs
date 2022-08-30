@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use rand::{self, RngCore};
 use lazy_static;
 use lmdb;
@@ -9,11 +7,13 @@ use labeled::dclabel::DCLabel;
 mod dir;
 mod file;
 mod direntry;
-pub mod utils;
+mod faceted;
 
 use self::direntry::{LabeledDirEntry, DirEntry};
 use self::dir::Directory;
 use self::file::File;
+use self::faceted::FacetedDirectory;
+use crate::syscalls::PathComponent;
 
 lazy_static::lazy_static! {
     pub static ref DBENV: lmdb::Environment = {
@@ -29,18 +29,22 @@ lazy_static::lazy_static! {
         let default_db = dbenv.open_db(None).unwrap();
         let mut txn = dbenv.begin_rw_txn().unwrap();
         let root_uid = 0;
-        let _ = put_val_db_no_overwrite(root_uid, Directory::new().to_vec(), &mut txn, default_db);
+        let _ = put_val_db_no_overwrite(root_uid, FacetedDirectory::new().to_vec(), &mut txn, default_db);
         txn.commit().unwrap();
 
         dbenv
     };
 }
 
-#[derive(PartialEq, Debug)]
 pub enum Error {
     BadPath,
     Unauthorized,
     BadTargetLabel,
+}
+
+enum InternalError {
+    UnallocatedFacet(u64, FacetedDirectory, String),
+    Wrapper(Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -49,7 +53,7 @@ type Result<T> = std::result::Result<T, Error>;
 //   APIs   //
 //////////////
 /// read always succeeds by raising labels unless the target path is illegal
-pub fn read(path: &str, cur_label: &mut DCLabel) -> Result<Vec<u8>> {
+pub fn read(path: Vec<PathComponent>, cur_label: &mut DCLabel) -> Result<Vec<u8>> {
     let db = DBENV.open_db(None).unwrap();
     let txn = DBENV.begin_ro_txn().unwrap();
     let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<Vec<u8>> {
@@ -59,7 +63,7 @@ pub fn read(path: &str, cur_label: &mut DCLabel) -> Result<Vec<u8>> {
                 let file = get_val_db(entry.uid(), &txn, db).map(File::from_vec).unwrap();
                 Ok(file.data())
             },
-            DirEntry::D => Err(Error::BadPath),
+            DirEntry::D | DirEntry::FacetedD => Err(Error::BadPath),
         }
     });
     txn.commit().unwrap();
@@ -67,7 +71,7 @@ pub fn read(path: &str, cur_label: &mut DCLabel) -> Result<Vec<u8>> {
 }
 
 /// read always succeed by raising labels unless the target path is illegal
-pub fn list(path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
+pub fn list(path: Vec<PathComponent>, cur_label: &mut DCLabel) -> Result<Vec<String>> {
     let db = DBENV.open_db(None).unwrap();
     let txn = DBENV.begin_ro_txn().unwrap();
     let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<Vec<String>> {
@@ -77,7 +81,7 @@ pub fn list(path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
                 let dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
                 Ok(dir.list())
             },
-            DirEntry::F => Err(Error::BadPath),
+            DirEntry::F | DirEntry::FacetedD => Err(Error::BadPath),
         }
     });
     txn.commit().unwrap();
@@ -85,17 +89,21 @@ pub fn list(path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
 }
 
 /// create_dir only fails when `cur_label` cannot flow to `label` or target directory's label
-pub fn create_dir(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
+pub fn create_dir(base_dir: Vec<PathComponent>, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
     create_common(base_dir, name, label, cur_label, Directory::new().to_vec(), DirEntry::D)
 }
 
+pub fn create_faceted_dir(base_dir: Vec<PathComponent>, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
+    create_common(base_dir, name, label, cur_label, FacetedDirectory::new().to_vec(), DirEntry::FacetedD)
+}
+
 /// create_file only fails when `cur_label` cannot flow to `label` or target directory's label
-pub fn create_file(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
+pub fn create_file(base_dir: Vec<PathComponent>, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
     create_common(base_dir, name, label, cur_label, File::new().to_vec(), DirEntry::F)
 }
 
-/// write fails when `cur_label` cannot flow to the target file's label 
-pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> { 
+/// write fails when `cur_label` cannot flow to the target file's label
+pub fn write(path: Vec<PathComponent>, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> {
     let db = DBENV.open_db(None).unwrap();
     let mut txn = DBENV.begin_rw_txn().unwrap();
     let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
@@ -107,7 +115,7 @@ pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> {
                 let _ = put_val_db(entry.uid(), file.to_vec(), &mut txn, db);
                 Ok(())
             }
-            DirEntry::D => Err(Error::BadPath),
+            DirEntry::D | DirEntry::FacetedD => Err(Error::BadPath),
         }
     });
     txn.commit().unwrap();
@@ -140,53 +148,121 @@ fn put_val_db(uid: u64, val: Vec<u8>, txn: &mut lmdb::RwTransaction, db: lmdb::D
     txn.put(db, &uid.to_be_bytes(), &val, WriteFlags::empty())
 }
 
+fn path_component_to_string(component: &PathComponent) -> Result<String> {
+    use crate::syscalls::path_component::Component::{Facet, Name};
+    match &component.component {
+        Some(Facet(pb_l)) => serde_json::to_string(&crate::vm::proto_label_to_dc_label(pb_l)).map_err(|_| Error::BadPath),
+        Some(Name(s)) => Ok(s.clone()),
+        None => panic!("We should not reach here"),
+    }
+}
+
 // return the labeled direntry named by the path
-fn get_direntry<T>(path: &str, cur_label: &mut DCLabel, txn: &T, db: lmdb::Database) -> Result<LabeledDirEntry>
+fn get_direntry<T>(path: Vec<PathComponent>, cur_label: &mut DCLabel, txn: &T, db: lmdb::Database)
+    -> Result<LabeledDirEntry>
 where T: Transaction
 {
-    let path = Path::new(path);
+    get_direntry_helper(path, cur_label, txn, db, false).map_err(|e| {
+        match e {
+            InternalError::Wrapper(ret_e) => ret_e,
+            _ => panic!("get_direntry should not encounter UnallocatedFacet error."),
+        }
+    })
+}
+
+fn get_direntry_allocate(
+    path: Vec<PathComponent>,
+    cur_label: &mut DCLabel,
+    txn: &mut lmdb::RwTransaction,
+    db: lmdb::Database
+) -> Result<LabeledDirEntry> {
+    get_direntry_helper(path, cur_label, txn, db, true).or_else(|e| -> Result<LabeledDirEntry> {
+        match e {
+            InternalError::UnallocatedFacet(uid, mut faceted, facet) => {
+                let label = serde_json::from_str(&facet).unwrap();
+                let new_entry = faceted.allocate(&facet, label, cur_label, txn, db)?.clone();
+                // update the faceted directory
+                let _ = put_val_db(uid, faceted.to_vec(), txn, db);
+                Ok(new_entry)
+            },
+            InternalError::Wrapper(ret_e) => Err(ret_e),
+        }
+    })
+}
+
+// return the labeled direntry named by the path
+fn get_direntry_helper<T>(path: Vec<PathComponent>, cur_label: &mut DCLabel, txn: &T, db: lmdb::Database, create: bool)
+    -> std::result::Result<LabeledDirEntry, InternalError>
+where T: Transaction
+{
+    let mut it = path.iter().peekable();
+    // The traversal starts from the root
     let mut labeled = LabeledDirEntry::root();
-    let mut it = path.iter();
-    let _ = it.next();
-    for component in it {
+    while let Some(pb_component) = it.next() {
+        let component = path_component_to_string(pb_component).map_err(|e| InternalError::Wrapper(e))?;
+        println!("get_direntry_helper fetching {}", component);
         let entry = labeled.unlabel(cur_label);
         match entry.entry_type() {
             DirEntry::F => {
-                return Err(Error::BadPath);
+                return Err(InternalError::Wrapper(Error::BadPath));
             },
             DirEntry::D => {
                 let cur_dir = get_val_db(entry.uid(), txn, db).map(Directory::from_vec).unwrap();
-                labeled = cur_dir.get(component.to_str().unwrap())?.clone();
+                labeled = cur_dir.get(&component).map_err(|e| InternalError::Wrapper(e))?.clone();
             },
-        }
+            DirEntry::FacetedD => {
+                let faceted = get_val_db(entry.uid(), txn, db).map(FacetedDirectory::from_vec).unwrap();
+                match faceted.get(&component) {
+                    Ok(l) => {
+                        labeled = l.clone();
+                    }
+                    Err(e) => {
+                        if create && it.peek() == None {
+                            // unallocated facet but trailing and called from create
+                            return Err(InternalError::UnallocatedFacet(entry.uid(), faceted, component));
+                        } else {
+                            // unallocated facet that is not trailing or not called from create.
+                            return Err(InternalError::Wrapper(e));
+                        }
+                    }
+                };
+            },
+        };
     }
     Ok(labeled)
 }
 
+// We must handle create_dir("/FACET", "github") when FACET is not allocated.
+// The traversal will see that FACET does not exist yet.
+// We need to check cur_label flows to FACET (the label) and allocate it.
+// Then we create "github" in the newly allocated FACET (the directory).
 fn create_common(
-    base_dir: &str,
+    base_dir: Vec<PathComponent>,
     name: &str,
     label: DCLabel,
     cur_label: &mut DCLabel,
     obj_vec: Vec<u8>,
     entry_type: DirEntry,
 ) -> Result<()> {
+    println!("create_common {:?}", base_dir);
     let db = DBENV.open_db(None).unwrap();
     let mut txn = DBENV.begin_rw_txn().unwrap();
-    let res = get_direntry(base_dir, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
+    let res = get_direntry_allocate(base_dir, cur_label, &mut txn, db).and_then(|labeled| -> Result<()> {
         let entry = labeled.unlabel_write_check(cur_label)?;
         match entry.entry_type() {
             DirEntry::D => {
                 let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
+
                 let mut uid = get_uid();
                 while put_val_db_no_overwrite(uid, obj_vec.clone(), &mut txn, db).is_err() {
                     uid = get_uid();
                 }
+                // TODO: should check if create is allowed before uid is consumed
                 dir.create(name, cur_label, entry_type, label, uid)?;
                 let _ = put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
                 Ok(())
             },
-            DirEntry::F => Err(Error::BadPath),
+            DirEntry::F | DirEntry::FacetedD => Err(Error::BadPath),
         }
     });
     txn.commit().unwrap();
@@ -256,7 +332,7 @@ mod tests {
         let target_label = DCLabel::new([["user2"], ["func2"]], [["func2"]]);
         assert!(create_file("/func2", "mydata.txt", target_label, &mut cur_label).is_ok());
         assert_eq!(read("/func2/mydata.txt", &mut cur_label).unwrap(), Vec::<u8>::new());
-    
+
         // write read
         let text = "test message";
         let data = text.as_bytes().to_vec();

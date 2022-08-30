@@ -84,23 +84,33 @@ message GithubRestResponse {
 message GetCurrentLabel {
 }
 
+message PathComponent {
+  oneof component {
+    DcLabel facet = 1;
+    string name = 2;
+  }
+}
+
+// Facets (or labels) can compose paths.
+// They are serialized to protobuf binary strings (e.g., Python API's Message.SerializeToString).
+// These strings are not UTF-8 encoded and we cannot use the slash-separated path format.
 message FSRead {
-  string path = 1;
+  repeated PathComponent path = 1;
 }
 
 message FSWrite {
-  string path = 1;
+  repeated PathComponent path = 1;
   bytes data = 2;
 }
 
 message FSCreateDir {
-  string baseDir = 1;
+  repeated PathComponent baseDir = 1;
   string name = 2;
   DcLabel label = 3;
 }
 
 message FSCreateFile {
-  string baseDir = 1;
+  repeated PathComponent baseDir = 1;
   string name = 2;
   DcLabel label = 3;
 }

@@ -28,9 +28,9 @@ const USER_AGENT: &str = "snapfaas";
 use labeled::dclabel::{Clause, Component, DCLabel};
 use labeled::{Label, HasPrivilege};
 
-fn proto_label_to_dc_label(label: syscalls::DcLabel) -> DCLabel {
+pub fn proto_label_to_dc_label(label: &syscalls::DcLabel) -> DCLabel {
     DCLabel {
-        secrecy: match label.secrecy {
+        secrecy: match &label.secrecy {
             None => Component::DCFalse,
             Some(set) => Component::DCFormula(
                 set.clauses
@@ -41,7 +41,7 @@ fn proto_label_to_dc_label(label: syscalls::DcLabel) -> DCLabel {
                     .collect(),
             ),
         },
-        integrity: match label.integrity {
+        integrity: match &label.integrity {
             None => Component::DCFalse,
             Some(set) => Component::DCFormula(
                 set.clauses
@@ -55,7 +55,7 @@ fn proto_label_to_dc_label(label: syscalls::DcLabel) -> DCLabel {
     }
 }
 
-fn dc_label_to_proto_label(label: &DCLabel) -> syscalls::DcLabel {
+pub fn dc_label_to_proto_label(label: &DCLabel) -> syscalls::DcLabel {
     syscalls::DcLabel {
         secrecy: match &label.secrecy {
             Component::DCFalse => None,
@@ -510,7 +510,7 @@ impl Vm {
                 },
                 Some(SC::FsRead(req)) => {
                     let result = syscalls::ReadKeyResponse {
-                        value: labeled_fs::read(req.path.as_str(), &mut self.current_label).ok(),
+                        value: labeled_fs::read(req.path, &mut self.current_label).ok(),
                     }
                     .encode_to_vec();
 
@@ -519,18 +519,18 @@ impl Vm {
                 Some(SC::FsWrite(req)) => {
                     self.current_label = self.current_label.clone().endorse(&self.privilege);
                     let result = syscalls::WriteKeyResponse {
-                        success: labeled_fs::write(req.path.as_str(), req.data, &mut self.current_label).is_ok(),
+                        success: labeled_fs::write(req.path, req.data, &mut self.current_label).is_ok(),
                     }
                     .encode_to_vec();
 
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsCreateDir(req)) => {
-                    let label = proto_label_to_dc_label(req.label.expect("label"));
+                    let label = proto_label_to_dc_label(&req.label.expect("label"));
                     self.current_label = self.current_label.clone().endorse(&self.privilege);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::create_dir(
-                            req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
+                            req.base_dir, req.name.as_str(), label, &mut self.current_label
                         ).is_ok(),
                     }
                     .encode_to_vec();
@@ -538,11 +538,11 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsCreateFile(req)) => {
-                    let label = proto_label_to_dc_label(req.label.expect("label"));
+                    let label = proto_label_to_dc_label(&req.label.expect("label"));
                     self.current_label = self.current_label.clone().endorse(&self.privilege);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::create_file(
-                            req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
+                            req.base_dir, req.name.as_str(), label, &mut self.current_label
                         ).is_ok(),
                     }
                     .encode_to_vec();
@@ -606,7 +606,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 }
                 Some(SC::TaintWithLabel(label)) => {
-                    let dclabel = proto_label_to_dc_label(label);
+                    let dclabel = proto_label_to_dc_label(&label);
                     println!("twl\t{:?} {:?}", self.current_label, dclabel);
                     self.current_label = self.current_label.clone().lub(dclabel);
                     let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
@@ -614,7 +614,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 }
                 Some(SC::ExercisePrivilege(target)) => {
-                    let dclabel = proto_label_to_dc_label(target);
+                    let dclabel = proto_label_to_dc_label(&target);
                     println!("cur\t{:?}\tpriv\t{:?}", self.current_label, dclabel);
                     if self.current_label.can_flow_to_with_privilege(&dclabel, &self.privilege) {
                         println!("priv succeed");
