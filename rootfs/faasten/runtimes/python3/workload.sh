@@ -1,6 +1,6 @@
-#!/usr/bin/env bash
+#!/bin/sh
 
-#/usr/bin/setup-eth0.sh
+/usr/bin/setup-eth0.sh
 #/usr/bin/ioctl
 mkdir -p /tmp
 /bin/mount -t tmpfs -o size=512m tmpfs /tmp

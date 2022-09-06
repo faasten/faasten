@@ -1,4 +1,4 @@
-apk add openrc util-linux build-base
+apk add openrc util-linux build-base ca-certificates rng-tools rng-tools-openrc
 
 cp /common/outl /usr/bin/outl
 cp /common/setup-eth0.sh /usr/bin/setup-eth0.sh
@@ -7,6 +7,7 @@ cp /common/ioctl /usr/bin/ioctl
 ## Add /dev and /proc file systems to openrc's boot
 rc-update add devfs boot
 rc-update add procfs boot
+rc-update add rngd boot
 
 ## Create start script for that mounts the appfs and invokes whatever binary is in /srv/workload
 cat /runtime/workload.sh > /bin/workload
