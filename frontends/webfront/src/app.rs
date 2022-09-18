@@ -15,6 +15,7 @@ use jwt::{PKeyWithDigest, SignWithKey, VerifyWithKey};
 use openssl::pkey::{self, PKey};
 use lmdb::{Transaction};
 
+use serde_json::Value;
 use snapfaas::blobstore::Blobstore;
 use snapfaas::request;
 
@@ -189,6 +190,9 @@ impl App {
             (POST) (/assignments) => {
                 self.start_assignment(request)
             },
+            (POST) (/invoke/{function_name}) => {
+                self.invoke(request, function_name)
+            },
             _ => Ok(Response::empty_404())
         ).unwrap_or_else(|e| e).with_additional_header("Access-Control-Allow-Origin", "*")
     }
@@ -214,6 +218,45 @@ impl App {
         let res = Response::json(&results);
         txn.commit().expect("commit");
         Ok(res)
+    }
+
+    fn invoke(&self, request: &Request, function_name: String) -> Result<Response, Response> {
+        let login = self.verify_jwt(request)?;
+
+        let conn = &mut self.conn.get().map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to get snapfaas connection"
+            })).with_status_code(500))?;
+        let input_json: Value = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
+
+        let txn = self.dbenv.begin_ro_txn().unwrap();
+        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+        txn.commit().expect("commit");
+        if !(admins.contains(&login) || ["start_assignment", "add_to_repo", "delete_repo"].contains(&function_name.as_str())) {
+            return Err(Response::json(&serde_json::json!({ "error": "user not authorized to make request" })).with_status_code(401))
+        }
+
+        let req = request::Request {
+            function: function_name,
+            payload: serde_json::json!({
+                "payload": input_json,
+                "login": login,
+            }),
+        };
+        request::write_u8(&req.to_vec(), conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to send request"
+            })).with_status_code(500))?;
+
+        let resp_buf = request::read_u8(conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to read response"
+            })).with_status_code(500))?;
+        let rsp: request::Response = serde_json::from_slice(&resp_buf).unwrap();
+        match rsp.status {
+            request::RequestStatus::SentToVM(response) => Ok(Response::text(response)),
+            _ => Err(Response::json(&serde_json::json!({"error": format!("{:?}", rsp.status)}))),
+        }
     }
 
     fn start_assignment(&self, request: &Request) -> Result<Response, Response> {
