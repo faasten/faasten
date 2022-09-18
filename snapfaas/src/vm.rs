@@ -469,7 +469,7 @@ impl Vm {
                             if !key.starts_with(&dir) {
                                 break
                             }
-                            if let Some(entry) = key.split_at(dir.len()).1.split(|c| *c == b'/').next() {
+                            if let Some(entry) = key.split_at(dir.len()).1.split_inclusive(|c| *c == b'/').next() {
                                 if !entry.is_empty() {
                                     keys.insert(entry.into());
                                 }
