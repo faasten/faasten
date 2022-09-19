@@ -63,7 +63,7 @@ class Syscall():
         req = syscalls_pb2.Syscall(readDir = syscalls_pb2.ReadDir(dir = d))
         self._send(req)
         response = self._recv(syscalls_pb2.ReadDirResponse())
-        return list(map(lambda b: b.decode('utf-8'), list(response.keys)))
+        return map(lambda b: b.decode('utf-8'), list(response.keys))
 
     ### label APIs ###
     def get_current_label(self):
