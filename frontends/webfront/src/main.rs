@@ -14,7 +14,7 @@ fn main() -> Result<(), std::io::Error> {
     let matches = App::new("SnapFaaS API Web Server")
         .arg(
             Arg::with_name("storage path")
-                .short("s")
+                .short('s')
                 .long("storage")
                 .value_name("PATH")
                 .takes_value(true)
@@ -43,7 +43,7 @@ fn main() -> Result<(), std::io::Error> {
         .arg(
             Arg::with_name("listen")
                 .long("listen")
-                .short("l")
+                .short('l')
                 .takes_value(true)
                 .value_name("ADDR:PORT")
                 .required(true)
@@ -52,7 +52,7 @@ fn main() -> Result<(), std::io::Error> {
         .arg(
             Arg::with_name("secret key")
                 .long("secret_key")
-                .short("k")
+                .short('k')
                 .takes_value(true)
                 .value_name("PATH")
                 .required(true)
@@ -61,7 +61,7 @@ fn main() -> Result<(), std::io::Error> {
         .arg(
             Arg::with_name("public key")
                 .long("public_key")
-                .short("p")
+                .short('p')
                 .takes_value(true)
                 .value_name("PATH")
                 .required(true)
