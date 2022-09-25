@@ -140,7 +140,6 @@ impl App {
 
 impl App {
     pub fn handle(&mut self, request: &Request) -> Response {
-        println!("{:?}", request);
         if request.method().to_uppercase().as_str() == "OPTIONS" {
             return Response::empty_204()
                 .with_additional_header("Access-Control-Allow-Origin", "*")
@@ -180,6 +179,9 @@ impl App {
             },
             (POST) (/put) => {
                 self.put(request)
+            },
+            (DELETE) (/delete) => {
+                self.delete(request)
             },
             (POST) (/put_blob) => {
                 self.put_blob(request)
@@ -266,7 +268,7 @@ impl App {
             Response::json(&serde_json::json!({
                 "error": "failed to get snapfaas connection"
             })).with_status_code(500))?;
-        #[derive(Debug, Deserialize)]
+        #[derive(Debug, Serialize, Deserialize)]
         struct Input {
             assignment: String,
             users: Vec<String>,
@@ -298,6 +300,9 @@ impl App {
                 "users": input_json.users,
                 "course": input_json.course,
                 "gh_handles": gh_handles,
+
+                "payload": input_json,
+                "login": login
             }),
         };
         request::write_u8(&req.to_vec(), conn).map_err(|_|
@@ -379,7 +384,6 @@ impl App {
             while let Some(mut field) = input.next() {
                 let mut data = Vec::new();
                 field.data.read_to_end(&mut data).expect("read");
-                println!("{:?}", field.headers.name);
                 txn.put(*self.default_db, &field.headers.name.as_bytes(), &data.as_slice(), lmdb::WriteFlags::empty()).expect("store data");
             }
             txn.commit().expect("commit");
@@ -387,6 +391,30 @@ impl App {
         } else {
             txn.abort();
             Response::empty_400()
+        };
+        Ok(res)
+    }
+
+    fn delete(&self, request: &Request) -> Result<Response, Response> {
+        let login = self.verify_jwt(request)?;
+
+        let res = if let Some(key) = request.get_param("key") {
+            let mut txn = self.dbenv.begin_rw_txn().unwrap();
+            let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+            if admins.iter().find(|l| **l == login).is_some() {
+                let dres = txn.del(*self.default_db, &key, None);
+                txn.commit().expect("commit");
+                match dres {
+                    Ok(()) => Response::empty_204(),
+                    Err(lmdb::Error::NotFound) => Response::empty_404(),
+                    _ => panic!("delete {:?}", dres),
+                }
+            } else {
+                txn.abort();
+                Response::empty_400()
+            }
+        } else {
+            Response::empty_404()
         };
         Ok(res)
     }
