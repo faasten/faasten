@@ -5,7 +5,6 @@ use crate::syscalls;
 
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
 const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
-const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
 const USER_AGENT: &str = "snapfaas";
 
 #[derive(Debug)]
@@ -61,33 +60,41 @@ fn scverb_to_reqwestverb(verb: syscalls::HttpVerb) -> reqwest::Method {
 #[derive(Debug)]
 pub struct Client {
     conn: reqwest::blocking::Client,
+    address: reqwest::Url,
 }
 
 impl Client {
-    pub fn new() -> Self {
-        Self { conn: reqwest::blocking::Client::new() }
+    pub fn new(address: Option<&str>) -> Self {
+        let address = if let Some(a) = address {
+            reqwest::Url::parse(a).expect("Bad GitHub URL")
+        } else {
+            reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap()
+        };
+        Self {
+            conn: reqwest::blocking::Client::new(),
+            address,
+        }
     }
 
     /// process requests to Github REST API
-    pub fn process(&self, req: &syscalls::GithubRest, cur_label: &mut DCLabel, privilege: &Component) -> Result<reqwest::blocking::Response> {
+    pub fn process(&self, req: syscalls::GithubRest, cur_label: &mut DCLabel, privilege: &Component) -> Result<reqwest::blocking::Response> {
         syscalls::HttpVerb::from_i32(req.verb).map_or_else(
             || Err(Error::BadHttpVerb),
             |verb| {
                 if verb != syscalls::HttpVerb::Get {
-                    *cur_label = cur_label.endorse(privilege);
+                    *cur_label = cur_label.clone().endorse(privilege);
                 }
-                check_label(&req.route, verb, cur_label)?;
+                check_label(&req, verb, cur_label)?;
                 self.http(&req.route, verb, req.body, &req.token)
             })
     }
 
     // send out HTTP requests
     fn http(&self, route: &str, verb: syscalls::HttpVerb, body: Option<String>, token: &str) -> Result<reqwest::blocking::Response> {
-        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
-        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
+        let mut url = self.address.clone();
         url.set_path(route);
         let method = scverb_to_reqwestverb(verb);
-        let mut http_req = self.conn.request(method, url)
+        let mut http_req = self.conn.request(method.clone(), url)
             .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
             .header(reqwest::header::USER_AGENT, USER_AGENT);
         if method != reqwest::Method::GET {

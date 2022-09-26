@@ -19,10 +19,6 @@ use crate::request::Request;
 use crate::labeled_fs::{self, DBENV};
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
-const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
-const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
-const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
-const USER_AGENT: &str = "snapfaas";
 
 use labeled::dclabel::{Clause, Component, DCLabel};
 use labeled::{Label, HasPrivilege};
@@ -182,6 +178,7 @@ impl Vm {
         cid: u32,
         force_exit: bool,
         odirect: Option<OdirectOption>,
+        mock_github: Option<&str>,
     ) -> Result<(), Error> {
         let function_config = &self.function_config;
         let mem_str = function_config.memory.to_string();
@@ -293,7 +290,7 @@ impl Vm {
             x
         })?;
 
-        let gh_client = crate::github::Client::new();
+        let gh_client = crate::github::Client::new(mock_github);
 
         let handle = VmHandle {
             conn,
@@ -503,10 +500,11 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::GithubRest(req)) => {
+                    let toblob = req.toblob;
                     let result = match self.handle.as_ref().unwrap().gh_client
-                        .process(&req, &mut self.current_label, &self.privilege) {
+                        .process(req, &mut self.current_label, &self.privilege) {
                         Ok(mut resp) => {
-                            if req.toblob && resp.status().is_success() {
+                            if toblob && resp.status().is_success() {
                                 let mut file = self.blobstore.create()?;
                                 let mut buf = [0; 4096];
                                 while let Ok(len) = resp.read(&mut buf) {
