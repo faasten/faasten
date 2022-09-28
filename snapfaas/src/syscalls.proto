@@ -54,6 +54,14 @@ message WriteKeyResponse {
   bool success = 1;
 }
 
+message ReadDir {
+  bytes dir = 1;
+}
+
+message ReadDirResponse {
+  repeated bytes keys = 1;
+}
+
 enum HttpVerb {
   GET = 0;
   POST = 1;
@@ -152,5 +160,6 @@ message Syscall {
     BlobRead readBlob = 17;
     BlobClose closeBlob = 18;
     Component declassify = 19;
+    ReadDir readDir = 20;
   }
 }

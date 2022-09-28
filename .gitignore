@@ -3,6 +3,7 @@ target
 out
 tmp
 storage/
+blobs/
 public.pem
 secret.pem
 *secret*

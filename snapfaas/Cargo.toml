@@ -28,6 +28,10 @@ path = "bins/sfdb/main.rs"
 name = "sffs"
 path = "bins/sffs/main.rs"
 
+[[bin]]
+name = "sfblob"
+path = "bins/sfblob/main.rs"
+
 [lib]
 
 [dependencies]
@@ -54,7 +58,7 @@ sys_util = { git = "https://github.com/princeton-sns/firecracker", rev = "5b64f6
 net_util = { git = "https://github.com/princeton-sns/firecracker", rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f" }
 time = "0.1"
 signal-hook = "0.1.13"
-crossbeam-channel = "0.4.2"
+crossbeam-channel = "0.5.5"
 futures = "0.1.18"
 glob =  "*"
 tokio = { version = "1.14.0", features = [ "rt", "macros",  "process", "net" ] }

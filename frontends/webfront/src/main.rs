@@ -1,5 +1,6 @@
 use clap::{App, Arg};
 use openssl::pkey::PKey;
+use snapfaas::blobstore::Blobstore;
 
 mod app;
 
@@ -19,6 +20,24 @@ fn main() -> Result<(), std::io::Error> {
                 .required(false)
                 .default_value("storage")
                 .help("Path to LMDB storage"),
+        )
+        .arg(
+            Arg::with_name("blob path")
+                .long("blobs")
+                .value_name("PATH")
+                .takes_value(true)
+                .required(false)
+                .default_value("blobs")
+                .help("Path to blob storage"),
+        )
+        .arg(
+            Arg::with_name("tmp path")
+                .long("tmp")
+                .value_name("PATH")
+                .takes_value(true)
+                .required(false)
+                .default_value("tmp")
+                .help("Path to temporary blob storage"),
         )
         .arg(
             Arg::with_name("listen")
@@ -67,7 +86,7 @@ fn main() -> Result<(), std::io::Error> {
 
 
     let dbenv = lmdb::Environment::new()
-        .set_map_size(4096 * 1024 * 1024)
+        .set_map_size(100 * 1024 * 1024 * 1024)
         .set_max_dbs(2)
         .open(&std::path::Path::new(matches.value_of("storage path").unwrap()))
         .unwrap();
@@ -75,6 +94,7 @@ fn main() -> Result<(), std::io::Error> {
     let private_key_bytes = std::fs::read(matches.value_of("secret key").expect("private key"))?;
     let base_url = matches.value_of("base url").expect("base url").to_string();
     let snapfaas_address = matches.value_of("snapfaas address").unwrap().to_string();
+    let blobstore = Blobstore::new(matches.value_of("blob path").unwrap().into(), matches.value_of("tmp path").unwrap().into());
     let app = app::App::new(
         app::GithubOAuthCredentials {
             client_id: github_client_id,
@@ -83,6 +103,7 @@ fn main() -> Result<(), std::io::Error> {
         PKey::private_key_from_pem(private_key_bytes.as_slice()).unwrap(),
         PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
         dbenv,
+        blobstore,
         base_url,
         snapfaas_address,
     );

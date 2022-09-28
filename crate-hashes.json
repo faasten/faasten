@@ -8,7 +8,7 @@
   "kernel 0.1.0 (git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f)": "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni",
   "kvm 0.1.0 (git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f)": "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni",
   "kvm-bindings 0.1.1 (git+https://github.com/princeton-sns/kvm-bindings?branch=master#6a54c0ae2aab688ab66d5c523b9f275e3441fde9)": "1nbb8fh0wvaf95lmsiycsn4r1i4l63z121gavs9cja85qxxm98c2",
-  "labeled 0.1.0 (git+https://github.com/alevy/labeled#98caa38bd59c23be0ab10574286858860d06000c)": "0carfsw1dk1m7pxgzvavbzg339wh5lgpbr3canxil6nmywyjiyvm",
+  "labeled 0.1.0 (git+https://github.com/tan-yue/labeled?rev=8d9fb2069e1ac7eb111f05d657af4427db600219#8d9fb2069e1ac7eb111f05d657af4427db600219)": "029wcvxglpwqnf31v48n5j7cby0ky8b4kdwfkz29hjv9h3i42di7",
   "logger 0.1.0 (git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f)": "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni",
   "memory_model 0.1.0 (git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f)": "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni",
   "micro_http 0.1.0 (git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f)": "0f4pfvs817crh14h7l6lr96y1y35d62gv5z99x017sn44qid5hni",

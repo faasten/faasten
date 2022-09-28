@@ -1,16 +1,21 @@
 use std::collections::BTreeMap;
+use std::collections::HashSet;
+use std::io::Write;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::SystemTime;
 use std::io::Read;
 use std::net::TcpStream;
 
 use reqwest::blocking::Client;
+use rouille::ResponseBody;
 use serde::{Deserialize, Serialize};
 use rouille::{Request, Response};
 use jwt::{PKeyWithDigest, SignWithKey, VerifyWithKey};
 use openssl::pkey::{self, PKey};
 use lmdb::{Transaction};
 
+use snapfaas::blobstore::Blobstore;
 use snapfaas::request;
 
 struct SnapFaasManager {
@@ -61,22 +66,22 @@ pub struct App {
     pubkey: PKey<pkey::Public>,
     dbenv: Arc<lmdb::Environment>,
     default_db: Arc<lmdb::Database>,
-    user_db: Arc<lmdb::Database>,
+    blobstore: Arc<Mutex<Blobstore>>,
     base_url: String,
     conn: r2d2::Pool<SnapFaasManager>,
 }
 
 impl App {
-    pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment, base_url: String, snapfaas_address: String) -> App {
+    pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment, blobstore: Blobstore, base_url: String, snapfaas_address: String) -> App {
         let dbenv = Arc::new(dbenv);
         let default_db = Arc::new(dbenv.open_db(None).unwrap());
-        let user_db = Arc::new(dbenv.create_db(Some("users"), lmdb::DatabaseFlags::empty()).unwrap());
         let conn = r2d2::Pool::builder().max_size(10).build(SnapFaasManager { address: snapfaas_address }).expect("pool");
+        let blobstore = Arc::new(Mutex::new(blobstore));
         App {
             conn,
             dbenv,
             default_db,
-            user_db,
+            blobstore,
             pkey, 
             pubkey,
             gh_creds,
@@ -85,10 +90,14 @@ impl App {
     }
 
     fn legal_path_for_user<T: Transaction>(&self, key: &str, login: &String, txn: &T) -> bool {
+        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+        if admins.contains(login) {
+            return true;
+        }
         let regexps = regex::RegexSet::new(&[
-            format!("cos316/enrollments.json"),
-            format!("cos316/assignments"),
-            format!("cos316/assignments/[^/]/{}", login),
+            format!("^[^/]+/enrollments.json$"),
+            format!("^[^/]+/assignments$"),
+            format!("^[^/]+/assignments/[^/]+/{}$", login),
         ]).unwrap();
         if regexps.is_match(key) {
             return true;
@@ -162,8 +171,17 @@ impl App {
             (GET) (/get) => {
                 self.get(request)
             },
+            (GET) (/get_blob) => {
+                self.get_blob(request)
+            },
+            (GET) (/read_dir) => {
+                self.read_dir(request)
+            },
             (POST) (/put) => {
                 self.put(request)
+            },
+            (POST) (/put_blob) => {
+                self.put_blob(request)
             },
             (GET) (/assignments) => {
                 self.assignments(request)
@@ -183,7 +201,7 @@ impl App {
             github: Option<String>,
         }
         let txn = self.dbenv.begin_ro_txn().unwrap();
-        let github: Option<String> = txn.get(*self.user_db, &format!("github/for/user/{}", login).as_bytes()).ok().map(|l| String::from_utf8_lossy(l).to_string());
+        let github: Option<String> = txn.get(*self.default_db, &format!("users/github/for/user/{}", login).as_bytes()).ok().map(|l| String::from_utf8_lossy(l).to_string());
         Ok(Response::json(&User { login, github }))
     }
 
@@ -209,18 +227,19 @@ impl App {
         struct Input {
             assignment: String,
             users: Vec<String>,
+            course: String,
         }
         let input_json: Input = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
 
         let txn = self.dbenv.begin_ro_txn().unwrap();
-        let admins: Vec<String> = txn.get(*self.user_db, &"admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
         if !(input_json.users.contains(&login) || admins.contains(&login)) {
             return Err(Response::json(&serde_json::json!({ "error": "user not authorized to make request" })).with_status_code(401))
         }
 
         let mut gh_handles = vec![];
         for user in input_json.users.iter() {
-            let gh_handle = txn.get(*self.user_db, &format!("github/for/user/{}", user).as_str()).or(
+            let gh_handle = txn.get(*self.default_db, &format!("users/github/for/user/{}", user).as_str()).or(
                 Err(
                     Response::json(&serde_json::json!({ "error": format!("no github handle for \"{}\"", user) })).with_status_code(400)
                 )
@@ -234,6 +253,7 @@ impl App {
             payload: serde_json::json!({
                 "assignment": input_json.assignment,
                 "users": input_json.users,
+                "course": input_json.course,
                 "gh_handles": gh_handles,
             }),
         };
@@ -258,11 +278,10 @@ impl App {
 
         let keys = request.get_param("keys").unwrap_or(String::new());
         let txn = self.dbenv.begin_ro_txn().unwrap();
-        let admins: Vec<String> = txn.get(*self.user_db, &"admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
         let val = {
             let mut results = BTreeMap::new();
             for ref key in keys.split(",") {
-                if admins.contains(&login) || self.legal_path_for_user(key, &login, &txn) {
+                if self.legal_path_for_user(key, &login, &txn) {
                     results.insert(*key,
                         txn.get(*self.default_db, &key).ok()
                             .map(String::from_utf8_lossy)
@@ -276,25 +295,111 @@ impl App {
         Ok(res)
     }
 
+    fn read_dir(&self, request: &Request) -> Result<Response, Response> {
+        use lmdb::Cursor;
+
+        let login = self.verify_jwt(request)?;
+
+        let mut keys: HashSet<String> = HashSet::new();
+        let mut dir = request.get_param("dir").ok_or(Response::empty_404())?;
+        if !dir.ends_with('/') {
+           dir = dir + "/";
+        }
+
+        let txn = self.dbenv.begin_ro_txn().unwrap();
+        if self.legal_path_for_user(dir.as_str(), &login, &txn) {
+            let mut cursor = txn.open_ro_cursor(*self.default_db).or(Err(Response::empty_400()))?.iter_from(&dir);
+            while let Some(Ok((key, _))) = cursor.next() {
+                if !key.starts_with(dir.as_bytes()) {
+                    break
+                }
+                if let Some(entry) = key.split_at(dir.len()).1.split_inclusive(|c| *c == b'/').next() {
+                    if !entry.is_empty() && self.legal_path_for_user(&String::from_utf8_lossy(key).to_owned(), &login, &txn) {
+                        keys.insert(String::from_utf8_lossy(entry).into());
+                    }
+                }
+            }
+        }
+        let _ = txn.commit();
+
+        Ok(Response::json(&keys))
+    }
+
     fn put(&self, request: &Request) -> Result<Response, Response> {
         let login = self.verify_jwt(request)?;
 
         let mut input = rouille::input::multipart::get_multipart_input(request).or(Err(Response::empty_400()))?;
 
         let mut txn = self.dbenv.begin_rw_txn().unwrap();
-        let admins: Vec<String> = txn.get(*self.user_db, &"admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
         let res = if admins.iter().find(|l| **l == login).is_some() {
             while let Some(mut field) = input.next() {
                 let mut data = Vec::new();
                 field.data.read_to_end(&mut data).expect("read");
+                println!("{:?}", field.headers.name);
                 txn.put(*self.default_db, &field.headers.name.as_bytes(), &data.as_slice(), lmdb::WriteFlags::empty()).expect("store data");
             }
+            txn.commit().expect("commit");
             Response::empty_204()
         } else {
+            txn.abort();
             Response::empty_400()
         };
-        txn.commit().expect("commit");
         Ok(res)
+    }
+
+    fn put_blob(&self, request: &Request) -> Result<Response, Response> {
+        let login = self.verify_jwt(request)?;
+        if let Some(key) = request.get_param("key") {
+
+            let mut txn = self.dbenv.begin_rw_txn().unwrap();
+            let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+            if admins.iter().find(|l| **l == login).is_some() {
+                let mut input = request.data().ok_or(Response::empty_406())?;
+                let mut blob = self.blobstore.lock().expect("lock").create().or(Err(Response::empty_406()))?;
+                std::io::copy(&mut input, &mut blob).or(Err(Response::empty_406()))?;
+                blob.flush().or(Err(Response::empty_406()))?;
+                let blob = self.blobstore.lock().expect("lock").save(blob).or(Err(Response::empty_406()))?;
+                txn.put(*self.default_db, &key.as_bytes(), &blob.name.as_bytes(), lmdb::WriteFlags::empty()).expect("store data");
+                txn.commit().expect("commit");
+                Ok(Response::json(&blob.name))
+            } else {
+                txn.abort();
+                Ok(Response::empty_400())
+            }
+        } else {
+            Ok(Response::empty_400())
+        }
+    }
+
+    fn get_blob(&self, request: &Request) -> Result<Response, Response> {
+        let login = self.verify_jwt(request)?;
+        if let Some(key) = request.get_param("key") {
+
+            let txn = self.dbenv.begin_ro_txn().unwrap();
+            let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+            if admins.iter().find(|l| **l == login).is_some() {
+                if let Some(blob_key) = txn.get(*self.default_db, &key.as_bytes()).ok() {
+                    let blob = self.blobstore
+                                   .lock()
+                                   .expect("lock")
+                                   .open(String::from_utf8(blob_key.to_vec()).or(Err(Response::empty_406()))?)
+                                   .or(Err(Response::empty_406()))?;
+                    Ok(Response {
+                        status_code: 200,
+                        headers: vec![("Content-Type".into(), "application/octet-stream".into())],
+                        data: ResponseBody::from_reader(blob),
+                        upgrade: None,
+                    })
+                } else {
+                    Ok(Response::empty_400())
+                }
+            } else {
+                Ok(Response::empty_400())
+            }
+        } else {
+            Ok(Response::empty_400())
+        }
     }
 
     fn authenticate_cas(&self, request: &Request) -> Result<Response, Response> {
@@ -368,10 +473,9 @@ impl App {
             .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", input.github_token))
             .send().expect("reqwest").json().unwrap();
         let mut txn = self.dbenv.begin_rw_txn().unwrap();
-        let user_db = *self.user_db;
-        txn.put(user_db, &format!("github/for/user/{}", &local_user).as_str(), &github_user.login.as_str(), lmdb::WriteFlags::empty()).expect("store user");
-        txn.put(user_db, &format!("github/user/{}/token", &github_user.login).as_str(), &input.github_token.as_str(), lmdb::WriteFlags::empty()).expect("store user");
-        txn.put(user_db, &format!("github/from/{}", &github_user.login).as_str(), &local_user.as_str(), lmdb::WriteFlags::empty()).expect("store user");
+        txn.put(*self.default_db, &format!("users/github/for/user/{}", &local_user).as_str(), &github_user.login.as_str(), lmdb::WriteFlags::empty()).expect("store user");
+        txn.put(*self.default_db, &format!("users/github/user/{}/token", &github_user.login).as_str(), &input.github_token.as_str(), lmdb::WriteFlags::empty()).expect("store user");
+        txn.put(*self.default_db, &format!("users/github/from/{}", &github_user.login).as_str(), &local_user.as_str(), lmdb::WriteFlags::empty()).expect("store user");
         txn.commit().expect("commit");
         Ok(Response::json(&github_user.login))
     }
