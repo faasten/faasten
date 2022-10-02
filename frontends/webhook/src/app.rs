@@ -114,6 +114,7 @@ impl App {
                             request::RequestStatus::FunctionNotExist | request::RequestStatus::Dropped => Err(StatusCode::BAD_REQUEST),
                             request::RequestStatus::LaunchFailed => Err(StatusCode::INTERNAL_SERVER_ERROR),
                             request::RequestStatus::SentToVM(response) => Ok(Bytes::from(response)),
+                            request::RequestStatus::ProcessRequestFailed => Err(StatusCode::INTERNAL_SERVER_ERROR),
                         }
                     },
                 }
