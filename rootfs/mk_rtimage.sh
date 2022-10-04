@@ -86,7 +86,7 @@ RUNTIME=$(realpath $RUNTIME)
 MYDIR=$(dirname $(realpath $0))
 
 make LOCALPATH=$LOCALPATH $FORCE -C $RUNTIME
-make -C $MYDIR/../common
+make -C $MYDIR/common
 
 ## Create a temporary directory to mount the filesystem
 TMPDIR=`mktemp -d`
@@ -101,7 +101,7 @@ sudo mount $OUTPUT $TMPDIR
 
 ## Execute the prelude, runtime script and postscript inside an Alpine docker container
 ## with the target root file system shared at `/my-rootfs` inside the container.
-cat $MYDIR/../common/prelude.sh $RUNTIME/rootfs.sh $MYDIR/../common/postscript.sh | docker run -i --rm -v $TMPDIR:/my-rootfs -v $MYDIR/../common:/common -v $RUNTIME:/runtime alpine:$ALPINE
+cat $MYDIR/common/prelude.sh $RUNTIME/rootfs.sh $MYDIR/common/postscript.sh | docker run -i --rm -v $TMPDIR:/my-rootfs -v $MYDIR/common:/common -v $RUNTIME:/runtime alpine:$ALPINE
 
 # resize & cleanup
 sudo umount $OUTPUT
