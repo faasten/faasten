@@ -111,7 +111,6 @@ pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> {
         }
     });
     txn.commit().unwrap();
-    println!("write\t{}\t{:?}", path, res);
     res
 }
 
