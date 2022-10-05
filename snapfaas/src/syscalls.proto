@@ -159,7 +159,7 @@ message Syscall {
     BlobOpen openBlob = 16;
     BlobRead readBlob = 17;
     BlobClose closeBlob = 18;
-    Component declassify = 19;
-    ReadDir readDir = 20;
+    ReadDir readDir = 19;
+    Component declassify = 20;
   }
 }
