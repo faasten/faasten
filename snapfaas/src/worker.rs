@@ -92,7 +92,7 @@ impl Worker {
                                 debug!("VM is launched");
                                 tsps.launched = precise_time_ns();
 
-                                match vm.process_req(req.payload) {
+                                match vm.process_req(req) {
                                     Ok(rsp) => {
                                         tsps.completed = precise_time_ns();
                                         // TODO: output are currently ignored

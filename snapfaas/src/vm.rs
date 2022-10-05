@@ -12,7 +12,6 @@ use std::collections::{HashMap, HashSet};
 
 use log::{debug, error};
 use tokio::process::{Child, Command};
-use serde_json::Value;
 
 use crate::configs::FunctionConfig;
 use crate::message::Message;
@@ -160,8 +159,8 @@ impl Vm {
             function_config,
             // We should also probably have a clearance to mitigate side channel attacks, but
             // meh for now...
-            /// Starting label with public secrecy and integrity has app-name
-            current_label: DCLabel::new(true, [[function_name.clone()]]),
+            // start with the public label
+            current_label: DCLabel::new(true, true),
             privilege: Component::formula([[function_name]]),
             handle: None,
             blobstore: Default::default(),
@@ -265,7 +264,7 @@ impl Vm {
                 .map_err(|e| Error::ProcessSpawn(e))?;
 
             if force_exit {
-                let output = vm_process .wait_with_output().await
+                let output = vm_process.wait_with_output().await
                     .expect("failed to wait on child");
                 let mut status = 0;
                 if !output.status.success() {
@@ -282,6 +281,11 @@ impl Vm {
                     res.unwrap().0.into_std().unwrap()
                 },
                 _ = vm_process.wait() => {
+                    let mut stderr_pipe = vm_process.stderr.take().unwrap();
+                    use tokio::io::AsyncReadExt;
+                    let mut buf = String::new();
+                    stderr_pipe.read_to_string(&mut buf).await?;
+                    debug!("Guest function exited: {}", buf);
                     crate::unlink_unix_sockets();
                     std::process::exit(1);
                 }
@@ -292,7 +296,7 @@ impl Vm {
         })?;
 
         let rest_client = reqwest::blocking::Client::new();
-        
+
         let handle = VmHandle {
             conn,
             rest_client,
@@ -325,11 +329,13 @@ impl Vm {
     }
 
     /// Send request to vm and wait for its response
-    pub fn process_req(&mut self, req: Value) -> Result<String, Error> {
+    pub fn process_req(&mut self, req: Request) -> Result<String, Error> {
         use prost::Message;
 
+        self.current_label = self.current_label.clone().lub(req.label);
         let sys_req = syscalls::Request {
-            payload: req.to_string(),
+            payload: req.payload.to_string(),
+            data_handles: req.data_handles
         }
         .encode_to_vec();
 
@@ -388,8 +394,10 @@ impl Vm {
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
             let (tx, _) = mpsc::channel();
             let req = Request {
+                label: self.current_label.clone(),
                 function: invoke.function,
-                payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
+                payload: serde_json::from_str(invoke.request.clone().unwrap().payload.as_str()).expect("json"),
+                data_handles: invoke.request.unwrap().data_handles,
             };
             use crate::metrics::RequestTimestamps;
             let timestamps = RequestTimestamps {
@@ -411,7 +419,7 @@ impl Vm {
         use syscalls::syscall::Syscall as SC;
         use syscalls::Syscall;
 
-        
+
         let default_db = DBENV.open_db(None).unwrap();
 
         loop {
@@ -431,6 +439,23 @@ impl Vm {
                 Some(SC::Invoke(invoke)) => {
                     let result = syscalls::InvokeResponse { success: self.send_req(invoke) };
                     self.send_into_vm(result.encode_to_vec())?;
+                }
+                Some(SC::Declassify(s)) => {
+                    let secrecy = Component::DCFormula(
+                        s.clauses
+                            .iter()
+                            .map(|c| {
+                                Clause(c.principals.iter().map(Clone::clone).collect())
+                            })
+                            .collect()
+                    );
+                    let target_label = DCLabel::new(secrecy, self.current_label.integrity.clone());
+                    let success = target_label.can_flow_to_with_privilege(&self.current_label, &self.privilege);
+                    if success {
+                        self.current_label = target_label;
+                        debug!("declassification succeeded\t{:?}", self.current_label.secrecy);
+                    }
+                    self.send_into_vm(syscalls::WriteKeyResponse{ success }.encode_to_vec())?;
                 }
                 Some(SC::ReadKey(rk)) => {
                     let txn = DBENV.begin_ro_txn().unwrap();
@@ -492,17 +517,17 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsWrite(req)) => {
-                    println!("fsw\t{:?}", self.current_label);
+                    self.current_label = self.current_label.clone().endorse(&self.privilege);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::write(req.path.as_str(), req.data, &mut self.current_label).is_ok(),
                     }
                     .encode_to_vec();
-                    println!("fs2\t{:?}", self.current_label);
 
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsCreateDir(req)) => {
                     let label = proto_label_to_dc_label(req.label.expect("label"));
+                    self.current_label = self.current_label.clone().endorse(&self.privilege);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::create_dir(
                             req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
@@ -514,6 +539,7 @@ impl Vm {
                 },
                 Some(SC::FsCreateFile(req)) => {
                     let label = proto_label_to_dc_label(req.label.expect("label"));
+                    self.current_label = self.current_label.clone().endorse(&self.privilege);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::create_file(
                             req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
@@ -574,7 +600,7 @@ impl Vm {
                 },
                 Some(SC::GetCurrentLabel(_)) => {
                     let result = dc_label_to_proto_label(&self.current_label);
-                    println!("gcl\t{:?} {:?}", self.current_label, result);
+                    println!("gcl\t{:?}", result);
                     let result = result.encode_to_vec();
 
                     self.send_into_vm(result)?;
@@ -589,8 +615,9 @@ impl Vm {
                 }
                 Some(SC::ExercisePrivilege(target)) => {
                     let dclabel = proto_label_to_dc_label(target);
-                    println!("priv\t{:?} {:?}", self.current_label, dclabel);
+                    println!("cur\t{:?}\tpriv\t{:?}", self.current_label, dclabel);
                     if self.current_label.can_flow_to_with_privilege(&dclabel, &self.privilege) {
+                        println!("priv succeed");
                         self.current_label = dclabel;
                     }
                     let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();

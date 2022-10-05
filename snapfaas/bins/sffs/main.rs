@@ -1,42 +1,11 @@
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
 use clap::{App, Arg, SubCommand};
-use labeled::dclabel::{self, DCLabel};
+use labeled::dclabel::DCLabel;
 use std::io::{Read, Write};
 
 use snapfaas::labeled_fs;
-
-fn input_to_dclabel(si_clauses: [Vec<&str>; 2]) -> DCLabel {
-    let mut components = Vec::new();
-    for clauses in si_clauses {
-        let component: dclabel::Component = if clauses[0].to_lowercase() == "true" {
-            true.into()
-        } else if clauses[0].to_lowercase() == "false" {
-            false.into()
-        } else {
-            let mut s_vec = Vec::new();
-            for clause in clauses {
-                let c: Vec<String> = clause.split(",").map(|s| s.to_lowercase()).collect();
-                s_vec.push(c);
-            }
-            s_vec.into()
-        };
-        components.push(component);
-    }
-    let secrecy = components.remove(0);
-    let integrity = components.remove(0);
-    DCLabel::new(secrecy, integrity)
-}
-
-fn input_to_endorsement(endorse: &str) -> DCLabel {
-    if endorse.to_lowercase() == "false" {
-        DCLabel::new(true, false)
-    } else if endorse.to_lowercase() == "true" {
-        DCLabel::new(true, true)
-    } else {
-        DCLabel::new(true, [[endorse.to_lowercase()]])
-    }
-}
+use snapfaas::cli_utils::{input_to_dclabel, input_to_endorsement};
 
 fn main() {
     let cmd_arguments = App::new("sffs")

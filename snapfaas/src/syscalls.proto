@@ -4,7 +4,7 @@ package snapfaas.syscalls;
 
 message Invoke {
   string function = 1;
-  string payload = 2;
+  Request request = 2;
 }
 
 message InvokeResponse {
@@ -30,6 +30,7 @@ message DcLabel {
 
 message Request {
   string payload = 1;
+  map<string, string> dataHandles = 2;
 }
 
 message Response {
@@ -104,10 +105,6 @@ message FSCreateFile {
   DcLabel label = 3;
 }
 
-message ExercisePrivilege {
-  DcLabel target = 1;
-}
-
 message BlobCreate {
   optional uint64 size = 1;
 }
@@ -163,5 +160,6 @@ message Syscall {
     BlobRead readBlob = 17;
     BlobClose closeBlob = 18;
     ReadDir readDir = 19;
+    Component declassify = 20;
   }
 }

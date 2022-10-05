@@ -34,6 +34,8 @@ impl r2d2::ManageConnection for SnapFaasManager {
         let req = request::Request {
             function: String::from("ping"),
             payload: serde_json::Value::Null,
+            label: labeled::dclabel::DCLabel::public(),
+            data_handles: Default::default(),
         };
         request::write_u8(&req.to_vec(), conn)?;
         request::read_u8(conn)?;
@@ -256,6 +258,8 @@ impl App {
                 "course": input_json.course,
                 "gh_handles": gh_handles,
             }),
+            label: labeled::dclabel::DCLabel::public(),
+            data_handles: Default::default(),
         };
         request::write_u8(&req.to_vec(), conn).map_err(|_|
             Response::json(&serde_json::json!({
