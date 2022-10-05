@@ -1,3 +1,8 @@
+// Functions in this file converts formatted strings to DCLabels.
+// They are now used by bins/sffs.
+// A clause string is comma-joined principal strings, or "true", or "false".
+// A secrecy or a integrity string is either "true", "false", or semi-colon-joined clause strings
+// A endorsement string is expected to be a principal string.
 use labeled::dclabel::{self, DCLabel};
 
 use std::collections::BTreeSet;
