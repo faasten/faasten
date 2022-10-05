@@ -1,8 +1,7 @@
 const vsock = require("vsock");
 const syscalls = require('./syscalls')
-const { execSync } = require("child_process");
 
-execSync("mount -r /dev/vdb /srv");
+// load app
 const app = require("/srv/workload");
 
 const sock = vsock.connect(2, 1234);
