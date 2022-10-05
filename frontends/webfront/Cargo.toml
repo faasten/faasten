@@ -9,10 +9,11 @@ edition = "2018"
 serde = {version = "1.0.102", features = ["derive"]}
 serde_yaml = "*"
 serde_json = "*"
+env_logger = "0.9.1"
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 dotenv = "0.15.0"
-clap = "^2.33.0"
-#snapfaas = { path = "../../snapfaas" } 
+chrono = "0.4.22"
+clap = "^3.2.22"
 reqwest = { version = "*", features = [ "blocking", "json", "multipart" ] }
 github-types = "0.1.1"
 rouille = "3.5.0"

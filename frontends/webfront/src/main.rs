@@ -6,6 +6,7 @@ mod app;
 
 fn main() -> Result<(), std::io::Error> {
     dotenv::dotenv().ok();
+    env_logger::init();
 
     let github_client_id = std::env::var("GITHUB_CLIENT_ID").expect("client id");
     let github_client_secret = std::env::var("GITHUB_CLIENT_SECRET").expect("client secret");
@@ -13,7 +14,7 @@ fn main() -> Result<(), std::io::Error> {
     let matches = App::new("SnapFaaS API Web Server")
         .arg(
             Arg::with_name("storage path")
-                .short("s")
+                .short('s')
                 .long("storage")
                 .value_name("PATH")
                 .takes_value(true)
@@ -42,7 +43,7 @@ fn main() -> Result<(), std::io::Error> {
         .arg(
             Arg::with_name("listen")
                 .long("listen")
-                .short("l")
+                .short('l')
                 .takes_value(true)
                 .value_name("ADDR:PORT")
                 .required(true)
@@ -51,7 +52,7 @@ fn main() -> Result<(), std::io::Error> {
         .arg(
             Arg::with_name("secret key")
                 .long("secret_key")
-                .short("k")
+                .short('k')
                 .takes_value(true)
                 .value_name("PATH")
                 .required(true)
@@ -60,7 +61,7 @@ fn main() -> Result<(), std::io::Error> {
         .arg(
             Arg::with_name("public key")
                 .long("public_key")
-                .short("p")
+                .short('p')
                 .takes_value(true)
                 .value_name("PATH")
                 .required(true)
@@ -109,7 +110,20 @@ fn main() -> Result<(), std::io::Error> {
     );
     let listen_addr = matches.value_of("listen").unwrap();
     rouille::start_server(listen_addr, move |request| {
+        use rouille::{Request, Response};
+        use log::{error, info};
+
         let mut app = app.clone();
-        app.handle(request)
+
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.6f");
+        let log_ok = |req: &Request, resp: &Response, _elap: std::time::Duration| {
+            info!("{} {} {} - {}", now, req.method(), req.raw_url(), resp.status_code);
+        };
+        let log_err = |req: &Request, _elap: std::time::Duration| {
+            error!("{} Handler panicked: {} {}", now, req.method(), req.raw_url());
+        };
+        rouille::log_custom(request, log_ok, log_err, || {
+            app.handle(request)
+        })
     });
 }
