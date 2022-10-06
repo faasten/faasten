@@ -157,7 +157,8 @@ fn path_component_to_string(component: &PathComponent) -> Result<String> {
     }
 }
 
-// return the labeled direntry named by the path
+// This function is called from read, list, write. It returns the direntry object named by a legal
+// `path` argument; otherwise, returns an error.
 fn get_direntry<T>(path: Vec<PathComponent>, cur_label: &mut DCLabel, txn: &T, db: lmdb::Database)
     -> Result<LabeledDirEntry>
 where T: Transaction
@@ -170,6 +171,9 @@ where T: Transaction
     })
 }
 
+// This function is called from create_common. It traverses the path and returns the direntry
+// object named by a legal `path` argument;otherwise, returns an error. Specifically, it returns
+// InternalError::UnallocatedFacet when the traversal encounters a facet that is not yet allocated.
 fn get_direntry_allocate(
     path: Vec<PathComponent>,
     cur_label: &mut DCLabel,
@@ -190,7 +194,12 @@ fn get_direntry_allocate(
     })
 }
 
-// return the labeled direntry named by the path
+// This helper function is used by get_direntry_allocate and get_direntry.
+// get_direntry_allocate sets `create` to. get_direntry sets `create` to false.
+// When `create` is true and the last path component is an unallocated facet,
+// e.g., create_faceted_dir([<true, true>], "public_dir") but the public facet is not yet allocated,
+// this function returns UnallocatedFacet error. Note that an unallocated facet occurs but it is
+// not the last component, the function returns BadPath meaning the path is legal.
 fn get_direntry_helper<T>(path: Vec<PathComponent>, cur_label: &mut DCLabel, txn: &T, db: lmdb::Database, create: bool)
     -> std::result::Result<LabeledDirEntry, InternalError>
 where T: Transaction
@@ -200,7 +209,6 @@ where T: Transaction
     let mut labeled = LabeledDirEntry::root();
     while let Some(pb_component) = it.next() {
         let component = path_component_to_string(pb_component).map_err(|e| InternalError::Wrapper(e))?;
-        println!("get_direntry_helper fetching {}", component);
         let entry = labeled.unlabel(cur_label);
         match entry.entry_type() {
             DirEntry::F => {
@@ -232,10 +240,7 @@ where T: Transaction
     Ok(labeled)
 }
 
-// We must handle create_dir("/FACET", "github") when FACET is not allocated.
-// The traversal will see that FACET does not exist yet.
-// We need to check cur_label flows to FACET (the label) and allocate it.
-// Then we create "github" in the newly allocated FACET (the directory).
+// This function is called from create_file, create_dir, create_faceted_dir.
 fn create_common(
     base_dir: Vec<PathComponent>,
     name: &str,
