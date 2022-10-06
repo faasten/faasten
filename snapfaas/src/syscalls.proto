@@ -109,6 +109,11 @@ message FSCreateDir {
   DcLabel label = 3;
 }
 
+message FSCreateFacetedDir {
+  repeated PathComponent baseDir = 1;
+  string name = 2;
+}
+
 message FSCreateFile {
   repeated PathComponent baseDir = 1;
   string name = 2;
@@ -171,5 +176,6 @@ message Syscall {
     BlobClose closeBlob = 18;
     ReadDir readDir = 19;
     Component declassify = 20;
+    FSCreateFacetedDir fsCreateFacetedDir = 21;
   }
 }

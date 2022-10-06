@@ -537,6 +537,17 @@ impl Vm {
 
                     self.send_into_vm(result)?;
                 },
+                Some(SC::FsCreateFacetedDir(req)) => {
+                    self.current_label = self.current_label.clone().endorse(&self.privilege);
+                    let result = syscalls::WriteKeyResponse {
+                        success: labeled_fs::create_faceted_dir(
+                            req.base_dir, req.name.as_str(), &mut self.current_label
+                        ).is_ok(),
+                    }
+                    .encode_to_vec();
+
+                    self.send_into_vm(result)?;
+                },
                 Some(SC::FsCreateFile(req)) => {
                     let label = proto_label_to_dc_label(&req.label.expect("label"));
                     self.current_label = self.current_label.clone().endorse(&self.privilege);
