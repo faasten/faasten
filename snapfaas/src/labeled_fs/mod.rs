@@ -93,8 +93,10 @@ pub fn create_dir(base_dir: Vec<PathComponent>, name: &str, label: DCLabel, cur_
     create_common(base_dir, name, label, cur_label, Directory::new().to_vec(), DirEntry::D)
 }
 
-pub fn create_faceted_dir(base_dir: Vec<PathComponent>, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
-    create_common(base_dir, name, label, cur_label, FacetedDirectory::new().to_vec(), DirEntry::FacetedD)
+pub fn create_faceted_dir(base_dir: Vec<PathComponent>, name: &str, cur_label: &mut DCLabel) -> Result<()> {
+    // It is reasonable to label the faceted directory itself public.
+    // Its facets act as security policies.
+    create_common(base_dir, name, DCLabel::public(), cur_label, FacetedDirectory::new().to_vec(), DirEntry::FacetedD)
 }
 
 /// create_file only fails when `cur_label` cannot flow to `label` or target directory's label

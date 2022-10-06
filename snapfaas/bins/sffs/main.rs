@@ -71,10 +71,11 @@ fn main() {
                     .takes_value(true)
                     .help("Endorse the creation with the given principal"))
                 .arg(Arg::with_name("faceted")
+                    .conflicts_with_all(&["secrecy", "integrity"])
                     .long("faceted")
                     .required(false)
                     .takes_value(false)
-                    .help("If present, create a faceted directory"))
+                    .help("If present, create a faceted directory labeled public with no overriding."))
         )
         .subcommand(
             SubCommand::with_name("mkfile")
@@ -160,11 +161,7 @@ fn main() {
             let i_clauses: Vec<&str> = sub_m.values_of("integrity").unwrap().collect();
             cur_label = input_to_endorsement(sub_m.value_of("endorse").unwrap());
             if sub_m.is_present("faceted") {
-                match labeled_fs::create_faceted_dir(
-                    base_dir,
-                    &name,
-                    input_to_dclabel([s_clauses, i_clauses]),
-                    &mut cur_label) {
+                match labeled_fs::create_faceted_dir(base_dir, &name, &mut cur_label) {
                     Err(labeled_fs::Error::BadPath) => {
                         eprintln!("Invalid path.");
                     },
