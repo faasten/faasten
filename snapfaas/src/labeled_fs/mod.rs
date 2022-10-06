@@ -249,7 +249,6 @@ fn create_common(
     obj_vec: Vec<u8>,
     entry_type: DirEntry,
 ) -> Result<()> {
-    println!("create_common {:?}", base_dir);
     let db = DBENV.open_db(None).unwrap();
     let mut txn = DBENV.begin_rw_txn().unwrap();
     let res = get_direntry_allocate(base_dir, cur_label, &mut txn, db).and_then(|labeled| -> Result<()> {
