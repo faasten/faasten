@@ -1,4 +1,5 @@
 const vsock = require("vsock");
+const path = require("path");
 const syscalls_pb = require("./syscalls_pb")
 
 class Syscall {
@@ -60,5 +61,118 @@ class Syscall {
             await this._recv(new syscalls_pb.ReadKeyResponse());
         return response.getValue();
     }
+
+    async read_dir(d) {
+        // TODO see what type is it
+        console.log(typeof d);
+        console.log(d);
+        const d = Buffer.from(d, "utf-8");
+        const readDir = new syscalls_pb.ReadDir();
+        readDir.setDir(d);
+        const req = new syscalls_pb.Syscall();
+        req.setReaddir(readDir);
+        await this._send(req);
+        const response =
+            await this._recv(new syscalls_pb.ReadDirResponse());
+        const l = response.getKeysList(); // TODO is it array?
+        return l.map(b => b.toString());
+    }
+
+    /* Label APIs */
+    async get_current_label() {
+        const label = new syscalls_pb.GetCurrentLabel();
+        const req = new syscalls_pb.Syscall();
+        req.setGetcurrentlabel(label);
+        await this._send(req);
+        const response =
+            await this._recv(new syscalls_pb.DcLabel());
+        return response;
+    }
+
+    async taint(label) {
+        const req = new syscalls_pb.Syscall();
+        req.setTaintwithlabel(label);
+        await this._send(req)
+        const response =
+            await this._recv(new syscalls_pb.DcLabel());
+        return response;
+    }
+
+    /**
+     * @type {syscalls_pb.Component} secrecy
+     */
+    // TODO
+    async declassify(secrecy) {}
+    /* End of Label APIs */
+
+    async invoke(f, payload) {
+        const invoke = new syscalls_pb.Invoke();
+        invoke.setFunction(f);
+        invoke.setPayload(payload);
+        const req = new syscalls_pb.Syscall();
+        req.setInvoke(invoke);
+        await this._send(req);
+        const response =
+            await this._recv(new syscalls_pb.InvokeResponse());
+        return response.getSuccess();
+    }
+
+    async fs_read(path) {
+        const fsRead = new syscalls_pb.FSRead();
+        fsRead.setPath(path);
+        const req = new syscalls_pb.Syscall();
+        req.setFsread(fsRead);
+        await this._send(req);
+        const response =
+            await this._recv(new syscalls_pb.ReadKeyResponse());
+        return response.getValue();
+    }
+
+    async fs_write(path, data) {
+        const fsWrite = new syscalls_pb.FSWrite();
+        fsWrite.setPath(path);
+        fsWrite.setData(data);
+        const req = new syscalls_pb.Syscall();
+        req.setFswrite(fsWrite);
+        await this._send(req);
+        const response =
+            await this._recv(new syscalls_pb.WriteKeyResponse());
+        return response.getSuccess();
+    }
+
+    /**
+     * @type {syscalls_pb.DcLabel} label
+     */
+    async fs_createdir(path, label=null) {
+        const dir = path.dirname(path);
+        const name = path.basename(path);
+        const fsDir = new syscalls_pb.FSCreateDir();
+        fsDir.setBasedir(dir);
+        fsDir.setName(name);
+        fsDir.setLabel(label);
+        const req = syscalls_pb.Syscall();
+        req.setFscreatedir(fsDir);
+        await this._send(req);
+        const response =
+            await this._recv(new syscalls_pb.WriteKeyResponse())
+        return response.getSuccess();
+    }
+
+
+
 }
 module.exports.Syscall = Syscall;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
