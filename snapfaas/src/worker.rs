@@ -33,6 +33,7 @@ impl Worker {
         vm_req_sender: Sender<Message>,
         func_req_sender: Sender<Message>,
         cid: u32,
+        mock_github: Option<String>,
     ) -> Self {
         let handle = thread::spawn(move || {
             let id = thread::current().id();
@@ -64,7 +65,7 @@ impl Worker {
                     }
                     Message::Request((req, rsp_sender, mut tsps)) => {
                         debug!("processing request to function {}", &req.function);
-                        
+
                         tsps.arrived = precise_time_ns();
 
                         let function_name = req.function.clone();
@@ -75,8 +76,15 @@ impl Worker {
                                 tsps.allocated = precise_time_ns();
                                 if !vm.is_launched() {
                                     // newly allocated VM is returned, launch it first
-                                    if let Err(e) = vm.launch(Some(func_req_sender.clone()), vm_listener_dup, cid, false, None) {
-                                        handle_vm_error(e);                                    
+                                    if let Err(e) = vm.launch(
+                                        Some(func_req_sender.clone()),
+                                        vm_listener_dup,
+                                        cid,
+                                        false,
+                                        None,
+                                        mock_github.as_ref().map(String::as_str))
+                                    {
+                                        handle_vm_error(e);
                                         let _ = rsp_sender.send(Response {
                                             status: RequestStatus::LaunchFailed,
                                         });

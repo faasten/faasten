@@ -28,6 +28,11 @@ fn main() {
         .version(crate_version!())
         .author(crate_authors!())
         .about("launch a single firerunner vm.")
+        .arg(Arg::with_name("mock github")
+            .long("mock_github")
+            .value_name("MOCK GITHUB ADDRESS")
+            .help("If present, use the mock GitHub service at the supplied address.")
+        )
         .arg(Arg::with_name("data")
             .long("data")
             .multiple(true)
@@ -266,7 +271,8 @@ fn main() {
     let _ = std::fs::remove_file(&vm_listener_path);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
     let force_exit = cmd_arguments.is_present("force_exit");
-    if let Err(e) = vm.launch(None, vm_listener, CID, force_exit, Some(odirect)) {
+    let mock_github = cmd_arguments.value_of("mock github");
+    if let Err(e) = vm.launch(None, vm_listener, CID, force_exit, Some(odirect), mock_github) {
         log::error!("unable to launch the VM: {:?}", e);
         snapfaas::unlink_unix_sockets();
     }
