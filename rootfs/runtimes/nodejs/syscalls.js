@@ -74,8 +74,9 @@ class Syscall {
         await this._send(req);
         const response =
             await this._recv(new syscalls_pb.ReadDirResponse());
-        const l = response.getKeysList(); // TODO is it array?
-        return l.map(b => b.toString());
+        // const l = response.getKeysList(); // TODO is it array?
+        // return l.map(b => b.toString());
+        return response.getKeysList_asB64();
     }
 
     /* Label APIs */
@@ -158,10 +159,105 @@ class Syscall {
         return response.getSuccess();
     }
 
+    /**
+     * @type {syscalls_pb.DcLabel} label
+     */
+    async fs_createfile(path, label=null) {
+        const dir = path.dirname(path);
+        const name = path.basename(path);
+        const fsFile = new syscalls_pb.FSCreateFile();
+        fsFile.setBasedir(dir);
+        fsFile.setName(name);
+        fsFile.setLabel(label);
+        const req = syscalls_pb.Syscall();
+        req.setFscreatefile(fsFile);
+        await this._send(req);
+        const response =
+            await this._recv(new syscalls_pb.WriteKeyResponse())
+        return response.getSuccess();
+    }
 
 
 }
 module.exports.Syscall = Syscall;
+
+
+class NewBlob {
+    constructor(fd, syscall) {
+        this.fd = fd;
+        this.syscall = syscall;
+    }
+
+    async write(data) {
+        const blob = syscalls_pb.BlobWrite();
+        blob.setFd(this.fd);
+        blob.setData(data);
+        const req = syscalls_pb.Syscall();
+        req.setWriteblob(blob);
+        await this.syscall._send(req);
+        const response =
+            await this.syscall._recv(new syscalls_pb.BlobResponse());
+        return response.getSuccess();
+    }
+
+    async finalize(data) {
+        const blob = syscalls_pb.BlobFinalize();
+        blob.setFd(this.fd);
+        blob.setData(data);
+        const req = syscalls_pb.Syscall();
+        req.setFinalizeblob(blob);
+        await this.syscall._send(req);
+        const response =
+            await this.syscall._recv(new syscalls_pb.BlobResponse());
+        return response.getData_asB64(); // convert to string
+    }
+}
+
+class Blob {
+    constructor(fd, syscall) {
+        this.fd = fd;
+        this.syscall = syscall;
+    }
+
+    async _blob_read(offset=null, length=null) {
+        const blob = syscalls_pb.BlobRead();
+        blob.setFd(this.fd);
+        blob.setOffset(offset);
+        blob.setLength(length);
+        const req = syscalls_pb.Syscall();
+        req.setReadblob(blob);
+        await this.syscall._send(req);
+        const response =
+            await this.syscall._recv(new syscalls_pb.BlobResponse());
+        if (response.getSuccess()) {
+            return response.getData(); // TODO or getData_asU8?
+        } else {
+            // TODO error handling
+        }
+    }
+
+    async read(size=null) {
+        let buf = Buffer.alloc(0);
+        if (size == null) {
+            return await this._blob_read();
+        } else {
+            while (size > 0) {
+                const data = await this._blob_read(size);
+                // reaches EOF
+                if (data.length == 0) {
+                    return buf;
+                }
+                // FIXME assume data is an u8 array
+                buf = Buffer.concat(buffer, data);
+                // FIXME offset?
+                offset += data.length;
+                size -= data.length;
+            }
+        }
+        return buf;
+    }
+}
+
 
 
 
