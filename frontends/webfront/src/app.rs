@@ -84,7 +84,7 @@ impl App {
             dbenv,
             default_db,
             blobstore,
-            pkey, 
+            pkey,
             pubkey,
             gh_creds,
             base_url,
@@ -147,7 +147,7 @@ impl App {
                 .with_additional_header("Access-Control-Allow-Origin", "*")
                 .with_additional_header("Access-Control-Allow-Headers", "Authorization, Content-type")
                 .with_additional_header("Access-Control-Allow-Methods", "*");
-            
+
         }
         rouille::router!(request,
             (GET) (/login/github) => {
@@ -191,6 +191,12 @@ impl App {
             (POST) (/assignments) => {
                 self.start_assignment(request)
             },
+            (POST) (/invoke) => {
+                self.invoke(request)
+            },
+            (POST) (/create_gate) => {
+                self.create_gate(request)
+            },
             _ => Ok(Response::empty_404())
         ).unwrap_or_else(|e| e).with_additional_header("Access-Control-Allow-Origin", "*")
     }
@@ -205,6 +211,83 @@ impl App {
         let txn = self.dbenv.begin_ro_txn().unwrap();
         let github: Option<String> = txn.get(*self.default_db, &format!("users/github/for/user/{}", login).as_bytes()).ok().map(|l| String::from_utf8_lossy(l).to_string());
         Ok(Response::json(&User { login, github }))
+    }
+
+    fn create_gate(&self, request: &Request) -> Result<Response, Response> {
+        let login = self.verify_jwt(request)?;
+
+        let conn = &mut self.conn.get().map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to get snapfaas connection"
+            })).with_status_code(500))?;
+        #[derive(Debug, Deserialize)]
+        struct Input {
+            gate: String,
+        }
+        let input_json: Input = rouille::input::json_input(request)
+            .map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() }))
+                .with_status_code(400))?;
+
+        let req = request::Request {
+            function: format!("/{}/create_gate", login),
+            payload: serde_json::json!({
+                "gate": input_json.gate,
+            }),
+            label: labeled::dclabel::DCLabel::new([[login]], true),
+            data_handles: Default::default(),
+        };
+        request::write_u8(&req.to_vec(), conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to send request"
+            })).with_status_code(500))?;
+
+        let resp_buf = request::read_u8(conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to read response"
+            })).with_status_code(500))?;
+        let rsp: request::Response = serde_json::from_slice(&resp_buf).unwrap();
+        match rsp.status {
+            request::RequestStatus::SentToVM(response) => Ok(Response::text(response)),
+            _ => Err(Response::json(&serde_json::json!({"error": format!("{:?}", rsp.status)}))),
+        }
+    }
+
+    fn invoke(&self, request: &Request) -> Result<Response, Response> {
+        let login = self.verify_jwt(request)?;
+
+        let conn = &mut self.conn.get().map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to get snapfaas connection"
+            })).with_status_code(500))?;
+        #[derive(Debug, Deserialize)]
+        struct Input {
+            function: String,
+            payload: serde_json::Value,
+        }
+        let input_json: Input = rouille::input::json_input(request)
+            .map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() }))
+                .with_status_code(400))?;
+
+        let req = request::Request {
+            function: input_json.function,
+            payload: input_json.payload,
+            label: labeled::dclabel::DCLabel::new([[login]], true),
+            data_handles: Default::default(),
+        };
+        request::write_u8(&req.to_vec(), conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to send request"
+            })).with_status_code(500))?;
+
+        let resp_buf = request::read_u8(conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to read response"
+            })).with_status_code(500))?;
+        let rsp: request::Response = serde_json::from_slice(&resp_buf).unwrap();
+        match rsp.status {
+            request::RequestStatus::SentToVM(response) => Ok(Response::text(response)),
+            _ => Err(Response::json(&serde_json::json!({"error": format!("{:?}", rsp.status)}))),
+        }
     }
 
     fn assignments(&self, request: &Request) -> Result<Response, Response> {

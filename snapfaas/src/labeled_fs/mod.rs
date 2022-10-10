@@ -4,7 +4,8 @@ use rand::{self, RngCore};
 use lazy_static;
 use lmdb;
 use lmdb::{Transaction, WriteFlags};
-use labeled::dclabel::DCLabel;
+use labeled::dclabel::{Component, DCLabel};
+use labeled::Label;
 
 mod dir;
 mod file;
@@ -59,7 +60,7 @@ pub fn read(path: &str, cur_label: &mut DCLabel) -> Result<Vec<u8>> {
                 let file = get_val_db(entry.uid(), &txn, db).map(File::from_vec).unwrap();
                 Ok(file.data())
             },
-            DirEntry::D => Err(Error::BadPath),
+            _ => Err(Error::BadPath),
         }
     });
     txn.commit().unwrap();
@@ -77,7 +78,7 @@ pub fn list(path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
                 let dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
                 Ok(dir.list())
             },
-            DirEntry::F => Err(Error::BadPath),
+            _ => Err(Error::BadPath),
         }
     });
     txn.commit().unwrap();
@@ -94,8 +95,8 @@ pub fn create_file(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut D
     create_common(base_dir, name, label, cur_label, File::new().to_vec(), DirEntry::F)
 }
 
-/// write fails when `cur_label` cannot flow to the target file's label 
-pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> { 
+/// write fails when `cur_label` cannot flow to the target file's label
+pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> {
     let db = DBENV.open_db(None).unwrap();
     let mut txn = DBENV.begin_rw_txn().unwrap();
     let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
@@ -107,7 +108,38 @@ pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> {
                 let _ = put_val_db(entry.uid(), file.to_vec(), &mut txn, db);
                 Ok(())
             }
-            DirEntry::D => Err(Error::BadPath),
+            _ => Err(Error::BadPath),
+        }
+    });
+    txn.commit().unwrap();
+    res
+}
+
+/// A gate is a entry type supported by the file system. A gate allows the invoker to invoke
+/// the function the gate points to with extra privilege. A gate path should end with the
+/// function name it points to. A gate label's secrecy should be the extra privlege.
+/// A gate label's integrity controls who can invoke the gate. Only when the invoker's
+/// integrity implies the gate's integrity is the invocation allowed.
+pub fn create_gate(base_dir: &str, function: &str, label: DCLabel, cur_label: &mut DCLabel, privilege: Component) -> Result<()> {
+    // privilege must imply label.secrecy, i.e. label must flow to <privilege, true>
+    if !label.can_flow_to(&DCLabel::new(privilege, true)) {
+        return Err(Error::BadTargetLabel);
+    }
+    // Vec::new() is a dummy argument because there is no gate object but only gate entry.
+    create_common(base_dir, function, label, cur_label, Vec::new(), DirEntry::Gate)
+}
+
+/// See create_gate.
+pub fn invoke_gate(path: &str, cur_label: &mut DCLabel) -> Result<Component> {
+    let db = DBENV.open_db(None).unwrap();
+    let txn = DBENV.begin_ro_txn().unwrap();
+    let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<Component> {
+        let entry = labeled.unlabel_invoke_check(cur_label)?;
+        match entry.entry_type() {
+            DirEntry::Gate => {
+                Ok(entry.label().secrecy.clone())
+            },
+            _ => Err(Error::BadPath),
         }
     });
     txn.commit().unwrap();
@@ -151,12 +183,12 @@ where T: Transaction
     for component in it {
         let entry = labeled.unlabel(cur_label);
         match entry.entry_type() {
-            DirEntry::F => {
-                return Err(Error::BadPath);
-            },
             DirEntry::D => {
                 let cur_dir = get_val_db(entry.uid(), txn, db).map(Directory::from_vec).unwrap();
                 labeled = cur_dir.get(component.to_str().unwrap())?.clone();
+            },
+            _ => {
+                return Err(Error::BadPath);
             },
         }
     }
@@ -178,15 +210,11 @@ fn create_common(
         match entry.entry_type() {
             DirEntry::D => {
                 let mut dir = get_val_db(entry.uid(), &txn, db).map(Directory::from_vec).unwrap();
-                let mut uid = get_uid();
-                while put_val_db_no_overwrite(uid, obj_vec.clone(), &mut txn, db).is_err() {
-                    uid = get_uid();
-                }
-                dir.create(name, cur_label, entry_type, label, uid)?;
+                dir.create(name, cur_label, obj_vec, entry_type, label, &mut txn, db)?;
                 let _ = put_val_db(entry.uid(), dir.to_vec(), &mut txn, db);
                 Ok(())
             },
-            DirEntry::F => Err(Error::BadPath),
+            _ => Err(Error::BadPath),
         }
     });
     txn.commit().unwrap();
@@ -256,7 +284,7 @@ mod tests {
         let target_label = DCLabel::new([["user2"], ["func2"]], [["func2"]]);
         assert!(create_file("/func2", "mydata.txt", target_label, &mut cur_label).is_ok());
         assert_eq!(read("/func2/mydata.txt", &mut cur_label).unwrap(), Vec::<u8>::new());
-    
+
         // write read
         let text = "test message";
         let data = text.as_bytes().to_vec();

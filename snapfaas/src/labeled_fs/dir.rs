@@ -33,18 +33,32 @@ impl Directory {
         &mut self,
         name: &str,
         cur_label: &DCLabel,
+        obj_vec: Vec<u8>,
         entry_type: DirEntry,
         label: DCLabel,
-        uid: u64
-    ) -> Result<u64> {
+        txn: &mut lmdb::RwTransaction,
+        db: lmdb::Database,
+    ) -> Result<()> {
         if cur_label.can_flow_to(&label) {
             if let Some(_) = self.mappings.get(name) {
                 Err(Error::BadPath)
             } else {
-                let new_entry = LabeledDirEntry::new(label, entry_type, uid);
-                let uid = new_entry.uid();
-                let _ = self.mappings.insert(name.to_string(), new_entry);
-                Ok(uid)
+                match entry_type {
+                    DirEntry::Gate => {
+                        // The Gate entry type doesn't have an object
+                        let new_entry = LabeledDirEntry::new(label, entry_type, 0u64);
+                        let _ = self.mappings.insert(name.to_string(), new_entry);
+                    },
+                    _ => {
+                        let mut uid = super::get_uid();
+                        while super::put_val_db_no_overwrite(uid, obj_vec.clone(), txn, db).is_err() {
+                            uid = super::get_uid();
+                        }
+                        let new_entry = LabeledDirEntry::new(label, entry_type, uid);
+                        let _ = self.mappings.insert(name.to_string(), new_entry);
+                    },
+                }
+                Ok(())
             }
         } else {
             Err(Error::BadTargetLabel)
