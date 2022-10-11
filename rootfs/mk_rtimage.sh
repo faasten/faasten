@@ -35,18 +35,12 @@ function print_runtimes() {
 function print_options() {
   echo
   echo "Options:"
-  echo -e "    --local-snapfaas PATH\tpath of the local snapfaas repository's root"
-  echo -e "    --force-protoc\tforce building protobuf definitions for the targer runtime"
+  echo -e "    --force-protoc\tforce building protobuf definitions for the target runtime"
 }
 
 PARAMS=""
 while (( "$#" )); do
   case "$1" in
-    --local-snapfaas)
-      shift
-      LOCALPATH="$1"
-      shift
-      ;;
     --force-protoc)
       FORCE='-B'
       shift
@@ -85,7 +79,7 @@ fi
 RUNTIME=$(realpath $RUNTIME)
 MYDIR=$(dirname $(realpath $0))
 
-make LOCALPATH=$LOCALPATH $FORCE -C $RUNTIME
+make $FORCE -C $RUNTIME
 make -C $MYDIR/common
 
 ## Create a temporary directory to mount the filesystem
