@@ -61,7 +61,7 @@ system image. The runtimes are either `nodejs` or `python3`. An example basic
 usage is
 
 ```bash
-./mk_rtimage.sh python3 hello-python3.ext4
+./mk_rtimage.sh python3 python3.ext4
 ```
 
 Also see [snapfaas-images](https://www.github.com/princeton-sns/snapfaas-images)
@@ -80,7 +80,7 @@ to try out. It will produce an `output.ext2` file as the app image.
 # run hello function
 sudo target/debug/singlevm \
     --kernel resources/images/vmlinux-4.20.0 \
-    --rootfs rootfs/hello-python3.ext4 \
+    --rootfs rootfs/python3.ext4 \
     --appfs /path/to/app/image/output.ext2 \
     --mem_size 128 \
     --vcpu_count 1 < resources/hello.json
@@ -91,7 +91,7 @@ It is good for testing out new language and new applications.
 
 The command boots a virtual machine with one VCPU and 128MB memory using
 `resources/images/vmlinux-4.20.0`
-as the uncompressed kernel and a root file system named `hello-python3.ext4` that contains
+as the uncompressed kernel and a root file system named `python3.ext4` that contains
 the Python3 hello world function.
 The virtual machine manager will listen on `stdin` for line-delimited json requests and
 forward them into the virtual machine. `resources/hello.json` contains example one-line
