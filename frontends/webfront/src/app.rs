@@ -15,6 +15,7 @@ use jwt::{PKeyWithDigest, SignWithKey, VerifyWithKey};
 use openssl::pkey::{self, PKey};
 use lmdb::{Transaction};
 
+use serde_json::Value;
 use snapfaas::blobstore::Blobstore;
 use snapfaas::request;
 
@@ -139,7 +140,6 @@ impl App {
 
 impl App {
     pub fn handle(&mut self, request: &Request) -> Response {
-        println!("{:?}", request);
         if request.method().to_uppercase().as_str() == "OPTIONS" {
             return Response::empty_204()
                 .with_additional_header("Access-Control-Allow-Origin", "*")
@@ -180,6 +180,9 @@ impl App {
             (POST) (/put) => {
                 self.put(request)
             },
+            (DELETE) (/delete) => {
+                self.delete(request)
+            },
             (POST) (/put_blob) => {
                 self.put_blob(request)
             },
@@ -188,6 +191,9 @@ impl App {
             },
             (POST) (/assignments) => {
                 self.start_assignment(request)
+            },
+            (POST) (/invoke/{function_name}) => {
+                self.invoke(request, function_name)
             },
             _ => Ok(Response::empty_404())
         ).unwrap_or_else(|e| e).with_additional_header("Access-Control-Allow-Origin", "*")
@@ -216,6 +222,45 @@ impl App {
         Ok(res)
     }
 
+    fn invoke(&self, request: &Request, function_name: String) -> Result<Response, Response> {
+        let login = self.verify_jwt(request)?;
+
+        let conn = &mut self.conn.get().map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to get snapfaas connection"
+            })).with_status_code(500))?;
+        let input_json: Value = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
+
+        let txn = self.dbenv.begin_ro_txn().unwrap();
+        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+        txn.commit().expect("commit");
+        if !(admins.contains(&login) || ["start_assignment", "add_to_repo", "delete_repo"].contains(&function_name.as_str())) {
+            return Err(Response::json(&serde_json::json!({ "error": "user not authorized to make request" })).with_status_code(401))
+        }
+
+        let req = request::Request {
+            function: function_name,
+            payload: serde_json::json!({
+                "payload": input_json,
+                "login": login,
+            }),
+        };
+        request::write_u8(&req.to_vec(), conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to send request"
+            })).with_status_code(500))?;
+
+        let resp_buf = request::read_u8(conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to read response"
+            })).with_status_code(500))?;
+        let rsp: request::Response = serde_json::from_slice(&resp_buf).unwrap();
+        match rsp.status {
+            request::RequestStatus::SentToVM(response) => Ok(Response::text(response)),
+            _ => Err(Response::json(&serde_json::json!({"error": format!("{:?}", rsp.status)}))),
+        }
+    }
+
     fn start_assignment(&self, request: &Request) -> Result<Response, Response> {
         let login = self.verify_jwt(request)?;
 
@@ -223,7 +268,7 @@ impl App {
             Response::json(&serde_json::json!({
                 "error": "failed to get snapfaas connection"
             })).with_status_code(500))?;
-        #[derive(Debug, Deserialize)]
+        #[derive(Debug, Serialize, Deserialize)]
         struct Input {
             assignment: String,
             users: Vec<String>,
@@ -255,6 +300,9 @@ impl App {
                 "users": input_json.users,
                 "course": input_json.course,
                 "gh_handles": gh_handles,
+
+                "payload": input_json,
+                "login": login
             }),
         };
         request::write_u8(&req.to_vec(), conn).map_err(|_|
@@ -336,7 +384,6 @@ impl App {
             while let Some(mut field) = input.next() {
                 let mut data = Vec::new();
                 field.data.read_to_end(&mut data).expect("read");
-                println!("{:?}", field.headers.name);
                 txn.put(*self.default_db, &field.headers.name.as_bytes(), &data.as_slice(), lmdb::WriteFlags::empty()).expect("store data");
             }
             txn.commit().expect("commit");
@@ -344,6 +391,30 @@ impl App {
         } else {
             txn.abort();
             Response::empty_400()
+        };
+        Ok(res)
+    }
+
+    fn delete(&self, request: &Request) -> Result<Response, Response> {
+        let login = self.verify_jwt(request)?;
+
+        let res = if let Some(key) = request.get_param("key") {
+            let mut txn = self.dbenv.begin_rw_txn().unwrap();
+            let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+            if admins.iter().find(|l| **l == login).is_some() {
+                let dres = txn.del(*self.default_db, &key, None);
+                txn.commit().expect("commit");
+                match dres {
+                    Ok(()) => Response::empty_204(),
+                    Err(lmdb::Error::NotFound) => Response::empty_404(),
+                    _ => panic!("delete {:?}", dres),
+                }
+            } else {
+                txn.abort();
+                Response::empty_400()
+            }
+        } else {
+            Response::empty_404()
         };
         Ok(res)
     }
