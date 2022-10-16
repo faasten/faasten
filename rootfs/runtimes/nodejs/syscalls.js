@@ -63,11 +63,9 @@ class Syscall {
     }
 
     async read_dir(d) {
-        // TODO see what type is it
-        console.log(typeof d);
-        console.log(d);
-        const d = Buffer.from(d, "utf-8");
+        // const dir = Buffer.from(d, "utf-8");
         const readDir = new syscalls_pb.ReadDir();
+        // readDir.setDir(dir);
         readDir.setDir(d);
         const req = new syscalls_pb.Syscall();
         req.setReaddir(readDir);
@@ -118,9 +116,9 @@ class Syscall {
         return response.getSuccess();
     }
 
-    async fs_read(path) {
+    async fs_read(p) {
         const fsRead = new syscalls_pb.FSRead();
-        fsRead.setPath(path);
+        fsRead.setPath(p);
         const req = new syscalls_pb.Syscall();
         req.setFsread(fsRead);
         await this._send(req);
@@ -129,9 +127,9 @@ class Syscall {
         return response.getValue();
     }
 
-    async fs_write(path, data) {
+    async fs_write(p, data) {
         const fsWrite = new syscalls_pb.FSWrite();
-        fsWrite.setPath(path);
+        fsWrite.setPath(p);
         fsWrite.setData(data);
         const req = new syscalls_pb.Syscall();
         req.setFswrite(fsWrite);
@@ -144,14 +142,14 @@ class Syscall {
     /**
      * @type {syscalls_pb.DcLabel} label
      */
-    async fs_createdir(path, label=null) {
-        const dir = path.dirname(path);
-        const name = path.basename(path);
+    async fs_createdir(p, label=null) {
+        const dir = path.dirname(p);
+        const name = path.basename(p);
         const fsDir = new syscalls_pb.FSCreateDir();
         fsDir.setBasedir(dir);
         fsDir.setName(name);
         fsDir.setLabel(label);
-        const req = syscalls_pb.Syscall();
+        const req = new syscalls_pb.Syscall();
         req.setFscreatedir(fsDir);
         await this._send(req);
         const response =
@@ -162,14 +160,14 @@ class Syscall {
     /**
      * @type {syscalls_pb.DcLabel} label
      */
-    async fs_createfile(path, label=null) {
-        const dir = path.dirname(path);
-        const name = path.basename(path);
+    async fs_createfile(p, label=null) {
+        const dir = path.dirname(p);
+        const name = path.basename(p);
         const fsFile = new syscalls_pb.FSCreateFile();
         fsFile.setBasedir(dir);
         fsFile.setName(name);
         fsFile.setLabel(label);
-        const req = syscalls_pb.Syscall();
+        const req = new syscalls_pb.Syscall();
         req.setFscreatefile(fsFile);
         await this._send(req);
         const response =
@@ -189,10 +187,10 @@ class NewBlob {
     }
 
     async write(data) {
-        const blob = syscalls_pb.BlobWrite();
+        const blob = new syscalls_pb.BlobWrite();
         blob.setFd(this.fd);
         blob.setData(data);
-        const req = syscalls_pb.Syscall();
+        const req = new syscalls_pb.Syscall();
         req.setWriteblob(blob);
         await this.syscall._send(req);
         const response =
@@ -201,10 +199,10 @@ class NewBlob {
     }
 
     async finalize(data) {
-        const blob = syscalls_pb.BlobFinalize();
+        const blob = new syscalls_pb.BlobFinalize();
         blob.setFd(this.fd);
         blob.setData(data);
-        const req = syscalls_pb.Syscall();
+        const req = new syscalls_pb.Syscall();
         req.setFinalizeblob(blob);
         await this.syscall._send(req);
         const response =
@@ -220,11 +218,11 @@ class Blob {
     }
 
     async _blob_read(offset=null, length=null) {
-        const blob = syscalls_pb.BlobRead();
+        const blob = new syscalls_pb.BlobRead();
         blob.setFd(this.fd);
         blob.setOffset(offset);
         blob.setLength(length);
-        const req = syscalls_pb.Syscall();
+        const req = new syscalls_pb.Syscall();
         req.setReadblob(blob);
         await this.syscall._send(req);
         const response =
