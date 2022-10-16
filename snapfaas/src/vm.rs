@@ -97,12 +97,13 @@ pub enum Error {
     RootfsNotExist,
     AppfsNotExist,
     LoadDirNotExist,
-    IOError(std::io::Error),
+    DB(lmdb::Error),
+    BlobError(std::io::Error),
 }
 
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
-        Error::IOError(e)
+        Error::BlobError(e)
     }
 }
 
@@ -292,7 +293,7 @@ impl Vm {
         })?;
 
         let rest_client = reqwest::blocking::Client::new();
-        
+
         let handle = VmHandle {
             conn,
             rest_client,
@@ -411,9 +412,13 @@ impl Vm {
         use syscalls::syscall::Syscall as SC;
         use syscalls::Syscall;
 
-        
-        let default_db = DBENV.open_db(None).unwrap();
 
+        let default_db = DBENV.open_db(None);
+        if default_db.is_err() {
+            return Err(Error::DB(default_db.unwrap_err()));
+        }
+
+        let default_db = default_db.unwrap();
         loop {
             let buf = {
                 let mut lenbuf = [0;4];
@@ -492,12 +497,10 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsWrite(req)) => {
-                    println!("fsw\t{:?}", self.current_label);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::write(req.path.as_str(), req.data, &mut self.current_label).is_ok(),
                     }
                     .encode_to_vec();
-                    println!("fs2\t{:?}", self.current_label);
 
                     self.send_into_vm(result)?;
                 },
@@ -574,14 +577,12 @@ impl Vm {
                 },
                 Some(SC::GetCurrentLabel(_)) => {
                     let result = dc_label_to_proto_label(&self.current_label);
-                    println!("gcl\t{:?} {:?}", self.current_label, result);
                     let result = result.encode_to_vec();
 
                     self.send_into_vm(result)?;
                 }
                 Some(SC::TaintWithLabel(label)) => {
                     let dclabel = proto_label_to_dc_label(label);
-                    println!("twl\t{:?} {:?}", self.current_label, dclabel);
                     self.current_label = self.current_label.clone().lub(dclabel);
                     let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
 
@@ -589,7 +590,6 @@ impl Vm {
                 }
                 Some(SC::ExercisePrivilege(target)) => {
                     let dclabel = proto_label_to_dc_label(target);
-                    println!("priv\t{:?} {:?}", self.current_label, dclabel);
                     if self.current_label.can_flow_to_with_privilege(&dclabel, &self.privilege) {
                         self.current_label = dclabel;
                     }
@@ -725,7 +725,7 @@ impl Vm {
                 },
                 None => {
                     // Should never happen, so just ignore??
-                    eprintln!("received an unknown syscall");
+                    error!("received an unknown syscall");
                 },
             }
         }
