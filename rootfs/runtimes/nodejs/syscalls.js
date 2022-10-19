@@ -63,18 +63,15 @@ class Syscall {
     }
 
     async read_dir(d) {
-        // const dir = Buffer.from(d, "utf-8");
         const readDir = new syscalls_pb.ReadDir();
-        // readDir.setDir(dir);
-        readDir.setDir(d);
+        readDir.setDir(Buffer.from(d, "utf-8"));
         const req = new syscalls_pb.Syscall();
         req.setReaddir(readDir);
         await this._send(req);
         const response =
             await this._recv(new syscalls_pb.ReadDirResponse());
-        // const l = response.getKeysList(); // TODO is it array?
-        // return l.map(b => b.toString());
-        return response.getKeysList_asB64();
+        const l = response.getKeysList();
+        return l.map(b => Buffer.from(b).toString("utf-8"));
     }
 
     /* Label APIs */
@@ -100,9 +97,74 @@ class Syscall {
     /**
      * @type {syscalls_pb.Component} secrecy
      */
-    // TODO
-    async declassify(secrecy) {}
+    async declassify(secrecy) { /* TODO */ }
     /* End of Label APIs */
+
+    /* Github APIs */
+    async github_rest_get(route, token, toblob=false) {
+        const rest = new syscalls_pb.GithubRest();
+        rest.setVerb(syscalls_pb.HttpVerb.GET);
+        rest.setRoute(route);
+        rest.setBody(null);
+        rest.setToblob(toblob);
+        rest.setToken(token);
+        const req = new syscalls_pb.Syscall();
+        req.setGithubrest(rest);
+        await this._send(req);
+        const response =
+            await this._recv(new syscalls_pb.GithubRestResponse());
+        return response;
+    }
+
+    async github_rest_post(route, body, token, toblob=false) {
+        const bodyJson = JSON.stringify(body);
+        const rest = new syscalls_pb.GithubRest();
+        rest.setVerb(syscalls_pb.HttpVerb.POST);
+        rest.setRoute(route);
+        rest.setBody(bodyJson);
+        rest.setToblob(toblob);
+        rest.setToken(token);
+        const req = new syscalls_pb.Syscall();
+        req.setGithubrest(rest);
+        await this._send(req);
+        const response =
+            await this._recv(new syscalls_pb.GithubRestResponse());
+        return response;
+    }
+
+    async github_rest_put(route, body, token, toblob=false) {
+        const bodyJson = JSON.stringify(body);
+        const rest = new syscalls_pb.GithubRest();
+        rest.setVerb(syscalls_pb.HttpVerb.PUT);
+        rest.setRoute(route);
+        rest.setBody(bodyJson);
+        rest.setToblob(toblob);
+        rest.setToken(token);
+        const req = new syscalls_pb.Syscall();
+        req.setGithubrest(rest);
+        await this._send(req);
+        const response =
+            await this._recv(new syscalls_pb.GithubRestResponse());
+        return response;
+    }
+
+    async github_rest_delete(route, body, token, toblob=false) {
+        const bodyJson = JSON.stringify(body);
+        const rest = new syscalls_pb.GithubRest();
+        rest.setVerb(syscalls_pb.HttpVerb.DELETE);
+        rest.setRoute(route);
+        rest.setBody(bodyJson);
+        rest.setToblob(toblob);
+        rest.setToken(token);
+        const req = new syscalls_pb.Syscall();
+        req.setGithubrest(rest);
+        await this._send(req);
+        const response =
+            await this._recv(new syscalls_pb.GithubRestResponse());
+        return response;
+    }
+    /* End of Github APIs */
+
 
     async invoke(f, payload) {
         const invoke = new syscalls_pb.Invoke();
@@ -207,7 +269,8 @@ class NewBlob {
         await this.syscall._send(req);
         const response =
             await this.syscall._recv(new syscalls_pb.BlobResponse());
-        return response.getData_asB64(); // convert to string
+        const buf = Buffer.from(response.getData());
+        return buf.toString("utf-8");
     }
 }
 
@@ -245,9 +308,8 @@ class Blob {
                 if (data.length == 0) {
                     return buf;
                 }
-                // FIXME assume data is an u8 array
+                // assume data is an u8 array
                 buf = Buffer.concat(buffer, data);
-                // FIXME offset?
                 offset += data.length;
                 size -= data.length;
             }
