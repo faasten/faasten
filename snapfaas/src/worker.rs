@@ -27,7 +27,17 @@ pub struct Worker {
     pub thread: JoinHandle<()>,
 }
 
-fn handle_request(req: Request, rsp_sender: Sender<Response>, func_req_sender: Sender<Message>, vm_req_sender: Sender<Message>, vm_listener: UnixListener, mut tsps: RequestTimestamps, stat: &mut metrics::WorkerMetrics, cid: u32) {
+fn handle_request(
+    req: Request,
+    rsp_sender: Sender<Response>,
+    func_req_sender: Sender<Message>,
+    vm_req_sender: Sender<Message>,
+    vm_listener: UnixListener,
+    mut tsps: RequestTimestamps,
+    stat: &mut metrics::WorkerMetrics,
+    cid: u32,
+    mock_github: Option<&str>
+) {
     debug!("processing request to function {}", &req.function);
 
     tsps.arrived = precise_time_ns();
@@ -47,7 +57,13 @@ fn handle_request(req: Request, rsp_sender: Sender<Response>, func_req_sender: S
                 tsps.allocated = precise_time_ns();
                 if !vm.is_launched() {
                     // newly allocated VM is returned, launch it first
-                    if let Err(e) = vm.launch(Some(func_req_sender.clone()), vm_listener.try_clone().expect("clone unix listener"), cid, false, None) {
+                    if let Err(e) = vm.launch(
+                        Some(func_req_sender.clone()),
+                        vm_listener.try_clone().expect("clone unix listener"),
+                        cid, false,
+                        None,
+                        mock_github
+                    ) {
                         handle_vm_error(e);
                         let _ = rsp_sender.send(Response {
                             status: RequestStatus::LaunchFailed,
@@ -64,7 +80,7 @@ fn handle_request(req: Request, rsp_sender: Sender<Response>, func_req_sender: S
                 debug!("VM is launched");
                 tsps.launched = precise_time_ns();
 
-                match vm.process_req(req.payload.clone()) {
+                match vm.process_req(req.clone()) {
                     Ok(rsp) => {
                         tsps.completed = precise_time_ns();
                         // TODO: output are currently ignored
@@ -149,7 +165,9 @@ impl Worker {
                         return;
                     }
                     Message::Request((req, rsp_sender, tsps)) => {
-                        handle_request(req, rsp_sender, func_req_sender.clone(), vm_req_sender.clone(), vm_listener_dup, tsps, &mut stat, cid)
+                        handle_request(req, rsp_sender, func_req_sender.clone(), vm_req_sender.clone(),
+                            vm_listener_dup, tsps, &mut stat, cid,
+                            mock_github.as_ref().map(String::as_str))
                     }
                     _ => {
                         error!("[Worker {:?}] Invalid message: {:?}", id, msg);

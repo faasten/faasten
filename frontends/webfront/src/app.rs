@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::Write;
 use std::sync::Arc;
@@ -85,7 +86,7 @@ impl App {
             dbenv,
             default_db,
             blobstore,
-            pkey, 
+            pkey,
             pubkey,
             gh_creds,
             base_url,
@@ -147,7 +148,7 @@ impl App {
                 .with_additional_header("Access-Control-Allow-Origin", "*")
                 .with_additional_header("Access-Control-Allow-Headers", "Authorization, Content-type")
                 .with_additional_header("Access-Control-Allow-Methods", "*");
-            
+
         }
         rouille::router!(request,
             (GET) (/login/github) => {
@@ -246,6 +247,8 @@ impl App {
                 "payload": input_json,
                 "login": login,
             }),
+            label: labeled::dclabel::DCLabel::public(),
+            data_handles: HashMap::new(),
         };
         request::write_u8(&req.to_vec(), conn).map_err(|_|
             Response::json(&serde_json::json!({
