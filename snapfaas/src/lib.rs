@@ -12,6 +12,8 @@ pub mod metrics;
 pub mod firecracker_wrapper;
 pub mod blobstore;
 pub mod labeled_fs;
+pub mod cli_utils;
+pub mod github;
 
 use std::string::String;
 use std::fs::{self, File};

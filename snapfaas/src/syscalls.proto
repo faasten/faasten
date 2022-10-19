@@ -4,7 +4,7 @@ package snapfaas.syscalls;
 
 message Invoke {
   string function = 1;
-  string payload = 2;
+  Request request = 2;
 }
 
 message InvokeResponse {
@@ -30,6 +30,7 @@ message DcLabel {
 
 message Request {
   string payload = 1;
+  map<string, string> dataHandles = 2;
 }
 
 message Response {
@@ -73,6 +74,7 @@ message GithubRest {
   string route = 2;
   optional string body = 3;
   bool toblob = 4;
+  string token = 5;
 }
 
 message GithubRestResponse {
@@ -102,10 +104,6 @@ message FSCreateFile {
   string baseDir = 1;
   string name = 2;
   DcLabel label = 3;
-}
-
-message ExercisePrivilege {
-  DcLabel target = 1;
 }
 
 message BlobCreate {
@@ -163,5 +161,6 @@ message Syscall {
     BlobRead readBlob = 17;
     BlobClose closeBlob = 18;
     ReadDir readDir = 19;
+    Component declassify = 20;
   }
 }

@@ -25,6 +25,8 @@ impl r2d2::ManageConnection for SnapFaasManager {
         let req = request::Request {
             function: String::from("ping"),
             payload: serde_json::Value::Null,
+            label: labeled::dclabel::DCLabel::public(),
+            data_handles: Default::default(),
         };
         request::write_u8(&req.to_vec(), conn)?;
         request::read_u8(conn)?;
@@ -93,6 +95,8 @@ impl App {
                 let req = request::Request {
                     function: "gh_repo".to_string(),
                     payload: event_body.into(),
+                    label: labeled::dclabel::DCLabel::public(),
+                    data_handles: Default::default(),
                 };
 
                 let conn = &mut self.conn.get().expect("Lock failed");

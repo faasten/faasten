@@ -18,3 +18,4 @@ clap = "^2.33.0"
 httpserver = { path = "../httpserver" } 
 snapfaas = { path = "../../snapfaas" }
 r2d2 = "0.8.9"
+labeled = { git = "https://github.com/alevy/labeled" }

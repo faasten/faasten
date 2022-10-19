@@ -24,3 +24,4 @@ lmdb-rkv = "0.14.0"
 regex = "1.5.4"
 snapfaas = { path = "../../snapfaas" }
 r2d2 = "0.8.9"
+labeled = { git = "https://github.com/alevy/labeled" }

@@ -1,6 +1,5 @@
 //! Host-side VM handle that transfer data in and out of the VM through VSOCK socket and
 //! implements syscall API
-use std::env;
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Stdio;
@@ -12,7 +11,6 @@ use std::collections::{HashMap, HashSet};
 
 use log::{debug, error};
 use tokio::process::{Child, Command};
-use serde_json::Value;
 
 use crate::configs::FunctionConfig;
 use crate::message::Message;
@@ -21,10 +19,6 @@ use crate::request::Request;
 use crate::labeled_fs::{self, DBENV};
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
-const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
-const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
-const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
-const USER_AGENT: &str = "snapfaas";
 
 use labeled::dclabel::{Clause, Component, DCLabel};
 use labeled::{Label, HasPrivilege};
@@ -90,19 +84,19 @@ pub enum Error {
     VsockListen(std::io::Error),
     VsockWrite(std::io::Error),
     VsockRead(std::io::Error),
-    HttpReq(reqwest::Error),
     AuthTokenInvalid,
     AuthTokenNotExist,
     KernelNotExist,
     RootfsNotExist,
     AppfsNotExist,
     LoadDirNotExist,
-    IOError(std::io::Error),
+    DB(lmdb::Error),
+    BlobError(std::io::Error),
 }
 
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
-        Error::IOError(e)
+        Error::BlobError(e)
     }
 }
 
@@ -118,7 +112,7 @@ pub struct OdirectOption {
 struct VmHandle {
     conn: UnixStream,
     //currently every VM instance opens a connection to the REST server
-    rest_client: reqwest::blocking::Client,
+    gh_client: crate::github::Client,
     #[allow(dead_code)]
     // This field is never used, but we need to it make sure the Child isn't dropped and, thus,
     // killed, before the VmHandle is dropped.
@@ -160,8 +154,8 @@ impl Vm {
             function_config,
             // We should also probably have a clearance to mitigate side channel attacks, but
             // meh for now...
-            /// Starting label with public secrecy and integrity has app-name
-            current_label: DCLabel::new(true, [[function_name.clone()]]),
+            // start with the public label
+            current_label: DCLabel::new(true, true),
             privilege: Component::formula([[function_name]]),
             handle: None,
             blobstore: Default::default(),
@@ -185,6 +179,7 @@ impl Vm {
         cid: u32,
         force_exit: bool,
         odirect: Option<OdirectOption>,
+        mock_github: Option<&str>,
     ) -> Result<(), Error> {
         let function_config = &self.function_config;
         let mem_str = function_config.memory.to_string();
@@ -265,7 +260,7 @@ impl Vm {
                 .map_err(|e| Error::ProcessSpawn(e))?;
 
             if force_exit {
-                let output = vm_process .wait_with_output().await
+                let output = vm_process.wait_with_output().await
                     .expect("failed to wait on child");
                 let mut status = 0;
                 if !output.status.success() {
@@ -282,6 +277,11 @@ impl Vm {
                     res.unwrap().0.into_std().unwrap()
                 },
                 _ = vm_process.wait() => {
+                    let mut stderr_pipe = vm_process.stderr.take().unwrap();
+                    use tokio::io::AsyncReadExt;
+                    let mut buf = String::new();
+                    stderr_pipe.read_to_string(&mut buf).await?;
+                    debug!("Guest function exited: {}", buf);
                     crate::unlink_unix_sockets();
                     std::process::exit(1);
                 }
@@ -291,11 +291,10 @@ impl Vm {
             x
         })?;
 
-        let rest_client = reqwest::blocking::Client::new();
-        
+        let gh_client = crate::github::Client::new(mock_github);
         let handle = VmHandle {
             conn,
-            rest_client,
+            gh_client,
             vm_process,
             invoke_handle,
         };
@@ -325,11 +324,13 @@ impl Vm {
     }
 
     /// Send request to vm and wait for its response
-    pub fn process_req(&mut self, req: Value) -> Result<String, Error> {
+    pub fn process_req(&mut self, req: Request) -> Result<String, Error> {
         use prost::Message;
 
+        self.current_label = self.current_label.clone().lub(req.label);
         let sys_req = syscalls::Request {
-            payload: req.to_string(),
+            payload: req.payload.to_string(),
+            data_handles: req.data_handles
         }
         .encode_to_vec();
 
@@ -338,58 +339,15 @@ impl Vm {
         self.process_syscalls()
     }
 
-    /// Send a HTTP GET request no matter if an authentication token is present
-    fn http_get(&self, sc_req: &syscalls::GithubRest) -> Result<reqwest::blocking::Response, Error> {
-        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
-        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
-        url.set_path(&sc_req.route);
-        let rest_client = &self.handle.as_ref().unwrap().rest_client;
-        let mut req = rest_client.get(url)
-            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
-            .header(reqwest::header::USER_AGENT, USER_AGENT);
-        req = match env::var_os(GITHUB_AUTH_TOKEN) {
-            Some(t_osstr) => {
-                match t_osstr.into_string() {
-                    Ok(t_str) => req.bearer_auth(t_str),
-                    Err(_) => req,
-                }
-            },
-            None => req
-        };
-        req.send().map_err(|e| Error::HttpReq(e))
-    }
-
-    /// Send a HTTP POST request only if an authentication token is present
-    fn http_post(&self, sc_req: &syscalls::GithubRest, method: reqwest::Method) -> Result<reqwest::blocking::Response, Error> {
-        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
-        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
-        url.set_path(&sc_req.route);
-        match env::var_os(GITHUB_AUTH_TOKEN) {
-            Some(t_osstr) => {
-                match t_osstr.into_string() {
-                    Ok(t_str) => {
-                        let rest_client = &self.handle.as_ref().unwrap().rest_client;
-                        rest_client.request(method, url)
-                            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
-                            .header(reqwest::header::USER_AGENT, USER_AGENT)
-                            .body(std::string::String::from(sc_req.body.as_ref().unwrap()))
-                            .bearer_auth(t_str)
-                            .send().map_err(|e| Error::HttpReq(e))
-                    },
-                    Err(_) => Err(Error::AuthTokenInvalid),
-                }
-            }
-            None => Err(Error::AuthTokenNotExist),
-        }
-    }
-
     fn send_req(&self, invoke: syscalls::Invoke) -> bool {
         use time::precise_time_ns;
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
             let (tx, _) = mpsc::channel();
             let req = Request {
+                label: self.current_label.clone(),
                 function: invoke.function,
-                payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
+                payload: serde_json::from_str(invoke.request.clone().unwrap().payload.as_str()).expect("json"),
+                data_handles: invoke.request.unwrap().data_handles,
             };
             use crate::metrics::RequestTimestamps;
             let timestamps = RequestTimestamps {
@@ -411,9 +369,12 @@ impl Vm {
         use syscalls::syscall::Syscall as SC;
         use syscalls::Syscall;
 
-        
-        let default_db = DBENV.open_db(None).unwrap();
+        let default_db = DBENV.open_db(None);
+        if default_db.is_err() {
+            return Err(Error::DB(default_db.unwrap_err()));
+        }
 
+        let default_db = default_db.unwrap();
         loop {
             let buf = {
                 let mut lenbuf = [0;4];
@@ -431,6 +392,23 @@ impl Vm {
                 Some(SC::Invoke(invoke)) => {
                     let result = syscalls::InvokeResponse { success: self.send_req(invoke) };
                     self.send_into_vm(result.encode_to_vec())?;
+                }
+                Some(SC::Declassify(s)) => {
+                    let secrecy = Component::DCFormula(
+                        s.clauses
+                            .iter()
+                            .map(|c| {
+                                Clause(c.principals.iter().map(Clone::clone).collect())
+                            })
+                            .collect()
+                    );
+                    let target_label = DCLabel::new(secrecy, self.current_label.integrity.clone());
+                    let success = target_label.can_flow_to_with_privilege(&self.current_label, &self.privilege);
+                    if success {
+                        self.current_label = target_label;
+                        debug!("declassification succeeded\t{:?}", self.current_label.secrecy);
+                    }
+                    self.send_into_vm(syscalls::WriteKeyResponse{ success }.encode_to_vec())?;
                 }
                 Some(SC::ReadKey(rk)) => {
                     let txn = DBENV.begin_ro_txn().unwrap();
@@ -492,17 +470,17 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsWrite(req)) => {
-                    println!("fsw\t{:?}", self.current_label);
+                    self.current_label = self.current_label.clone().endorse(&self.privilege);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::write(req.path.as_str(), req.data, &mut self.current_label).is_ok(),
                     }
                     .encode_to_vec();
-                    println!("fs2\t{:?}", self.current_label);
 
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsCreateDir(req)) => {
                     let label = proto_label_to_dc_label(req.label.expect("label"));
+                    self.current_label = self.current_label.clone().endorse(&self.privilege);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::create_dir(
                             req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
@@ -514,6 +492,7 @@ impl Vm {
                 },
                 Some(SC::FsCreateFile(req)) => {
                     let label = proto_label_to_dc_label(req.label.expect("label"));
+                    self.current_label = self.current_label.clone().endorse(&self.privilege);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::create_file(
                             req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
@@ -524,30 +503,11 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::GithubRest(req)) => {
-                    let resp = match syscalls::HttpVerb::from_i32(req.verb) {
-                        Some(syscalls::HttpVerb::Get) => {
-                            Some(self.http_get(&req)?)
-                        },
-                        Some(syscalls::HttpVerb::Post) => {
-                            Some(self.http_post(&req, reqwest::Method::POST)?)
-                        },
-                        Some(syscalls::HttpVerb::Put) => {
-                            Some(self.http_post(&req, reqwest::Method::PUT)?)
-                        },
-                        Some(syscalls::HttpVerb::Delete) => {
-                            Some(self.http_post(&req, reqwest::Method::DELETE)?)
-                        },
-                        None => {
-                           None
-                        }
-                    };
-                    let result = match resp {
-                        None => syscalls::GithubRestResponse {
-                            data: format!("`{:?}` not supported", req.verb).as_bytes().to_vec(),
-                            status: 0,
-                        },
-                        Some(mut resp) => {
-                            if req.toblob && resp.status().is_success() {
+                    let toblob = req.toblob;
+                    let result = match self.handle.as_ref().unwrap().gh_client
+                        .process(req, &mut self.current_label, &self.privilege) {
+                        Ok(mut resp) => {
+                            if toblob && resp.status().is_success() {
                                 let mut file = self.blobstore.create()?;
                                 let mut buf = [0; 4096];
                                 while let Ok(len) = resp.read(&mut buf) {
@@ -564,24 +524,25 @@ impl Vm {
                             } else {
                                 syscalls::GithubRestResponse {
                                     status: resp.status().as_u16() as u32,
-                                    data: resp.bytes().map_err(|e| Error::HttpReq(e))?.to_vec(),
+                                    data: resp.bytes().unwrap().to_vec(),
                                 }
                             }
                         },
-                    }.encode_to_vec();
-
-                    self.send_into_vm(result)?;
+                        Err(e) => syscalls::GithubRestResponse {
+                            data: format!("{:?}", e).as_bytes().to_vec(),
+                            status: 0,
+                        }
+                    };
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::GetCurrentLabel(_)) => {
                     let result = dc_label_to_proto_label(&self.current_label);
-                    println!("gcl\t{:?} {:?}", self.current_label, result);
                     let result = result.encode_to_vec();
 
                     self.send_into_vm(result)?;
                 }
                 Some(SC::TaintWithLabel(label)) => {
                     let dclabel = proto_label_to_dc_label(label);
-                    println!("twl\t{:?} {:?}", self.current_label, dclabel);
                     self.current_label = self.current_label.clone().lub(dclabel);
                     let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
 
@@ -589,8 +550,8 @@ impl Vm {
                 }
                 Some(SC::ExercisePrivilege(target)) => {
                     let dclabel = proto_label_to_dc_label(target);
-                    println!("priv\t{:?} {:?}", self.current_label, dclabel);
                     if self.current_label.can_flow_to_with_privilege(&dclabel, &self.privilege) {
+                        println!("priv succeed");
                         self.current_label = dclabel;
                     }
                     let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
@@ -725,7 +686,7 @@ impl Vm {
                 },
                 None => {
                     // Should never happen, so just ignore??
-                    eprintln!("received an unknown syscall");
+                    error!("received an unknown syscall");
                 },
             }
         }

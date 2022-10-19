@@ -28,6 +28,11 @@ fn main() {
         .version("1.0")
         .author("David H. Liu <hao.liu@princeton.edu>")
         .about("Launch and configure SnapFaaS controller")
+        .arg(Arg::with_name("mock github")
+            .long("mock_github")
+            .value_name("MOCK GITHUB ADDRESS")
+            .help("If present, use the mock GitHub service at the supplied address.")
+        )
         .arg(
             Arg::with_name("config")
                 .value_name("YAML")
@@ -68,7 +73,8 @@ fn main() {
     manager.set_total_mem(total_mem);
 
     // create the worker pool
-    let (pool, request_sender) = new_workerpool(manager.total_mem()/128, manager_sender.clone());
+    let mock_github = matches.value_of("mock github").map(String::from);
+    let (pool, request_sender) = new_workerpool(manager.total_mem()/128, manager_sender.clone(), mock_github);
     // kick off the resource manager
     let manager_handle = manager.run();
 
@@ -88,7 +94,7 @@ fn main() {
     }
 }
 
-fn new_workerpool(pool_size: usize, manager_sender: Sender<Message>) -> (Vec<Worker>, Sender<Message>) {
+fn new_workerpool(pool_size: usize, manager_sender: Sender<Message>, mock_github: Option<String>) -> (Vec<Worker>, Sender<Message>) {
     let (request_sender, response_receiver) = mpsc::channel();
     let response_receiver = Arc::new(Mutex::new(response_receiver));
 
@@ -96,14 +102,14 @@ fn new_workerpool(pool_size: usize, manager_sender: Sender<Message>) -> (Vec<Wor
 
     for i in 0..pool_size {
         let cid = i as u32 + 100;
-        pool.push(Worker::new(response_receiver.clone(), manager_sender.clone(), request_sender.clone(), cid));
+        pool.push(Worker::new(response_receiver.clone(), manager_sender.clone(), request_sender.clone(), cid, mock_github.clone()));
     }
 
     (pool, request_sender)
 }
 
 fn set_ctrlc_handler(request_sender: Sender<Message>, mut pool: Vec<Worker>, manager_sender: Sender<Message>, mut manager_handle: Option<JoinHandle<()>>) {
-    ctrlc::set_handler(move || { 
+    ctrlc::set_handler(move || {
         println!("");
         warn!("{}", "Handling Ctrl-C. Shutting down...");
         let pool_size = pool.len();

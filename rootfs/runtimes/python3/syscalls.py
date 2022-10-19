@@ -15,9 +15,56 @@ def recvall(sock, n):
             return None
         data.extend(packet)
     return bytes(data)
+
+# special facets: public--(True, True), bottom--(True, False), top--(False, True)
+def clauses_to_pb_component(component):
+    if component is True:
+        return syscalls_pb2.Component()
+    elif component is False:
+        return None
+    else:
+        pb_component = syscalls_pb2.Component()
+        for clause in component:
+            pb_clause = pb_component.clauses.add()
+            pb_clause.principals.extend(clause)
+        return pb_component
 ### end of helper functions ###
 
+class DCLabel():
+    def __init__(self, pb_label):
+        self.pb_label = pb_label
+
+    @property
+    def integrity(self):
+        return self.pb_label.integrity
+
+    @integrity.setter
+    def integrity(self, integrity):
+        self.pb_label.integrity = clauses_to_pb_component(integrity)
+
+    @property
+    def secrecy(self):
+        return self.pb_label.secrecy
+
+    @secrecy.setter
+    def secrecy(self, secrecy):
+        self.pb_label.secrecy = clauses_to_pb_component(secrecy)
+
 class Syscall():
+    @staticmethod
+    def new_dclabel(secrecy, integrity):
+        pb_label = syscalls_pb2.DcLabel()
+        pb_label.secrecy = clauses_to_pb_component(secrecy)
+        pb_label.integrity = clauses_to_pb_component(integrity)
+        return DCLabel(pb_label)
+
+    @staticmethod
+    def public_dclabel():
+        pb_label = syscalls_pb2.DcLabel()
+        pb_label.secrecy = syscalls_pb2.Component()
+        pb_label.integrity = syscalls_pb2.Component()
+        return DCLabel(pb_label)
+
     def __init__(self, sock):
         self.sock = sock
 
@@ -66,51 +113,64 @@ class Syscall():
         return map(lambda b: b.decode('utf-8'), list(response.keys))
 
     ### label APIs ###
+    #def acquire_privilege(self, priv):
+    #    component = clauses_to_pb_component(priv)
+    #    req = syscalls_pb2.Syscall(acquirePrivilege = component)
+    #    self._send(req)
+    #    response = self._recv(syscalls_pb2.WriteKey())
+    #    return response.success
+
     def get_current_label(self):
         req = syscalls_pb2.Syscall(getCurrentLabel = syscalls_pb2.GetCurrentLabel())
         self._send(req)
         response = self._recv(syscalls_pb2.DcLabel())
-        return response
+        return DCLabel(response)
 
     def taint(self, label):
-        req = syscalls_pb2.Syscall(taintWithLabel = label)
+        req = syscalls_pb2.Syscall(taintWithLabel = label.pb_label)
         self._send(req)
         response = self._recv(syscalls_pb2.DcLabel())
-        return response
+        return DCLabel(response)
 
-    def declassify(self, secrecy: syscalls_pb2.Component):
-        """Declassify to the target secrecy and leave integrity untouched.
-        """
-        req = syscalls_pb2.Syscall(declassify = secrecy)
-        self._send(req)
-        response = self._recv(syscalls_pb2.WriteKeyResponse())
-        return response.success
+    #def declassify_to(self, secrecy: syscalls_pb2.Component):
+    #    """Declassify to the target secrecy and leave integrity untouched.
+    #    """
+    #    req = syscalls_pb2.Syscall(declassify = secrecy)
+    #    self._send(req)
+    #    response = self._recv(syscalls_pb2.WriteKeyResponse())
+    #    return response.success
+
+    #def endorse(self):
+    #    req = syscalls_pb2.Syscall(endorse =  syscalls_pb2.GetCurrentLabel())
+    #    self._send(req)
+    #    response = self._recv(syscalls_pb2.DcLabel())
+    #    return response
     ### end of label APIs ###
 
     ### github APIs ###
-    def github_rest_get(self, route, toblob=False):
-        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.GET, route = route, body = None, toblob=toblob))
+    def github_rest_get(self, route, token, toblob=False):
+        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.GET, route = route, body = None, toblob = toblob, token = token))
         self._send(req)
         response= self._recv(syscalls_pb2.GithubRestResponse())
         return response
 
-    def github_rest_post(self, route, body, toblob=False):
+    def github_rest_post(self, route, body, token, toblob=False):
         bodyJson = json.dumps(body)
-        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.POST, route = route, body = bodyJson, toblob=toblob))
+        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.POST, route = route, body = bodyJson, toblob = toblob, token = token))
         self._send(req)
         response= self._recv(syscalls_pb2.GithubRestResponse())
         return response
 
-    def github_rest_put(self, route, body, toblob=False):
+    def github_rest_put(self, route, body, token, toblob=False):
         bodyJson = json.dumps(body)
-        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.PUT, route = route, body = bodyJson, toblob=toblob))
+        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.PUT, route = route, body = bodyJson, toblob = toblob, token = token))
         self._send(req)
         response= self._recv(syscalls_pb2.GithubRestResponse())
         return response
 
-    def github_rest_delete(self, route, body, toblob=False):
+    def github_rest_delete(self, route, body, token, toblob=False):
         bodyJson = json.dumps(body)
-        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.DELETE, route = route, body = bodyJson, toblob=toblob))
+        req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.DELETE, route = route, body = bodyJson, toblob = toblob, token = token))
         self._send(req)
         response= self._recv(syscalls_pb2.GithubRestResponse())
         return response
@@ -123,6 +183,18 @@ class Syscall():
         return response.success
 
     ### named data object syscalls ###
+    #def fs_exists(self, path):
+    #    req = syscalls_pb2.Syscall(fsExists = syscalls_pb2.FSRead(path = path))
+    #    self._send(req)
+    #    response = self._recv(syscalls_pb2.WriteKeyResponse())
+    #    return response.success
+
+    #def fs_list(self, path):
+    #    req = syscalls_pb2.Syscall(fsList = syscalls_pb2.FSRead(path = path))
+    #    self._send(req)
+    #    response = self._recv(syscalls_pb2.ReadKeyResponse())
+    #    return response.value
+
     def fs_read(self, path):
         """Read the file at the `path`.
 
@@ -154,7 +226,7 @@ class Syscall():
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_createdir(self, path, label: syscalls_pb2.DcLabel=None):
+    def fs_createdir(self, path, label: DCLabel=None):
         """Create a directory at the `path` with the `label`.
         The host-side handler always endorse before creating the directory.
 
@@ -168,12 +240,12 @@ class Syscall():
         """
         baseDir, name = os.path.split(path)
         req = syscalls_pb2.Syscall(fsCreateDir = syscalls_pb2.FSCreateDir(
-            baseDir = baseDir, name = name, label = label))
+            baseDir = baseDir, name = name, label = label.pb_label))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_createfile(self, path, label: syscalls_pb2.DcLabel=None):
+    def fs_createfile(self, path, label: DCLabel=None):
         """Create a file at the `path` with the `label`.
         The host-side handler always endorse before creating the file.
 
@@ -187,7 +259,7 @@ class Syscall():
         """
         baseDir, name = os.path.split(path)
         req = syscalls_pb2.Syscall(fsCreateFile = syscalls_pb2.FSCreateFile(
-            baseDir = baseDir, name = name, label = label))
+            baseDir = baseDir, name = name, label = label.pb_label))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
