@@ -1,0 +1,19 @@
+{
+  "name": "vsock",
+  "version": "1.0.0",
+  "description": "Library for creating and connecting to VSOCK sockets",
+  "main": "index.js",
+  "gypfile": true,
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "GPL-3.0-or-later",
+  "devDependencies": {
+    "node-gyp": "^7.0.0"
+  },
+  "dependencies": {
+    "node-addon-api": "^3.0.0",
+    "bindings": "*"
+  }
+}

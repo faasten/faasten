@@ -10,6 +10,7 @@ pub enum RequestStatus {
     FunctionNotExist,
     ResourceExhausted,
     LaunchFailed,
+    ProcessRequestFailed,
     SentToVM(String),
 }
 

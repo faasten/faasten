@@ -90,12 +90,13 @@ pub enum Error {
     RootfsNotExist,
     AppfsNotExist,
     LoadDirNotExist,
-    IOError(std::io::Error),
+    DB(lmdb::Error),
+    BlobError(std::io::Error),
 }
 
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
-        Error::IOError(e)
+        Error::BlobError(e)
     }
 }
 
@@ -291,7 +292,6 @@ impl Vm {
         })?;
 
         let gh_client = crate::github::Client::new(mock_github);
-
         let handle = VmHandle {
             conn,
             gh_client,
@@ -369,9 +369,12 @@ impl Vm {
         use syscalls::syscall::Syscall as SC;
         use syscalls::Syscall;
 
+        let default_db = DBENV.open_db(None);
+        if default_db.is_err() {
+            return Err(Error::DB(default_db.unwrap_err()));
+        }
 
-        let default_db = DBENV.open_db(None).unwrap();
-
+        let default_db = default_db.unwrap();
         loop {
             let buf = {
                 let mut lenbuf = [0;4];
@@ -444,7 +447,7 @@ impl Vm {
                             if !key.starts_with(&dir) {
                                 break
                             }
-                            if let Some(entry) = key.split_at(dir.len()).1.split(|c| *c == b'/').next() {
+                            if let Some(entry) = key.split_at(dir.len()).1.split_inclusive(|c| *c == b'/').next() {
                                 if !entry.is_empty() {
                                     keys.insert(entry.into());
                                 }
@@ -534,14 +537,12 @@ impl Vm {
                 },
                 Some(SC::GetCurrentLabel(_)) => {
                     let result = dc_label_to_proto_label(&self.current_label);
-                    println!("gcl\t{:?}", result);
                     let result = result.encode_to_vec();
 
                     self.send_into_vm(result)?;
                 }
                 Some(SC::TaintWithLabel(label)) => {
                     let dclabel = proto_label_to_dc_label(label);
-                    println!("twl\t{:?} {:?}", self.current_label, dclabel);
                     self.current_label = self.current_label.clone().lub(dclabel);
                     let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
 
@@ -549,7 +550,6 @@ impl Vm {
                 }
                 Some(SC::ExercisePrivilege(target)) => {
                     let dclabel = proto_label_to_dc_label(target);
-                    println!("cur\t{:?}\tpriv\t{:?}", self.current_label, dclabel);
                     if self.current_label.can_flow_to_with_privilege(&dclabel, &self.privilege) {
                         println!("priv succeed");
                         self.current_label = dclabel;
@@ -686,7 +686,7 @@ impl Vm {
                 },
                 None => {
                     // Should never happen, so just ignore??
-                    eprintln!("received an unknown syscall");
+                    error!("received an unknown syscall");
                 },
             }
         }
