@@ -13,9 +13,9 @@ use log::{error, debug};
 use time::precise_time_ns;
 
 use crate::message::Message;
-use crate::request::{RequestStatus, Response};
+use crate::request::{RequestStatus, Response, Request};
 use crate::vm;
-use crate::metrics;
+use crate::metrics::{self, RequestTimestamps};
 use crate::resource_manager;
 
 // one hour
@@ -25,6 +25,91 @@ const FLUSH_INTERVAL_SECS: u64 = 3600;
 #[derive(Debug)]
 pub struct Worker {
     pub thread: JoinHandle<()>,
+}
+
+fn handle_request(req: Request, rsp_sender: Sender<Response>, func_req_sender: Sender<Message>, vm_req_sender: Sender<Message>, vm_listener: UnixListener, mut tsps: RequestTimestamps, stat: &mut metrics::WorkerMetrics, cid: u32) {
+    debug!("processing request to function {}", &req.function);
+
+    tsps.arrived = precise_time_ns();
+
+    let function_name = req.function.clone();
+    let mut i = 0;
+    let result = loop {
+        let mut tsps = tsps.clone();
+        if i == 5 {
+            break RequestStatus::ProcessRequestFailed;
+        }
+        i += 1;
+        let (tx, rx) = mpsc::channel();
+        vm_req_sender.send(Message::GetVm(function_name.clone(), tx)).expect("Failed to send GetVm request");
+        match rx.recv().expect("Failed to receive GetVm response") {
+            Ok(mut vm) => {
+                tsps.allocated = precise_time_ns();
+                if !vm.is_launched() {
+                    // newly allocated VM is returned, launch it first
+                    if let Err(e) = vm.launch(Some(func_req_sender.clone()), vm_listener.try_clone().expect("clone unix listener"), cid, false, None) {
+                        handle_vm_error(e);
+                        let _ = rsp_sender.send(Response {
+                            status: RequestStatus::LaunchFailed,
+                        });
+                        // a VM launched or not occupies system resources, we need
+                        // to put back the resources assigned to this VM.
+                        vm_req_sender.send(Message::DeleteVm(vm)).expect("Failed to send DeleteVm request");
+                        // insert the request's timestamps
+                        stat.push(tsps);
+                        continue;
+                    }
+                }
+
+                debug!("VM is launched");
+                tsps.launched = precise_time_ns();
+
+                match vm.process_req(req.payload.clone()) {
+                    Ok(rsp) => {
+                        tsps.completed = precise_time_ns();
+                        // TODO: output are currently ignored
+                        debug!("{:?}", rsp);
+                        vm_req_sender.send(Message::ReleaseVm(vm)).expect("Failed to send ReleaseVm request");
+                        break RequestStatus::SentToVM(rsp);
+                    }
+                    Err(e) => {
+                        handle_vm_error(e);
+                        vm_req_sender.send(Message::DeleteVm(vm)).expect("Failed to send DeleteVm request");
+                        // insert the request's timestamps
+                        stat.push(tsps);
+                        continue;
+                    },
+                }
+
+            },
+            Err(e) => {
+                // If VM allocation fails it is an unrecoverable error, no point in retrying.
+                let id = thread::current().id();
+                break match e {
+                    resource_manager::Error::InsufficientEvict |
+                    resource_manager::Error::LowMemory(_) => {
+                        error!("[Worker {:?}] Resource exhaustion", id);
+                        RequestStatus::ResourceExhausted
+                    }
+                    resource_manager::Error::FunctionNotExist=> {
+                        error!("[Worker {:?}] Requested function doesn't exist: {:?}", id, function_name);
+                        RequestStatus::FunctionNotExist
+                    }
+                    _ => {
+                        error!("[Worker {:?}] Unexpected resource_manager error: {:?}", id, e);
+                        RequestStatus::Dropped
+                    }
+                };
+            }
+        }
+    };
+
+    let _ = rsp_sender.send(Response {
+        status: result
+    });
+    // insert the request's timestamps
+    stat.push(tsps);
+
 }
 
 impl Worker {
@@ -63,82 +148,8 @@ impl Worker {
                         stat.flush();
                         return;
                     }
-                    Message::Request((req, rsp_sender, mut tsps)) => {
-                        debug!("processing request to function {}", &req.function);
-
-                        tsps.arrived = precise_time_ns();
-
-                        let function_name = req.function.clone();
-                        let (tx, rx) = mpsc::channel();
-                        vm_req_sender.send(Message::GetVm(function_name.clone(), tx)).expect("Failed to send GetVm request");
-                        match rx.recv().expect("Failed to receive GetVm response") {
-                            Ok(mut vm) => {
-                                tsps.allocated = precise_time_ns();
-                                if !vm.is_launched() {
-                                    // newly allocated VM is returned, launch it first
-                                    if let Err(e) = vm.launch(
-                                        Some(func_req_sender.clone()),
-                                        vm_listener_dup,
-                                        cid,
-                                        false,
-                                        None,
-                                        mock_github.as_ref().map(String::as_str))
-                                    {
-                                        handle_vm_error(e);
-                                        let _ = rsp_sender.send(Response {
-                                            status: RequestStatus::LaunchFailed,
-                                        });
-                                        // a VM launched or not occupies system resources, we need
-                                        // to put back the resources assigned to this VM.
-                                        vm_req_sender.send(Message::DeleteVm(vm)).expect("Failed to send DeleteVm request");
-                                        // insert the request's timestamps
-                                        stat.push(tsps);
-                                        continue;
-                                    }
-                                }
-
-                                debug!("VM is launched");
-                                tsps.launched = precise_time_ns();
-
-                                match vm.process_req(req) {
-                                    Ok(rsp) => {
-                                        tsps.completed = precise_time_ns();
-                                        // TODO: output are currently ignored
-                                        debug!("{:?}", rsp);
-                                        let _ = rsp_sender.send(Response {
-                                            status: RequestStatus::SentToVM(rsp),
-                                        });
-                                    }
-                                    Err(e) => handle_vm_error(e),
-                                }
-
-                                vm_req_sender.send(Message::ReleaseVm(vm)).expect("Failed to send ReleaseVm request");
-                            },
-                            Err(e) => {
-                                let id = thread::current().id();
-                                let status = match e {
-                                    resource_manager::Error::InsufficientEvict |
-                                    resource_manager::Error::LowMemory(_) => {
-                                        error!("[Worker {:?}] Resource exhaustion", id);
-                                        RequestStatus::ResourceExhausted
-                                    }
-                                    resource_manager::Error::FunctionNotExist=> {
-                                        error!("[Worker {:?}] Requested function doesn't exist: {:?}", id, function_name);
-                                        RequestStatus::FunctionNotExist
-                                    }
-                                    _ => {
-                                        error!("[Worker {:?}] Unexpected resource_manager error: {:?}", id, e);
-                                        RequestStatus::Dropped
-                                    }
-                                };
-                                let _ = rsp_sender.send(Response {
-                                    status,
-                                });
-                            }
-                        }
-
-                        // insert the request's timestamps
-                        stat.push(tsps);
+                    Message::Request((req, rsp_sender, tsps)) => {
+                        handle_request(req, rsp_sender, func_req_sender.clone(), vm_req_sender.clone(), vm_listener_dup, tsps, &mut stat, cid)
                     }
                     _ => {
                         error!("[Worker {:?}] Invalid message: {:?}", id, msg);

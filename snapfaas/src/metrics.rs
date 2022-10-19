@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crate::request::Request;
 
-#[derive(Default, Debug, Serialize)]
+#[derive(Clone, Default, Debug, Serialize)]
 pub struct RequestTimestamps {
     /// time a request arrives at the gateway
     pub at_gateway: u64,
