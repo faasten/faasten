@@ -480,7 +480,7 @@ impl Vm {
                 },
                 Some(SC::FsCreateDir(req)) => {
                     self.current_label = self.current_label.clone().endorse(&self.privilege);
-                    let label = req.label.map(proto_label_to_dc_label).unwrap_or(self.current_label.clone());
+                    let label = req.label.map(proto_label_to_dc_label);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::create_dir(
                             req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
@@ -492,7 +492,7 @@ impl Vm {
                 },
                 Some(SC::FsCreateFile(req)) => {
                     self.current_label = self.current_label.clone().endorse(&self.privilege);
-                    let label = req.label.map(proto_label_to_dc_label).unwrap_or(self.current_label.clone());
+                    let label = req.label.map(proto_label_to_dc_label);
                     let result = syscalls::WriteKeyResponse {
                         success: labeled_fs::create_file(
                             req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label

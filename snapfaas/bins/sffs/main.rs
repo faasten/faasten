@@ -125,7 +125,7 @@ fn main() {
             match labeled_fs::create_dir(
                 path.parent().unwrap().to_str().unwrap(),
                 path.file_name().unwrap().to_str().unwrap(),
-                input_to_dclabel([s_clauses, i_clauses]),
+                Some(input_to_dclabel([s_clauses, i_clauses])),
                 &mut cur_label) {
                 Err(labeled_fs::Error::BadPath) => {
                     eprintln!("Invalid path.");
@@ -147,7 +147,7 @@ fn main() {
             match labeled_fs::create_file(
                 path.parent().unwrap().to_str().unwrap(),
                 path.file_name().unwrap().to_str().unwrap(),
-                input_to_dclabel([s_clauses, i_clauses]),
+                Some(input_to_dclabel([s_clauses, i_clauses])),
                 &mut cur_label) {
                 Err(labeled_fs::Error::BadPath) => {
                     eprintln!("Invalid path.");
