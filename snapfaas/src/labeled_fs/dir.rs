@@ -34,9 +34,10 @@ impl Directory {
         name: &str,
         cur_label: &DCLabel,
         entry_type: DirEntry,
-        label: DCLabel,
+        label: Option<DCLabel>,
         uid: u64
     ) -> Result<u64> {
+        let label = label.unwrap_or(cur_label.clone());
         if cur_label.can_flow_to(&label) {
             if let Some(_) = self.mappings.get(name) {
                 Err(Error::BadPath)

@@ -9,7 +9,6 @@ use labeled::dclabel::DCLabel;
 mod dir;
 mod file;
 mod direntry;
-pub mod utils;
 
 use self::direntry::{LabeledDirEntry, DirEntry};
 use self::dir::Directory;
@@ -20,7 +19,7 @@ lazy_static::lazy_static! {
         if !std::path::Path::new("storage").exists() {
             let _ = std::fs::create_dir("storage").unwrap();
         }
-        
+
         let dbenv = lmdb::Environment::new()
             .set_map_size(100 * 1024 * 1024 * 1024)
             .open(std::path::Path::new("storage"))
@@ -89,17 +88,17 @@ pub fn list(path: &str, cur_label: &mut DCLabel) -> Result<Vec<String>> {
 }
 
 /// create_dir only fails when `cur_label` cannot flow to `label` or target directory's label
-pub fn create_dir(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
+pub fn create_dir(base_dir: &str, name: &str, label: Option<DCLabel>, cur_label: &mut DCLabel) -> Result<()> {
     create_common(base_dir, name, label, cur_label, Directory::new().to_vec(), DirEntry::D)
 }
 
 /// create_file only fails when `cur_label` cannot flow to `label` or target directory's label
-pub fn create_file(base_dir: &str, name: &str, label: DCLabel, cur_label: &mut DCLabel) -> Result<()> {
+pub fn create_file(base_dir: &str, name: &str, label: Option<DCLabel>, cur_label: &mut DCLabel) -> Result<()> {
     create_common(base_dir, name, label, cur_label, File::new().to_vec(), DirEntry::F)
 }
 
-/// write fails when `cur_label` cannot flow to the target file's label 
-pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> { 
+/// write fails when `cur_label` cannot flow to the target file's label
+pub fn write(path: &str, data: Vec<u8>, cur_label: &mut DCLabel) -> Result<()> {
     let db = DBENV.open_db(None).unwrap();
     let mut txn = DBENV.begin_rw_txn().unwrap();
     let res = get_direntry(path, cur_label, &txn, db).and_then(|labeled| -> Result<()> {
@@ -170,7 +169,7 @@ where T: Transaction
 fn create_common(
     base_dir: &str,
     name: &str,
-    label: DCLabel,
+    label: Option<DCLabel>,
     cur_label: &mut DCLabel,
     obj_vec: Vec<u8>,
     entry_type: DirEntry,
@@ -206,7 +205,7 @@ mod tests {
         // create `/gh_repo`
         let target_label = DCLabel::new(true, [["gh_repo"]]);
         let mut cur_label = DCLabel::bottom();
-        assert!(create_dir("/", "gh_repo", target_label, &mut cur_label).is_ok());
+        assert!(create_dir("/", "gh_repo", Some(target_label), &mut cur_label).is_ok());
 
         // list
         let mut cur_label = DCLabel::public();
@@ -215,32 +214,32 @@ mod tests {
         // already exists
         let target_label = DCLabel::new(true, [["gh_repo"]]);
         let mut cur_label = DCLabel::bottom();
-        assert_eq!(create_dir("/", "gh_repo", target_label, &mut cur_label).unwrap_err(), Error::BadPath);
+        assert_eq!(create_dir("/", "gh_repo", Some(target_label), &mut cur_label).unwrap_err(), Error::BadPath);
 
         // missing path components
         let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
         let mut cur_label = DCLabel::public();
-        assert_eq!(create_dir("/gh_repo/yue", "yue", target_label, &mut cur_label).unwrap_err(), Error::BadPath);
+        assert_eq!(create_dir("/gh_repo/yue", "yue", Some(target_label), &mut cur_label).unwrap_err(), Error::BadPath);
 
         // label too high
         let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
         let mut cur_label = target_label.clone();
-        assert_eq!(create_dir("/gh_repo", "yue", target_label, &mut cur_label).unwrap_err(), Error::Unauthorized);
+        assert_eq!(create_dir("/gh_repo", "yue", Some(target_label), &mut cur_label).unwrap_err(), Error::Unauthorized);
 
         // label too high
         let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
         let mut cur_label = DCLabel::new([["yue"]], true);
-        assert_eq!(create_dir("/gh_repo", "yue", target_label, &mut cur_label).unwrap_err(), Error::Unauthorized);
+        assert_eq!(create_dir("/gh_repo", "yue", Some(target_label), &mut cur_label).unwrap_err(), Error::Unauthorized);
 
         // create /gh_repo/yue
         let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
         let mut cur_label = DCLabel::new(true, [["gh_repo"]]);
-        assert!(create_dir("/gh_repo", "yue", target_label, &mut cur_label).is_ok());
+        assert!(create_dir("/gh_repo", "yue", Some(target_label), &mut cur_label).is_ok());
 
         // Unauthorized not BadPath
         let target_label = DCLabel::new([["yue"]], [["gh_repo"]]);
         let mut cur_label = DCLabel::public();
-        assert_eq!(create_dir("/gh_repo", "yue", target_label, &mut cur_label).unwrap_err(), Error::Unauthorized);
+        assert_eq!(create_dir("/gh_repo", "yue", Some(target_label), &mut cur_label).unwrap_err(), Error::Unauthorized);
     }
 
     #[test]
@@ -248,19 +247,19 @@ mod tests {
         // create `/func2`
         let mut cur_label = DCLabel::bottom();
         let target_label = DCLabel::new([["func2"]], [["func2"]]);
-        assert!(create_dir("/", "func2", target_label, &mut cur_label).is_ok());
+        assert!(create_dir("/", "func2", Some(target_label), &mut cur_label).is_ok());
 
         // create `/func2/mydata.txt`
         // after reading the directory /func2, cur_label gets raised to <func2, func2> and
         // cannot flow to the target label <user2, func2>
         let mut cur_label = DCLabel::new(true, [["func2"]]);
         let target_label = DCLabel::new([["user2"]], [["func2"]]);
-        assert_eq!(create_file("/func2", "mydata.txt", target_label, &mut cur_label).unwrap_err(), Error::BadTargetLabel);
+        assert_eq!(create_file("/func2", "mydata.txt", Some(target_label), &mut cur_label).unwrap_err(), Error::BadTargetLabel);
         // <func2, func2> can flow to <user2/\func2, func2>
         let target_label = DCLabel::new([["user2"], ["func2"]], [["func2"]]);
-        assert!(create_file("/func2", "mydata.txt", target_label, &mut cur_label).is_ok());
+        assert!(create_file("/func2", "mydata.txt", Some(target_label), &mut cur_label).is_ok());
         assert_eq!(read("/func2/mydata.txt", &mut cur_label).unwrap(), Vec::<u8>::new());
-    
+
         // write read
         let text = "test message";
         let data = text.as_bytes().to_vec();
