@@ -37,8 +37,10 @@ impl Default for Request {
     #[allow(unconditional_recursion)]
     fn default() -> Self {
         Request {
+            function: Default::default(),
             label: DCLabel::public(),
-            ..Default::default()
+            payload: Default::default(),
+            data_handles: Default::default(),
         }
     }
 }
