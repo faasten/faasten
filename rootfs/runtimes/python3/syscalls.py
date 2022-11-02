@@ -238,9 +238,9 @@ class Syscall():
         Returns:
             bool: True for success, False otherwise
         """
-        basePath, name = os.path.split(path)
+        baseDir, name = os.path.split(path)
         req = syscalls_pb2.Syscall(fsCreateDir = syscalls_pb2.FSCreateDir(
-            basePath = basePath, name = name, label = label.pb_label))
+            baseDir = baseDir, name = name, label = label.pb_label))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
@@ -257,9 +257,9 @@ class Syscall():
         Returns:
             bool: True for success, False otherwise
         """
-        basePath, name = os.path.split(path)
+        baseDir, name = os.path.split(path)
         req = syscalls_pb2.Syscall(fsCreateFile = syscalls_pb2.FSCreateFile(
-            basePath = basePath, name = name, label = label.pb_label))
+            baseDir = baseDir, name = name, label = label.pb_label))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
