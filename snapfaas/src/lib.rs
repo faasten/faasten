@@ -12,9 +12,9 @@ pub mod metrics;
 pub mod firecracker_wrapper;
 pub mod blobstore;
 pub mod labeled_fs;
+pub mod fs;
 
 use std::string::String;
-use std::fs::{self, File};
 use std::io::{BufReader, BufRead, Error, ErrorKind, Result};
 use url::Url;
 use log::error;
@@ -30,7 +30,7 @@ pub fn unlink_unix_sockets() {
         Ok(paths) => {
             for entry in paths {
                 if let Ok(path) = entry {
-                    if let Err(e) = fs::remove_file(&path) {
+                    if let Err(e) = std::fs::remove_file(&path) {
                         error!("Failed to unlink {}: {:?}", path.to_str().unwrap(), e);
                     }
                 }
@@ -43,7 +43,7 @@ pub fn unlink_unix_sockets() {
         Ok(paths) => {
             for entry in paths {
                 if let Ok(path) = entry {
-                    if let Err(e) = fs::remove_file(&path) {
+                    if let Err(e) = std::fs::remove_file(&path) {
                         error!("Failed to unlink {}: {:?}", path.to_str().unwrap(), e);
                     }
                 }
@@ -80,7 +80,7 @@ pub fn convert_fs_path_to_url (path: &str) -> Result<String> {
 }
 
 /// Open a file specified by a URL in the form of a string
-pub fn open_url(url: &str) -> Result<File> {
+pub fn open_url(url: &str) -> Result<std::fs::File> {
     if !check_url(url) {
         return Err(Error::new(ErrorKind::Other, "not Url"));
     }
@@ -92,7 +92,7 @@ pub fn open_url(url: &str) -> Result<File> {
             //println!("{:?}", url.host());
             //println!("{:?}", url.path());
             //println!("{:?}", url.username());
-            return File::open(url.path());
+            return std::fs::File::open(url.path());
         }
         Err(_)=> return Err(Error::new(ErrorKind::Other, "Url parse failed")),
     }
@@ -100,7 +100,7 @@ pub fn open_url(url: &str) -> Result<File> {
 }
 
 pub fn get_machine_memory() -> usize {
-    let memfile = File::open(MEM_FILE).expect("Couldn't open /proc/meminfo");
+    let memfile = std::fs::File::open(MEM_FILE).expect("Couldn't open /proc/meminfo");
     for line in BufReader::new(memfile).lines() {
         match line {
             Ok(c) => {
