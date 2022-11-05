@@ -355,7 +355,11 @@ impl Vm {
                 request: req.clone(),
                 ..Default::default()
             };
-            invoke_handle.send(Message::Request((req, tx, timestamps))).is_ok()
+            // TODO fix this!
+            // invoke_handle sends a request to the worker
+            // we need to route it to the scheduler though a RPC
+            invoke_handle.send(Message::Request2((req, tx, timestamps))).is_ok();
+            false
         } else {
             debug!("No invoke handle, ignoring invoke syscall. {:?}", invoke);
             false

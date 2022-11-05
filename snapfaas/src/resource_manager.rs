@@ -48,7 +48,7 @@ impl ResourceManager {
         // set default total memory to free memory on the machine
         let total_mem = crate::get_machine_memory();
         let (sender, receiver) = mpsc::channel();
-        
+
         (ResourceManager {
             config,
             idle,
@@ -62,6 +62,10 @@ impl ResourceManager {
 
     pub fn total_mem(&self) -> usize {
         self.total_mem
+    }
+
+    pub fn free_mem(&self) -> usize {
+        self.free_mem
     }
 
     /// This function should only be called once before resource manager kicks off. Not supporting
@@ -79,7 +83,7 @@ impl ResourceManager {
         self.total_mem = mem;
         self.free_mem = mem;
     }
-    
+
     /// Kicks off the single thread resource manager
     pub fn run(mut self) -> JoinHandle<()> {
         std::thread::spawn(move || {
@@ -97,6 +101,7 @@ impl ResourceManager {
                                 self.delete(vm);
                             }
                             Message::Shutdown => {
+                                // TODO info remote resource manager
                                 return;
                             }
                             _ => (),
@@ -110,6 +115,15 @@ impl ResourceManager {
         })
     }
 
+    pub fn get_vm_stats(&self) -> HashMap<String, usize> {
+        self.idle
+            .iter()
+            .map(|(f, v)| {
+                (f.clone(), v.len())
+            })
+            .collect()
+    }
+
     // Try to acquire an idle VM, otherwise try to allocate a new unlaunched VM.
     // If there's not enough resources on the machine to
     // allocate a new Vm, it will try to evict an idle Vm from another
@@ -117,7 +131,7 @@ impl ResourceManager {
     fn acquire_vm(
         &mut self,
         function_name: &str,
-    )-> Result<Vm, Error> {
+    ) -> Result<Vm, Error> {
         let func_memory = self.get_function_config(function_name)?.memory;
 
         self.get_idle_vm(function_name)
@@ -268,5 +282,9 @@ impl VmList {
             .expect("poisoned lock on idle list")
             .push(val);
         self.num_vms.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn len(&self) -> usize {
+        self.num_vms.load(Ordering::Relaxed)
     }
 }

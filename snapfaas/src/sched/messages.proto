@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package snapfaas.sched.messages;
+
+// message Ready {
+    // uint64 id = 1;
+    // uint64 msg = 2;
+// }
+
+
+// message ShutdownAll {}
+
+message Request {
+    oneof kind {
+        uint64 begin = 1;
+        bytes finish = 2;
+        bytes shutdownAll = 3;
+    }
+}
+
+message Response {
+    oneof kind {
+        bytes process = 1;
+        bytes shutdown = 2;
+    }
+}
+
+
