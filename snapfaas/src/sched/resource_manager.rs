@@ -7,6 +7,7 @@ use std::thread;
 use std::net::{TcpStream, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
 
 use prost::Message;
 use super::{
@@ -28,7 +29,7 @@ type WorkerQueue = Arc<Mutex<Vec<TcpStream>>>;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Node {
-    pub ip: SocketAddr,
+    pub addr: SocketAddr,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -39,6 +40,7 @@ pub struct NodeInfo(Node, usize);
 pub struct Worker {
     pub stream: TcpStream,
 }
+
 
 impl Worker {
     fn response(&mut self) -> Result<(), Box<dyn Error>> {
@@ -83,7 +85,7 @@ impl ResourceManager {
 
     pub fn add_idle(&mut self, stream: TcpStream) {
         let node = Node {
-            ip: stream.peer_addr().unwrap()
+            addr: stream.peer_addr().unwrap()
         };
         let worker = Worker { stream };
         let idle = &mut self.idle;
@@ -109,17 +111,17 @@ impl ResourceManager {
         match node {
             Some(n) => {
                 let worker = self.idle
-                    .get_mut(&n)
-                    .and_then(|v| v.pop());
+                                .get_mut(&n)
+                                .and_then(|v| v.pop());
                 self.idle.retain(|_, v| !v.is_empty());
                 worker
             }
             None => {
                 // if no such a node, simply return some woker
                 let worker = self.idle
-                    .values_mut()
-                    .next()
-                    .and_then(|v| v.pop());
+                                .values_mut()
+                                .next()
+                                .and_then(|v| v.pop());
                 self.idle.retain(|_, v| !v.is_empty());
                 worker
             }
@@ -137,12 +139,37 @@ impl ResourceManager {
             }
         }
         self.idle.retain(|_, v| !v.is_empty());
-        // Only workers get killed,
+        // TODO Only workers get killed, meaning that
         // local resource menagers are still alive after this
         // self.cached.retain(|_, _| false);
         // (self.total_mem, self.total_num_vms) = (0, 0);
     }
 
+    pub fn update(&mut self, addr: SocketAddr, info: LocalResourceManagerInfo) {
+        let node = Node { addr };
+        for (f, n) in info.stats.into_iter() {
+            let nodes = self.cached.get_mut(&f);
+            match nodes {
+                Some(nodes) => {
+                    let nodeinfo = nodes
+                                    .iter_mut()
+                                    .find(|&&mut n| n.0 == node);
+                    if let Some(nodeinfo) = nodeinfo {
+                        nodeinfo.1 = n;
+                    } else {
+                        let nodeinfo = NodeInfo(node.clone(), n);
+                        nodes.push(nodeinfo);
+                    }
+                }
+                None => {
+                    let nodeinfo = NodeInfo(node.clone(), n);
+                    let function = f.clone();
+                    let _ = self.cached
+                                .insert(function, vec![nodeinfo]);
+                }
+            }
+        }
+    }
 
     pub fn total_num_vms(&self) -> usize {
         self.total_num_vms
@@ -156,3 +183,13 @@ impl ResourceManager {
         self.free_mem
     }
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LocalResourceManagerInfo {
+    pub stats: HashMap<String, usize>,
+    pub total_mem: usize,
+    pub free_mem: usize,
+}
+
+
+

@@ -106,6 +106,9 @@ impl ResourceManager {
                             }
                             _ => (),
                         }
+                        // TODO update info
+                        // let sched = sched::Scheduler::connect(&self.sched_addr);
+                        // let _ = sched.update_resource(&self)
                     }
                     Err(e) => {
                         panic!("ResourceManager cannot read requests: {:?}", e);

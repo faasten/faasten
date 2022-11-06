@@ -18,6 +18,7 @@ use self::message::{
     request, response,
     Request, Response,
 };
+use self::resource_manager::LocalResourceManagerInfo;
 
 pub fn schedule(
     request: HTTPRequest, resman: self::gateway::Manager,
@@ -128,13 +129,18 @@ impl Scheduler {
     pub fn update_resource(
         &mut self,
         manager: &LocalResourceManger
-    ) -> Result<Response, Box<dyn Error>> {
-
-        let stats = manager.get_vm_stats();
-        let total_mem = manager.total_mem();
-        let free_mem = manager.free_mem();
-
-        let response = self.read()?;
-        Ok(response)
+    ) -> Result<(), Box<dyn Error>> {
+        let info = LocalResourceManagerInfo {
+            stats: manager.get_vm_stats(),
+            total_mem: manager.total_mem(),
+            free_mem: manager.free_mem(),
+        };
+        let buf = serde_json::to_vec(&info).unwrap();
+        let req = Request {
+            kind: Some(request::Kind::UpdateResource(buf)),
+        }.encode_to_vec();
+        self.send(req)?;
+        let _ = self.read()?;
+        Ok(())
     }
 }

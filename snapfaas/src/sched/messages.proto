@@ -12,16 +12,24 @@ package snapfaas.sched.messages;
 
 message Request {
     oneof kind {
+        // Worker
         uint64 begin = 1;
         bytes finish = 2;
-        bytes shutdownAll = 3;
+        bytes invoke = 3;
+        // Local resource manager
+        bytes updateResource = 4;
+        // Debug
+        bytes shutdownAll = 5;
     }
 }
 
 message Response {
     oneof kind {
+        // To worker
         bytes process = 1;
         bytes shutdown = 2;
+        // other
+        bytes error = 3;
     }
 }
 

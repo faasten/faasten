@@ -7,7 +7,7 @@ use crate::request;
 use crate::metrics::RequestTimestamps;
 // use crate::message::RequestInfo;
 use crate::sched::{message, resource_manager};
-use crate::sched::resource_manager::ResourceManager;
+use crate::sched::resource_manager::{ResourceManager, LocalResourceManagerInfo};
 
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
@@ -60,19 +60,14 @@ impl Gateway for HTTPGateway {
                                     return;
                                 }
                                 Ok(req) => {
-                                    debug!("something here...");
                                     use time::precise_time_ns;
-                                    debug!("something here... 1");
                                     let timestamps = RequestTimestamps {
                                         at_gateway: precise_time_ns(),
                                         request: req.clone(),
                                         ..Default::default()
                                     };
-                                    debug!("something here... middle");
                                     let _ = requests
                                         .send((req, timestamps));
-                                    debug!("something here... end");
-                                    // TODO reply to requests at schedule()
                                 }
                             }
                         }
@@ -142,6 +137,22 @@ impl Gateway for SchedGateway {
                                 manager.reset();
                                 let res = Response { kind: None }.encode_to_vec();
                                 let _ = message::send_to(&mut stream, res);
+                            }
+                            Some(Kind::UpdateResource(buf)) => {
+                                debug!("sched update resouce");
+                                let manager = &mut manager.lock().unwrap();
+                                let info = serde_json::from_slice::
+                                            <LocalResourceManagerInfo>(&buf);
+                                if let Ok(info) = info {
+                                    let addr = stream.peer_addr().unwrap();
+                                    manager.update(addr, info);
+                                    let res = Response { kind: None }.encode_to_vec();
+                                    let _ = message::send_to(&mut stream, res);
+                                } else {
+                                    // TODO send error code
+                                    let res = Response { kind: None }.encode_to_vec();
+                                    let _ = message::send_to(&mut stream, res);
+                                }
                             }
                             _ => {}
                         }
