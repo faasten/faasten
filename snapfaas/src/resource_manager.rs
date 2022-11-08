@@ -11,6 +11,7 @@ use log::{error, debug};
 use crate::configs::{ResourceManagerConfig, FunctionConfig};
 use crate::vm::Vm;
 use crate::message::Message;
+use crate::sched;
 
 #[derive(Debug)]
 pub enum Error {
@@ -35,12 +36,13 @@ pub struct ResourceManager {
     pub total_num_vms: usize, // total number of vms ever created
     total_mem: usize,
     pub free_mem: usize,
+    sched_addr: String,
 }
 
 impl ResourceManager {
     /// create and return a ResourceManager value
     /// The ResourceManager value encapsulates the idle lists and function configs
-    pub fn new(config: ResourceManagerConfig) -> (Self, Sender<Message>) {
+    pub fn new(config: ResourceManagerConfig, sched_addr: String) -> (Self, Sender<Message>) {
         let mut idle = HashMap::<String, VmList>::new();
         for (name, _) in &config.functions {
             idle.insert(name.clone(), VmList::new());
@@ -48,7 +50,7 @@ impl ResourceManager {
         // set default total memory to free memory on the machine
         let total_mem = crate::get_machine_memory();
         let (sender, receiver) = mpsc::channel();
-        
+
         (ResourceManager {
             config,
             idle,
@@ -56,12 +58,17 @@ impl ResourceManager {
             total_num_vms: 0,
             total_mem,
             free_mem: total_mem,
+            sched_addr,
         },
         sender)
     }
 
     pub fn total_mem(&self) -> usize {
         self.total_mem
+    }
+
+    pub fn free_mem(&self) -> usize {
+        self.free_mem
     }
 
     /// This function should only be called once before resource manager kicks off. Not supporting
@@ -79,10 +86,11 @@ impl ResourceManager {
         self.total_mem = mem;
         self.free_mem = mem;
     }
-    
+
     /// Kicks off the single thread resource manager
     pub fn run(mut self) -> JoinHandle<()> {
         std::thread::spawn(move || {
+            let sched = sched::Scheduler::new(self.sched_addr.clone());
             loop {
                 match self.receiver.recv() {
                     Ok(msg) => {
@@ -97,10 +105,14 @@ impl ResourceManager {
                                 self.delete(vm);
                             }
                             Message::Shutdown => {
+                                // TODO info remote resource manager
                                 return;
                             }
                             _ => (),
                         }
+                        // TODO update info
+                        // let mut sched = sched::Scheduler::connect(&self.sched_addr);
+                        let _ = sched.update_resource(&self);
                     }
                     Err(e) => {
                         panic!("ResourceManager cannot read requests: {:?}", e);
@@ -110,6 +122,15 @@ impl ResourceManager {
         })
     }
 
+    pub fn get_vm_stats(&self) -> HashMap<String, usize> {
+        self.idle
+            .iter()
+            .map(|(f, v)| {
+                (f.clone(), v.len())
+            })
+            .collect()
+    }
+
     // Try to acquire an idle VM, otherwise try to allocate a new unlaunched VM.
     // If there's not enough resources on the machine to
     // allocate a new Vm, it will try to evict an idle Vm from another
@@ -117,7 +138,7 @@ impl ResourceManager {
     fn acquire_vm(
         &mut self,
         function_name: &str,
-    )-> Result<Vm, Error> {
+    ) -> Result<Vm, Error> {
         let func_memory = self.get_function_config(function_name)?.memory;
 
         self.get_idle_vm(function_name)
@@ -268,5 +289,9 @@ impl VmList {
             .expect("poisoned lock on idle list")
             .push(val);
         self.num_vms.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn len(&self) -> usize {
+        self.num_vms.load(Ordering::Relaxed)
     }
 }

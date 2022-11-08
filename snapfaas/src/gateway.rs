@@ -5,7 +5,11 @@ use log::{error, debug};
 
 use crate::request;
 use crate::metrics::RequestTimestamps;
-use crate::message::RequestInfo;
+// use crate::message::RequestInfo;
+
+// TODO to suppress warming, remove this later
+use std::sync::mpsc::Sender;
+type RequestInfo = (request::Request, Sender<request::Response>, RequestTimestamps);
 
 /// A gateway listens on a endpoint and accepts requests
 /// For example a FileGateway "listens" to a file and accepts
@@ -57,7 +61,7 @@ impl HTTPGateway {
                                     if let Ok(response) = rx.recv() {
                                         if let Err(e) = request::write_u8(&response.to_vec(), &mut stream) {
                                             error!("Failed to respond to TCP client at {:?}: {:?}", stream.peer_addr(), e);
-                                        };
+    };
                                     }
                                 }
                             }
