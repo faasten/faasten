@@ -23,10 +23,6 @@ use self::resource_manager::LocalResourceManagerInfo;
 pub fn schedule(
     request: HTTPRequest, resman: self::gateway::Manager,
 ) -> Result<(), Box<dyn Error>> {
-
-    use log::debug;
-    debug!("schedule start");
-
     let mut resman = resman.lock().unwrap();
     let function = &request.function;
 
@@ -42,94 +38,107 @@ pub fn schedule(
     let buf = request.to_vec();
     let res = Response {
         kind: Some(response::Kind::Process(buf)),
-    }.encode_to_vec();
-    let _ = message::send_to(&mut stream, res)?;
+    };
+    let _ = message::write(&mut stream, res)?;
 
     // receive response
-    let req = message::recv_from(&mut stream)
-        .and_then(|b| {
-            let req = Request::decode(&b[..])?;
-            Ok(req)
-        });
-    let res = Response {
-        kind: None
-    }.encode_to_vec();
-    let _ = message::send_to(&mut stream, res);
-
-    debug!("sched recv from worker {:?}", req);
-    debug!("schedule end");
+    // TODO move this to sched::gateway,
+    // because we want each RPC to make a connection on demand
+    // let req = message::recv_from(&mut stream)
+        // .and_then(|b| {
+            // let req = request::decode(&b[..])?;
+            // ok(req)
+        // });
+    // let res = response {
+        // kind: none
+    // }.encode_to_vec();
+    // let _ = message::send_to(&MUt stream, res);
+    // debug!("sched recv from worker {:?}", req);
+    // debug!("schedule end");
 
     Ok(())
 }
 
+
+
 // RPC calls
+#[derive(Debug, Clone)]
 pub struct Scheduler {
-    stream: TcpStream,
+    addr: String,
+    // stream: TcpStream,
 }
 
 impl Scheduler {
-    pub fn connect(addr: &str) -> Self {
-        let stream = TcpStream::connect(addr).unwrap();
-        Scheduler { stream }
+    pub fn new(addr: String) -> Self {
+        Scheduler { addr }
     }
 
-    // Auxiliary function that sends a RPC request
-    fn send(&mut self, req: Vec<u8>) -> Result<(), Box<dyn Error>> {
-        message::send_to(&mut self.stream, req)
+    fn connect(&self) -> Result<TcpStream, Box<dyn Error>> {
+        let stream = TcpStream::connect(&self.addr)?;
+        Ok(stream)
     }
 
-    // Auxiliary function that reads a RPC response
-    fn read(&mut self) -> Result<Response, Box<dyn Error>> {
-        let buf = message::recv_from(&mut self.stream)?;
-        let req = Response::decode(&buf[..])?;
-        Ok(req)
-    }
-
-    // This method is for workers to retrieve a HTTP request, and
-    // it is supposed to block if there's no further HTTP requests
-    pub fn recv(&mut self) -> Result<Response, Box<dyn Error>> {
-        // avoid using unstable #![feature(thread_id_value)]
+    /// This method is for workers to retrieve a HTTP request, and
+    /// it is supposed to block if there's no further HTTP requests
+    pub fn recv(&self) -> Result<Response, Box<dyn Error>> {
+        let mut stream = self.connect()?;
         let id = {
+            // avoid using unstable #![feature(thread_id_value)]
             let mut hasher = DefaultHasher::new();
             thread::current().id().hash(&mut hasher);
             hasher.finish()
         };
         let req = Request {
             kind: Some(request::Kind::Begin(id)),
-        }.encode_to_vec();
-        self.send(req)?;
-        let response = self.read()?;
+        };
+        message::write(&mut stream, req)?;
+        let response = message::read_response(&mut stream)?;
         Ok(response)
     }
 
-    // This method is for workers to return the result of a HTTP request
+    /// This method is for workers to return the result of a HTTP request
     pub fn retn(
-        &mut self, result: Vec<u8>
+        &self, result: Vec<u8>
     ) -> Result<Response, Box<dyn Error>> {
+        let mut stream = self.connect()?;
         let req = Request {
             kind: Some(request::Kind::Finish(result)),
-        }.encode_to_vec();
-        self.send(req)?;
-        let response = self.read()?;
+        };
+        message::write(&mut stream, req)?;
+        let response = message::read_response(&mut stream)?;
         Ok(response)
     }
 
-    pub fn shutdown_all(&mut self) -> Result<(), Box<dyn Error>> {
+    /// This method is for workers to invoke a function
+    pub fn invoke(&self, request: Vec<u8>) -> Result<(), Box<dyn Error>> {
+        let mut stream = self.connect()?;
+        let req = Request {
+            kind: Some(request::Kind::Invoke(request)),
+        };
+        message::write(&mut stream, req)?;
+        let _ = message::read_response(&mut stream)?;
+        Ok(())
+    }
+
+
+    pub fn shutdown_all(&self) -> Result<(), Box<dyn Error>> {
+        let mut stream = self.connect()?;
         let buf = "".as_bytes().to_vec();
         let req = Request {
             kind: Some(request::Kind::ShutdownAll(buf)),
-        }.encode_to_vec();
-        self.send(req)?;
-        let _ = self.read()?;
+        };
+        message::write(&mut stream, req)?;
+        let _ = message::read_response(&mut stream)?;
         Ok(())
     }
 
     // TODO This method is for local resource managers to
     // update it's resource status, such as number of cached VMs per function
     pub fn update_resource(
-        &mut self,
+        &self,
         manager: &LocalResourceManger
     ) -> Result<(), Box<dyn Error>> {
+        let mut stream = self.connect()?;
         let info = LocalResourceManagerInfo {
             stats: manager.get_vm_stats(),
             total_mem: manager.total_mem(),
@@ -138,9 +147,9 @@ impl Scheduler {
         let buf = serde_json::to_vec(&info).unwrap();
         let req = Request {
             kind: Some(request::Kind::UpdateResource(buf)),
-        }.encode_to_vec();
-        self.send(req)?;
-        let _ = self.read()?;
+        };
+        message::write(&mut stream, req)?;
+        let _ = message::read_response(&mut stream)?;
         Ok(())
     }
 }

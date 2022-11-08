@@ -92,7 +92,7 @@ impl Iterator for HTTPGateway {
 
 #[derive(Debug)]
 pub struct SchedGateway {
-    rx: mpsc::Receiver<()>,
+    rx: Arc<Mutex<mpsc::Receiver<()>>>,
 }
 
 impl Gateway for SchedGateway {
@@ -107,6 +107,8 @@ impl Gateway for SchedGateway {
         let manager = manager.expect("No Resource Manager Found!");
         // let manager_dup = Arc::clone(&manager);
         let (tx, rx) = mpsc::channel();
+        let rx = Arc::new(Mutex::new(rx));
+        let rx_dup = Arc::clone(&rx);
 
         thread::spawn(move || {
             for stream in listener.incoming() {
@@ -114,44 +116,69 @@ impl Gateway for SchedGateway {
                     debug!("sched connection from {:?}", stream.peer_addr());
                     let manager = Arc::clone(&manager);
                     let tx = tx.clone();
+                    let rx = Arc::clone(&rx_dup);
 
                     // process RPC request form stream
                     thread::spawn(move || {
-                        use message::{Request, request::Kind, Response};
-                        let req = message::recv_from(&mut stream)
-                            .and_then(|b| {
-                                let r = Request::decode(&b[..])?;
-                                Ok(r)
-                            });
+                        use message::{request::Kind, Response};
+                        let req = message::read_request(&mut stream);
                         let kind = req.ok().and_then(|r| r.kind);
                         match kind {
                             Some(Kind::Begin(id)) => {
-                                debug!("sched worker ready {:?}", id);
+                                debug!("RPC BEGIN received {:?}", id);
                                 let manager = &mut manager.lock().unwrap();
                                 manager.add_idle(stream);
                                 let _ = tx.send(());
                             }
+                            Some(Kind::Finish(bytes)) => {
+                                let result = String::from_utf8(bytes);
+                                debug!("RPC FINISH received {:?}", result);
+                                let res = Response {
+                                    kind: None
+                                };
+                                let _ = message::write(&mut stream, res);
+                            }
+                            Some(Kind::Invoke(bytes)) => {
+                                debug!("RPC INVOKE received {:?}", bytes);
+                                let _ = rx.lock().unwrap().recv();
+                                let manager_dup = Arc::clone(&manager);
+                                match request::parse_u8_request(bytes) {
+                                    Ok(req) => {
+                                        use crate::sched;
+                                        thread::spawn(move || {
+                                            let _ = sched::schedule(req, manager_dup);
+                                        });
+                                        let res = Response { kind: None };
+                                        let _ = message::write(&mut stream, res);
+                                    }
+                                    Err(_e) => {
+                                        // TODO return error message!
+                                        let res = Response { kind: None };
+                                        let _ = message::write(&mut stream, res);
+                                    }
+                                }
+                            }
                             Some(Kind::ShutdownAll(_)) => {
-                                debug!("sched shutdown all");
+                                debug!("RPC SHUTDOWNALL received");
                                 let manager = &mut manager.lock().unwrap();
                                 manager.reset();
-                                let res = Response { kind: None }.encode_to_vec();
-                                let _ = message::send_to(&mut stream, res);
+                                let res = Response { kind: None };
+                                let _ = message::write(&mut stream, res);
                             }
-                            Some(Kind::UpdateResource(buf)) => {
-                                debug!("sched update resouce");
+                            Some(Kind::UpdateResource(bytes)) => {
+                                debug!("RPC UPDATE received");
                                 let manager = &mut manager.lock().unwrap();
                                 let info = serde_json::from_slice::
-                                            <LocalResourceManagerInfo>(&buf);
+                                            <LocalResourceManagerInfo>(&bytes);
                                 if let Ok(info) = info {
-                                    let addr = stream.peer_addr().unwrap();
+                                    let addr = stream.peer_addr().unwrap().ip();
                                     manager.update(addr, info);
-                                    let res = Response { kind: None }.encode_to_vec();
-                                    let _ = message::send_to(&mut stream, res);
+                                    let res = Response { kind: None };
+                                    let _ = message::write(&mut stream, res);
                                 } else {
                                     // TODO send error code
-                                    let res = Response { kind: None }.encode_to_vec();
-                                    let _ = message::send_to(&mut stream, res);
+                                    let res = Response { kind: None };
+                                    let _ = message::write(&mut stream, res);
                                 }
                             }
                             _ => {}
@@ -169,6 +196,6 @@ impl Iterator for SchedGateway {
     type Item = ();
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.rx.recv().ok()
+        self.rx.lock().unwrap().recv().ok()
     }
 }

@@ -34,7 +34,6 @@ pub struct Request {
 }
 
 impl Default for Request {
-    #[allow(unconditional_recursion)]
     fn default() -> Self {
         Request {
             function: Default::default(),

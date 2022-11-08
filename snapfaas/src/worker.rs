@@ -18,6 +18,7 @@ use crate::vm;
 use crate::metrics::{self, RequestTimestamps};
 use crate::resource_manager;
 use crate::sched;
+use crate::sched::Scheduler;
 
 // one hour
 const FLUSH_INTERVAL_SECS: u64 = 3600;
@@ -32,6 +33,7 @@ fn handle_request(
     req: Request,
     // rsp_sender: Sender<Response>,
     // func_req_sender: Sender<Message>,
+    sched: &Scheduler,
     vm_req_sender: Sender<Message>,
     vm_listener: UnixListener,
     // mut tsps: RequestTimestamps,
@@ -60,7 +62,7 @@ fn handle_request(
                 if !vm.is_launched() {
                     // newly allocated VM is returned, launch it first
                     if let Err(e) = vm.launch(
-                        None, // TODO invoke handle using scheduler
+                        Some(sched.clone()),
                         vm_listener.try_clone().expect("clone unix listener"),
                         cid, false,
                         None,
@@ -89,7 +91,7 @@ fn handle_request(
                     Ok(rsp) => {
                         // tsps.completed = precise_time_ns();
                         // TODO: output are currently ignored
-                        debug!("{:?}", rsp);
+                        // debug!("{:?}", rsp);
                         response = Some(rsp.as_bytes().to_vec());
                         vm_req_sender.send(Message::ReleaseVm(vm)).expect("Failed to send ReleaseVm request");
                         break RequestStatus::SentToVM(rsp);
@@ -160,7 +162,7 @@ impl Worker {
                 Err(e) => panic!("Failed to bind to unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
             };
 
-
+            let sched = sched::Scheduler::new(sched_addr);
             loop {
                 let vm_listener_dup = match vm_listener.try_clone() {
                     Ok(listener) => listener,
@@ -170,7 +172,7 @@ impl Worker {
                 // TODO replace it to a RPC call to get the request
                 // let msg: Message = receiver.lock().unwrap().recv().unwrap();
 
-                let mut sched = sched::Scheduler::connect(&sched_addr);
+                // let mut sched = sched::Scheduler::connect(&sched_addr);
                 let message = sched.recv(); // wait for request
                 let request = {
                     use sched::message::response::Kind;
@@ -194,8 +196,8 @@ impl Worker {
                     }
                 };
 
-                let result = handle_request(request, //func_req_sender.clone(),
-                    vm_req_sender.clone(),vm_listener_dup, &mut stat, cid,
+                let result = handle_request(request, &sched, //func_req_sender.clone(),
+                    vm_req_sender.clone(), vm_listener_dup, &mut stat, cid,
                     mock_github.as_ref().map(String::as_str));
 
                 let _ = sched.retn(result.unwrap_or(vec![]));

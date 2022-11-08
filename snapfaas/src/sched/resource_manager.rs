@@ -4,7 +4,7 @@
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::net::{TcpStream, SocketAddr};
+use std::net::{TcpStream, SocketAddr, IpAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
@@ -28,38 +28,42 @@ type WorkerQueue = Arc<Mutex<Vec<TcpStream>>>;
 // }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct Node {
-    pub addr: SocketAddr,
-}
+pub struct Node(IpAddr);
 
 #[derive(Debug, Copy, Clone)]
-pub struct NodeInfo(Node, usize);
+pub struct NodeInfo {
+    pub node: Node,
+    pub num_cached: usize,
+}
+// pub struct NodeInfo(Node, usize);
 // (node, number of cached vm)
+
+type WorkerId = u64;
 
 #[derive(Debug)]
 pub struct Worker {
-    pub stream: TcpStream,
+    // pub id: WorkerId,
+    pub stream: TcpStream, // connection on demand
 }
 
-
-impl Worker {
-    fn response(&mut self) -> Result<(), Box<dyn Error>> {
-        let stream = &mut self.stream;
-        let req = Response { kind: None }
-            .encode_to_vec();
-        let _ = message::send_to(stream, req)?;
-        Ok(())
-    }
-}
-
+// impl Worker {
+    // fn response(&mut self) -> Result<(), Box<dyn Error>> {
+        // let stream = &mut self.stream;
+        // let req = Response { kind: None }
+            // .encode_to_vec();
+        // let _ = message::send_to(stream, req)?;
+        // Ok(())
+    // }
+// }
 
 
 // lets suppose a single rpc call is a TCP conn
 #[derive(Debug, Default)]
 pub struct ResourceManager {
-    total_mem: usize,
-    free_mem: usize,
-    total_num_vms: usize, // total number of vms ever created
+    // TODO per node
+    // total_mem: usize,
+    // free_mem: usize,
+    // total_num_vms: usize, // total number of vms ever created
 
     pub cached: HashMap<String, Vec<NodeInfo>>,
     pub idle: HashMap<Node, Vec<Worker>>,
@@ -84,9 +88,8 @@ impl ResourceManager {
     // }
 
     pub fn add_idle(&mut self, stream: TcpStream) {
-        let node = Node {
-            addr: stream.peer_addr().unwrap()
-        };
+        let addr = stream.peer_addr().unwrap();
+        let node = Node(addr.ip());
         let worker = Worker { stream };
         let idle = &mut self.idle;
         if let Some(v) = idle.get_mut(&node) {
@@ -98,25 +101,28 @@ impl ResourceManager {
 
     pub fn find_idle(&mut self, function: &String) -> Option<Worker> {
         let node = self.cached
-            .get_mut(function)
-            .map(|v| {
-                let n = v.first_mut().unwrap();
-                n.1 -= 1;
-                if n.1 <= 0 {
-                    v.pop().unwrap().0
-                } else {
-                    n.0.clone()
-                }
-            });
+                        .get_mut(function)
+                        .map(|v| {
+                            let fst = v.first_mut().unwrap();
+                            fst.num_cached -= 1;
+                            if fst.num_cached <= 0 {
+                                let fst = v.pop().unwrap();
+                                fst.node
+                            } else {
+                                fst.node.clone()
+                            }
+                        });
         match node {
             Some(n) => {
                 let worker = self.idle
                                 .get_mut(&n)
                                 .and_then(|v| v.pop());
                 self.idle.retain(|_, v| !v.is_empty());
+                log::debug!("find cached {:?}", worker);
                 worker
             }
             None => {
+                log::debug!("no cached {:?}", self.cached);
                 // if no such a node, simply return some woker
                 let worker = self.idle
                                 .values_mut()
@@ -134,8 +140,8 @@ impl ResourceManager {
                 let buf = "".as_bytes().to_vec();
                 let res = Response {
                     kind: Some(response::Kind::Shutdown(buf)),
-                }.encode_to_vec();
-                let _ = message::send_to(&mut w.stream, res);
+                };
+                let _ = message::write(&mut w.stream, res);
             }
         }
         self.idle.retain(|_, v| !v.is_empty());
@@ -145,24 +151,32 @@ impl ResourceManager {
         // (self.total_mem, self.total_num_vms) = (0, 0);
     }
 
-    pub fn update(&mut self, addr: SocketAddr, info: LocalResourceManagerInfo) {
-        let node = Node { addr };
+    pub fn update(&mut self, addr: IpAddr, info: LocalResourceManagerInfo) {
+        log::debug!("update {:?}", info);
+
+        let node = Node(addr);
         for (f, n) in info.stats.into_iter() {
             let nodes = self.cached.get_mut(&f);
             match nodes {
                 Some(nodes) => {
                     let nodeinfo = nodes
                                     .iter_mut()
-                                    .find(|&&mut n| n.0 == node);
+                                    .find(|&&mut n| n.node == node);
                     if let Some(nodeinfo) = nodeinfo {
-                        nodeinfo.1 = n;
+                        nodeinfo.num_cached = n;
                     } else {
-                        let nodeinfo = NodeInfo(node.clone(), n);
+                        let nodeinfo = NodeInfo {
+                            node: node.clone(),
+                            num_cached: n,
+                        };
                         nodes.push(nodeinfo);
                     }
                 }
                 None => {
-                    let nodeinfo = NodeInfo(node.clone(), n);
+                    let nodeinfo = NodeInfo {
+                        node: node.clone(),
+                        num_cached: n,
+                    };
                     let function = f.clone();
                     let _ = self.cached
                                 .insert(function, vec![nodeinfo]);
@@ -171,17 +185,17 @@ impl ResourceManager {
         }
     }
 
-    pub fn total_num_vms(&self) -> usize {
-        self.total_num_vms
-    }
+    // pub fn total_num_vms(&self) -> usize {
+        // self.total_num_vms
+    // }
 
-    pub fn total_mem(&self) -> usize {
-        self.total_mem
-    }
+    // pub fn total_mem(&self) -> usize {
+        // self.total_mem
+    // }
 
-    pub fn free_mem(&self) -> usize {
-        self.free_mem
-    }
+    // pub fn free_mem(&self) -> usize {
+        // self.free_mem
+    // }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

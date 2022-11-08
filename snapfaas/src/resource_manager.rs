@@ -11,6 +11,7 @@ use log::{error, debug};
 use crate::configs::{ResourceManagerConfig, FunctionConfig};
 use crate::vm::Vm;
 use crate::message::Message;
+use crate::sched;
 
 #[derive(Debug)]
 pub enum Error {
@@ -35,12 +36,13 @@ pub struct ResourceManager {
     pub total_num_vms: usize, // total number of vms ever created
     total_mem: usize,
     pub free_mem: usize,
+    sched_addr: String,
 }
 
 impl ResourceManager {
     /// create and return a ResourceManager value
     /// The ResourceManager value encapsulates the idle lists and function configs
-    pub fn new(config: ResourceManagerConfig) -> (Self, Sender<Message>) {
+    pub fn new(config: ResourceManagerConfig, sched_addr: String) -> (Self, Sender<Message>) {
         let mut idle = HashMap::<String, VmList>::new();
         for (name, _) in &config.functions {
             idle.insert(name.clone(), VmList::new());
@@ -56,6 +58,7 @@ impl ResourceManager {
             total_num_vms: 0,
             total_mem,
             free_mem: total_mem,
+            sched_addr,
         },
         sender)
     }
@@ -87,6 +90,7 @@ impl ResourceManager {
     /// Kicks off the single thread resource manager
     pub fn run(mut self) -> JoinHandle<()> {
         std::thread::spawn(move || {
+            let sched = sched::Scheduler::new(self.sched_addr.clone());
             loop {
                 match self.receiver.recv() {
                     Ok(msg) => {
@@ -107,8 +111,8 @@ impl ResourceManager {
                             _ => (),
                         }
                         // TODO update info
-                        // let sched = sched::Scheduler::connect(&self.sched_addr);
-                        // let _ = sched.update_resource(&self)
+                        // let mut sched = sched::Scheduler::connect(&self.sched_addr);
+                        let _ = sched.update_resource(&self);
                     }
                     Err(e) => {
                         panic!("ResourceManager cannot read requests: {:?}", e);

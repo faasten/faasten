@@ -14,6 +14,7 @@ use tokio::process::{Child, Command};
 
 use crate::configs::FunctionConfig;
 use crate::message::Message;
+use crate::sched::Scheduler;
 use crate::{blobstore, syscalls};
 use crate::request::Request;
 use crate::labeled_fs::{self, DBENV};
@@ -118,7 +119,8 @@ struct VmHandle {
     // killed, before the VmHandle is dropped.
     vm_process: Child,
     // None when VM is created from single-VM launcher
-    invoke_handle: Option<Sender<Message>>,
+    // invoke_handle: Option<Sender<Message>>,
+    invoke_handle: Option<Scheduler>,
 }
 
 #[derive(Debug)]
@@ -174,7 +176,8 @@ impl Vm {
     /// When this function returns, the VM has finished booting and is ready to accept requests.
     pub fn launch(
         &mut self,
-        invoke_handle: Option<Sender<Message>>,
+        // invoke_handle: Option<Sender<Message>>,
+        invoke_handle: Option<Scheduler>,
         vm_listener: UnixListener,
         cid: u32,
         force_exit: bool,
@@ -342,7 +345,7 @@ impl Vm {
     fn send_req(&self, invoke: syscalls::Invoke) -> bool {
         use time::precise_time_ns;
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
-            let (tx, _) = mpsc::channel();
+            // let (tx, _) = mpsc::channel();
             let req = Request {
                 label: self.current_label.clone(),
                 function: invoke.function,
@@ -358,8 +361,8 @@ impl Vm {
             // TODO fix this!
             // invoke_handle sends a request to the worker
             // we need to route it to the scheduler though a RPC
-            invoke_handle.send(Message::Request2((req, tx, timestamps))).is_ok();
-            false
+            // invoke_handle.send(Message::Request2((req, tx, timestamps))).is_ok();
+            invoke_handle.invoke(req.to_vec()).is_ok()
         } else {
             debug!("No invoke handle, ignoring invoke syscall. {:?}", invoke);
             false

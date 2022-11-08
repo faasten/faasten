@@ -70,21 +70,6 @@ fn main() {
         )
         .get_matches();
 
-    // populate the in-memory config struct
-    let config_path = matches.value_of("config").unwrap();
-    let config = configs::ResourceManagerConfig::new(config_path);
-
-    // create the local resource manager
-    let (mut manager, manager_sender) = ResourceManager::new(config);
-
-    // set total memory
-    let total_mem = matches
-                        .value_of("total memory")
-                        .unwrap()
-                        .parse::<usize>()
-                        .expect("Total memory is not a valid integer");
-    manager.set_total_mem(total_mem);
-
     // intialize remote scheduler
     let sched_addr = matches
                         .value_of("scheduler listen address")
@@ -97,6 +82,21 @@ fn main() {
     let mut schedgate = sched::gateway::SchedGateway::listen(
         &sched_addr, Some(Arc::clone(&sched_resman))
     );
+
+    // populate the in-memory config struct
+    let config_path = matches.value_of("config").unwrap();
+    let config = configs::ResourceManagerConfig::new(config_path);
+
+    // create the local resource manager
+    let (mut manager, manager_sender) = ResourceManager::new(config, sched_addr.clone());
+
+    // set total memory
+    let total_mem = matches
+                        .value_of("total memory")
+                        .unwrap()
+                        .parse::<usize>()
+                        .expect("Total memory is not a valid integer");
+    manager.set_total_mem(total_mem);
 
     // create the worker pool
     let mock_github = matches.value_of("mock github").map(String::from);
@@ -159,8 +159,8 @@ fn set_ctrlc_handler(
     ctrlc::set_handler(move || {
         println!("ctrlc handler");
         warn!("{}", "Handling Ctrl-C. Shutting down...");
-        let _ = sched::Scheduler::connect(&sched_addr)
-            .shutdown_all();
+        let sched = sched::Scheduler::new(sched_addr.clone());
+        let _ = sched.shutdown_all();
         while let Some(worker) = pool.pop() {
             worker.join().expect("failed to join worker thread");
         }
