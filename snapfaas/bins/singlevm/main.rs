@@ -222,7 +222,7 @@ fn main() {
 
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
-    let mut vm =  Vm::new(id, firerunner, "myapp".to_string(), vm_app_config, allow_network);
+    let mut vm =  Vm::new(id, firerunner, "myapp".to_string(), vm_app_config, allow_network, snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV));
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
     let _ = std::fs::remove_file(&vm_listener_path);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");

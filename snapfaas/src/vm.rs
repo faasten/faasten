@@ -18,7 +18,8 @@ use crate::configs::FunctionConfig;
 use crate::message::Message;
 use crate::{blobstore, syscalls};
 use crate::request::Request;
-use crate::labeled_fs::{self, DBENV};
+use crate::labeled_fs::DBENV;
+use crate::fs;
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
@@ -142,6 +143,7 @@ pub struct Vm {
     create_blobs: HashMap<u64, blobstore::NewBlob>,
     blobs: HashMap<u64, blobstore::Blob>,
     max_blob_id: u64,
+    fs: fs::FS<&'static lmdb::Environment>,
 }
 
 impl Vm {
@@ -152,6 +154,7 @@ impl Vm {
         function_name: String,
         function_config: FunctionConfig,
         allow_network: bool,
+        fs: fs::FS<&'static lmdb::Environment>,
     ) -> Self {
         Vm {
             id,
@@ -169,6 +172,7 @@ impl Vm {
             create_blobs: Default::default(),
             blobs: Default::default(),
             max_blob_id: 0,
+            fs,
         }
     }
 
@@ -489,38 +493,63 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsRead(req)) => {
+                    let value = fs::utils::read_path(&self.fs, req.path.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                        match entry {
+                            fs::DirEntry::Directory(_) => None,
+                            fs::DirEntry::File(file) => self.fs.read(&file).ok()
+                        }
+                    });
                     let result = syscalls::ReadKeyResponse {
-                        value: labeled_fs::read(req.path.as_str(), &mut self.current_label).ok(),
-                    }
-                    .encode_to_vec();
+                        value
+                    }.encode_to_vec();
 
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsWrite(req)) => {
+                    let value = fs::utils::read_path(&self.fs, req.path.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                        match entry {
+                            fs::DirEntry::Directory(_) => None,
+                            fs::DirEntry::File(file) => self.fs.write(&file, &req.data).ok()
+                        }
+                    });
                     let result = syscalls::WriteKeyResponse {
-                        success: labeled_fs::write(req.path.as_str(), req.data, &mut self.current_label).is_ok(),
+                        success: value.is_some()
                     }
                     .encode_to_vec();
 
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsCreateDir(req)) => {
-                    let label = proto_label_to_dc_label(req.label.expect("label"));
+                    let label = proto_label_to_dc_label(req.label.clone().expect("label"));
+                    let value = fs::utils::read_path(&self.fs, req.base_dir.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                        match entry {
+                            fs::DirEntry::Directory(dir) => {
+                                let newdir = self.fs.create_directory(label);
+                                self.fs.link(&dir, req.name, fs::DirEntry::Directory(newdir)).ok()
+                            },
+                            fs::DirEntry::File(_) => None,
+                        }
+                    });
                     let result = syscalls::WriteKeyResponse {
-                        success: labeled_fs::create_dir(
-                            req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
-                        ).is_ok(),
+                        success: value.is_some()
                     }
                     .encode_to_vec();
 
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsCreateFile(req)) => {
-                    let label = proto_label_to_dc_label(req.label.expect("label"));
+                    let label = proto_label_to_dc_label(req.label.clone().expect("label"));
+                    let value = fs::utils::read_path(&self.fs, req.base_dir.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                        match entry {
+                            fs::DirEntry::Directory(dir) => {
+                                let newfile = self.fs.create_file(label);
+                                self.fs.link(&dir, req.name, fs::DirEntry::File(newfile)).ok()
+                            },
+                            fs::DirEntry::File(_) => None,
+                        }
+                    });
                     let result = syscalls::WriteKeyResponse {
-                        success: labeled_fs::create_file(
-                            req.base_dir.as_str(), req.name.as_str(), label, &mut self.current_label
-                        ).is_ok(),
+                        success: value.is_some()
                     }
                     .encode_to_vec();
 
