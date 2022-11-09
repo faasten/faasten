@@ -24,9 +24,9 @@ path = "bins/sfclient/main.rs"
 name = "sfdb"
 path = "bins/sfdb/main.rs"
 
-[[bin]]
-name = "sffs"
-path = "bins/sffs/main.rs"
+#[[bin]]
+#name = "sffs"
+#path = "bins/sffs/main.rs"
 
 [[bin]]
 name = "sfblob"
