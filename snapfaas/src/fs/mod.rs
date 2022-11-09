@@ -16,7 +16,7 @@ pub trait BackingStore {
     fn get<K: AsRef<[u8]>>(&self, key: K) -> Option<Vec<u8>>;
     fn put<K: AsRef<[u8]>, V: AsRef<[u8]>>(&self, key: K, value: V);
     fn add<K: AsRef<[u8]>, V: AsRef<[u8]>>(&self, key: K, value: V) -> bool;
-    fn cas<K: AsRef<[u8]>, V: AsRef<[u8]>>(&self, key: K, expected: Option<V>, value: V) -> Option<Vec<u8>>;
+    fn cas<K: AsRef<[u8]>, V: AsRef<[u8]>>(&self, key: K, expected: Option<V>, value: V) -> Result<(), Option<Vec<u8>>>;
 }
 
 impl BackingStore for lmdb::Environment {
@@ -46,15 +46,15 @@ impl BackingStore for lmdb::Environment {
         res
     }
 
-    fn cas<K: AsRef<[u8]>, V: AsRef<[u8]>>(&self, key: K, expected: Option<V>, value: V) -> Option<Vec<u8>> {
+    fn cas<K: AsRef<[u8]>, V: AsRef<[u8]>>(&self, key: K, expected: Option<V>, value: V) -> Result<(), Option<Vec<u8>>> {
         let db = self.open_db(None).unwrap();
         let mut txn = self.begin_rw_txn().unwrap();
         let old = txn.get(db, &key.as_ref()).ok().map(Into::into);
         let res = if expected.map(|e| Vec::from(e.as_ref())) == old {
             let _ = txn.put(db, &key.as_ref(), &value.as_ref(), WriteFlags::empty());
-            None
+            Ok(())
         } else {
-            Some(Vec::new())
+            Err(old)
         };
         txn.commit().unwrap();
         res
@@ -156,15 +156,15 @@ impl<S: BackingStore> FS<S> {
             if !current_label.borrow().can_flow_to(&dir.label) {
                 return Err(LinkError::LabelError(LabelError::CannotWrite));
             }
-            let mut raw_dir = self.storage.get(dir.object_id.to_be_bytes());
+            let mut raw_dir: Option<Vec<u8>> = self.storage.get(dir.object_id.to_be_bytes());
             loop {
                 let mut dir_contents: HashMap<String, DirEntry> = raw_dir.as_ref().and_then(|dir_contents| serde_json::from_slice(dir_contents.as_slice()).ok()).unwrap_or_default();
                 if let Some(_) = dir_contents.insert(name.clone(), direntry.clone()) {
                     return Err(LinkError::Exists)
                 }
-                raw_dir = self.storage.cas(dir.object_id.to_be_bytes(), raw_dir, serde_json::to_vec(&dir_contents).unwrap_or((&b"{}"[..]).into()).into());
-                if raw_dir.is_none() {
-                    return Ok(name)
+                match self.storage.cas(dir.object_id.to_be_bytes(), raw_dir, serde_json::to_vec(&dir_contents).unwrap_or_default()) {
+                    Ok(()) => return Ok(name),
+                    Err(rd) => raw_dir = rd,
                 }
             }
         })
@@ -184,9 +184,9 @@ impl<S: BackingStore> FS<S> {
                 if dir_contents.remove(&name).is_none() {
                     return Err(UnlinkError::DoesNotExists)
                 }
-                raw_dir = self.storage.cas(dir.object_id.to_be_bytes(), raw_dir, serde_json::to_vec(&dir_contents).unwrap_or((&b"{}"[..]).into()).into());
-                if raw_dir.is_none() {
-                    return Ok(name)
+                match self.storage.cas(dir.object_id.to_be_bytes(), raw_dir, serde_json::to_vec(&dir_contents).unwrap_or_default()) {
+                    Ok(()) => return Ok(name),
+                    Err(rd) => raw_dir = rd,
                 }
             }
         })
