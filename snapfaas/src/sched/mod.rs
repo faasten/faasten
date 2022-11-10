@@ -8,8 +8,6 @@ use std::thread;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use prost::Message;
-
 use crate::request::Request as HTTPRequest;
 use crate::resource_manager::ResourceManager
     as LocalResourceManger;
@@ -20,13 +18,14 @@ use self::message::{
 };
 use self::resource_manager::LocalResourceManagerInfo;
 
+/// This method schedules a http request to a remote worker
 pub fn schedule(
     request: HTTPRequest, resman: self::gateway::Manager,
 ) -> Result<(), Box<dyn Error>> {
     let mut resman = resman.lock().unwrap();
     let function = &request.function;
 
-    // FIXME no idle worker found
+    // TODO when no idle worker found
     let mut stream = resman
         .find_idle(function)
         .map(|w| w.stream)
@@ -41,31 +40,16 @@ pub fn schedule(
     };
     let _ = message::write(&mut stream, res)?;
 
-    // receive response
-    // TODO move this to sched::gateway,
-    // because we want each RPC to make a connection on demand
-    // let req = message::recv_from(&mut stream)
-        // .and_then(|b| {
-            // let req = request::decode(&b[..])?;
-            // ok(req)
-        // });
-    // let res = response {
-        // kind: none
-    // }.encode_to_vec();
-    // let _ = message::send_to(&MUt stream, res);
-    // debug!("sched recv from worker {:?}", req);
-    // debug!("schedule end");
-
+    // response are received as an message
     Ok(())
 }
 
 
 
-// RPC calls
+/// RPC calls
 #[derive(Debug, Clone)]
 pub struct Scheduler {
     addr: String,
-    // stream: TcpStream,
 }
 
 impl Scheduler {
@@ -121,6 +105,7 @@ impl Scheduler {
     }
 
 
+    /// This method is to shutdown all workers (for debug)
     pub fn shutdown_all(&self) -> Result<(), Box<dyn Error>> {
         let mut stream = self.connect()?;
         let buf = "".as_bytes().to_vec();
@@ -132,8 +117,8 @@ impl Scheduler {
         Ok(())
     }
 
-    // TODO This method is for local resource managers to
-    // update it's resource status, such as number of cached VMs per function
+    /// This method is for local resource managers to update it's
+    /// resource status, such as number of cached VMs per function
     pub fn update_resource(
         &self,
         manager: &LocalResourceManger

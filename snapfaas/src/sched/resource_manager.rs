@@ -1,15 +1,14 @@
 //! This resource manager maintains a global resource
 //! state across worker nodes.
 
-use std::error::Error;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::net::{TcpStream, SocketAddr, IpAddr};
-use std::sync::atomic::{AtomicUsize, Ordering};
+// use std::error::Error;
+// use std::sync::{Arc, Mutex};
+// use std::thread;
+use std::net::{TcpStream, IpAddr};
+// use std::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
-use prost::Message;
 use super::{
     message,
     message::{
@@ -18,25 +17,14 @@ use super::{
     },
 };
 
-
-type WorkerQueue = Arc<Mutex<Vec<TcpStream>>>;
-
-// #[derive(Debug)]
-// pub struct VmList {
-    // num_vms: AtomicUsize,
-    // list: Mutex<Vec<Vm>>,
-// }
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Node(IpAddr);
 
 #[derive(Debug)]
 pub struct NodeInfo {
     pub node: Node,
-    // pub num_cached: usize,
-    // pub workers: Vec<Worker>,
-    total_mem: usize,
-    free_mem: usize,
+    _total_mem: usize,
+    _free_mem: usize,
     dirty: bool,
 }
 
@@ -45,8 +33,8 @@ impl NodeInfo {
         NodeInfo {
             node,
             dirty: false,
-            total_mem: Default::default(),
-            free_mem: Default::default(),
+            _total_mem: Default::default(),
+            _free_mem: Default::default(),
         }
     }
 
@@ -81,19 +69,15 @@ pub struct Worker {
 // }
 
 
-// lets suppose a single rpc call is a TCP conn
+/// Global resource manager
 #[derive(Debug, Default)]
 pub struct ResourceManager {
-    // TODO per node
-    // total_mem: usize,
-    // free_mem: usize,
-    // total_num_vms: usize, // total number of vms ever created
-
-    // pub cached: HashMap<String, Vec<NodeInfo>>,
+    // TODO garbage collection
     pub info: HashMap<Node, NodeInfo>,
+    // Locations of cached VMs for a function
     pub cached: HashMap<String, Vec<(Node, usize)>>,
-    // if no workers, we remove the entry out of idle
-    // that's why we have another table to store info
+    // If no idle workers, we simply remove the entry out of
+    // the hashmap, which is why we need another struct to store info
     pub idle: HashMap<Node, Vec<Worker>>,
 }
 
@@ -132,14 +116,20 @@ impl ResourceManager {
                     .and_then(|v| {
                         let fst = v
                             .iter_mut()
+                            // Find the first safe node
                             .find(|n| {
                                 let i = info.get(&n.0).unwrap();
                                 !i.dirty()
                             })
+                            // Update cached number for this node
+                            // because we are going to use one of
+                            // it's idle workers. A cached VM always
+                            // implies an idle worker, but not the opposite
                             .map(|n| {
                                 n.1 -= 1;
                                 n.0.clone()
                             });
+                        // Remove the entry if no more cached VM remains
                         v.retain(|n| n.1 != 0);
                         fst
                     });
@@ -154,15 +144,15 @@ impl ResourceManager {
             }
             None => {
                 log::debug!("no cached {:?}", self.cached);
-                // if no such a node, simply return some woker
+                // If no cached, simply return some worker
                 let worker = self.idle
                                 .values_mut()
                                 .next()
                                 .and_then(|v| v.pop());
-                // mark the node dirty because it is has
-                // the cached function. This indicates an implicit
-                // eviction on the remote worker node, thus we
-                // can't make decision based on it unless confirmed
+                // Mark the node dirty because it may or may not have
+                // some cached function. This indicates an implicit
+                // eviction on the remote worker node, thus we can't
+                // further make decisions based on it unless confirmed
                 if let Some(w) = worker.as_ref() {
                     let addr = w.stream
                                 .peer_addr().unwrap().ip();
@@ -172,6 +162,7 @@ impl ResourceManager {
                         .unwrap()
                         .set_dirty(true);
                 }
+                // Remove the entry if no more idle remains
                 self.idle.retain(|_, v| !v.is_empty());
                 worker
             }

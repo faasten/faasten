@@ -13,8 +13,6 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use prost::Message;
-
 // FIXME tmp
 type RequestInfo = (request::Request, RequestTimestamps);
 pub type Manager = Arc<Mutex<ResourceManager>>;
@@ -105,11 +103,12 @@ impl Gateway for SchedGateway {
         debug!("Gateway started listening on: {:?}", addr);
 
         let manager = manager.expect("No Resource Manager Found!");
-        // let manager_dup = Arc::clone(&manager);
+        // to wait for resource before scheduling
         let (tx, rx) = mpsc::channel();
         let rx = Arc::new(Mutex::new(rx));
         let rx_dup = Arc::clone(&rx);
 
+        // handle incoming RPC requests
         thread::spawn(move || {
             for stream in listener.incoming() {
                 if let Ok(mut stream) = stream {
@@ -118,7 +117,7 @@ impl Gateway for SchedGateway {
                     let tx = tx.clone();
                     let rx = Arc::clone(&rx_dup);
 
-                    // process RPC request form stream
+                    // process the RPC request
                     thread::spawn(move || {
                         use message::{request::Kind, Response};
                         let req = message::read_request(&mut stream);
@@ -128,7 +127,7 @@ impl Gateway for SchedGateway {
                                 debug!("RPC BEGIN received {:?}", id);
                                 let manager = &mut manager.lock().unwrap();
                                 manager.add_idle(stream);
-                                let _ = tx.send(());
+                                let _ = tx.send(()); // notify
                             }
                             Some(Kind::Finish(bytes)) => {
                                 let result = String::from_utf8(bytes);
