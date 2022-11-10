@@ -30,11 +30,35 @@ type WorkerQueue = Arc<Mutex<Vec<TcpStream>>>;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Node(IpAddr);
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
 pub struct NodeInfo {
     pub node: Node,
-    pub num_cached: usize,
+    // pub num_cached: usize,
+    // pub workers: Vec<Worker>,
+    total_mem: usize,
+    free_mem: usize,
+    dirty: bool,
 }
+
+impl NodeInfo {
+    fn new(node: Node) -> Self {
+        NodeInfo {
+            node,
+            dirty: false,
+            total_mem: Default::default(),
+            free_mem: Default::default(),
+        }
+    }
+
+    fn dirty(&self) -> bool {
+        self.dirty
+    }
+
+    fn set_dirty(&mut self, v: bool) {
+        self.dirty = v;
+    }
+}
+
 // pub struct NodeInfo(Node, usize);
 // (node, number of cached vm)
 
@@ -65,11 +89,12 @@ pub struct ResourceManager {
     // free_mem: usize,
     // total_num_vms: usize, // total number of vms ever created
 
-    pub cached: HashMap<String, Vec<NodeInfo>>,
+    // pub cached: HashMap<String, Vec<NodeInfo>>,
+    pub info: HashMap<Node, NodeInfo>,
+    pub cached: HashMap<String, Vec<(Node, usize)>>,
+    // if no workers, we remove the entry out of idle
+    // that's why we have another table to store info
     pub idle: HashMap<Node, Vec<Worker>>,
-
-    // pub cached: HashMap<String, Vec<Node>>,
-    // pub idle: Vec<Worker>,
 }
 
 impl ResourceManager {
@@ -90,6 +115,7 @@ impl ResourceManager {
     pub fn add_idle(&mut self, stream: TcpStream) {
         let addr = stream.peer_addr().unwrap();
         let node = Node(addr.ip());
+        let _ = self.try_add_node(&node);
         let worker = Worker { stream };
         let idle = &mut self.idle;
         if let Some(v) = idle.get_mut(&node) {
@@ -100,18 +126,23 @@ impl ResourceManager {
     }
 
     pub fn find_idle(&mut self, function: &String) -> Option<Worker> {
+        let info = &self.info;
         let node = self.cached
-                        .get_mut(function)
-                        .map(|v| {
-                            let fst = v.first_mut().unwrap();
-                            fst.num_cached -= 1;
-                            if fst.num_cached <= 0 {
-                                let fst = v.pop().unwrap();
-                                fst.node
-                            } else {
-                                fst.node.clone()
-                            }
-                        });
+                    .get_mut(function)
+                    .and_then(|v| {
+                        let fst = v
+                            .iter_mut()
+                            .find(|n| {
+                                let i = info.get(&n.0).unwrap();
+                                !i.dirty()
+                            })
+                            .map(|n| {
+                                n.1 -= 1;
+                                n.0.clone()
+                            });
+                        v.retain(|n| n.1 != 0);
+                        fst
+                    });
         match node {
             Some(n) => {
                 let worker = self.idle
@@ -128,6 +159,19 @@ impl ResourceManager {
                                 .values_mut()
                                 .next()
                                 .and_then(|v| v.pop());
+                // mark the node dirty because it is has
+                // the cached function. This indicates an implicit
+                // eviction on the remote worker node, thus we
+                // can't make decision based on it unless confirmed
+                if let Some(w) = worker.as_ref() {
+                    let addr = w.stream
+                                .peer_addr().unwrap().ip();
+                    let node = Node(addr);
+                    self.info
+                        .get_mut(&node)
+                        .unwrap()
+                        .set_dirty(true);
+                }
                 self.idle.retain(|_, v| !v.is_empty());
                 worker
             }
@@ -153,36 +197,62 @@ impl ResourceManager {
 
     pub fn update(&mut self, addr: IpAddr, info: LocalResourceManagerInfo) {
         log::debug!("update {:?}", info);
-
         let node = Node(addr);
-        for (f, n) in info.stats.into_iter() {
+
+        // let has_node = self.info.contains_key(&node);
+        // if has_node {
+            // self.info
+                // .get_mut(&node)
+                // .unwrap()
+                // .set_dirty(false);
+        // } else {
+            // self.info.insert(
+                // node.clone(),
+                // NodeInfo::new(node.clone())
+            // );
+        // }
+
+        let success = self.try_add_node(&node);
+        if !success {
+            self.info
+                .get_mut(&node)
+                .unwrap()
+                .set_dirty(false);
+        }
+
+        // TODO update mem info as well
+
+        for (f, num_cached) in info.stats.into_iter() {
             let nodes = self.cached.get_mut(&f);
             match nodes {
                 Some(nodes) => {
-                    let nodeinfo = nodes
-                                    .iter_mut()
-                                    .find(|&&mut n| n.node == node);
-                    if let Some(nodeinfo) = nodeinfo {
-                        nodeinfo.num_cached = n;
+                    let n = nodes
+                            .iter_mut()
+                            .find(|&&mut n| n.0 == node);
+                    if let Some(n) = n {
+                        n.1 = num_cached;
                     } else {
-                        let nodeinfo = NodeInfo {
-                            node: node.clone(),
-                            num_cached: n,
-                        };
-                        nodes.push(nodeinfo);
+                        nodes.push((node.clone(), num_cached));
                     }
                 }
                 None => {
-                    let nodeinfo = NodeInfo {
-                        node: node.clone(),
-                        num_cached: n,
-                    };
-                    let function = f.clone();
-                    let _ = self.cached
-                                .insert(function, vec![nodeinfo]);
+                    let f = f.clone();
+                    let v = vec![(node.clone(), num_cached)];
+                    let _ = self.cached.insert(f, v);
                 }
             }
         }
+    }
+
+    fn try_add_node(&mut self, node: &Node) -> bool {
+        let has_node = self.info.contains_key(&node);
+        if !has_node {
+            self.info.insert(
+                node.clone(),
+                NodeInfo::new(node.clone())
+            );
+        }
+        !has_node
     }
 
     // pub fn total_num_vms(&self) -> usize {
