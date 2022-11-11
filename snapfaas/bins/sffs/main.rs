@@ -5,6 +5,7 @@ use labeled::dclabel::{self, DCLabel};
 use std::io::{Read, Write};
 
 use snapfaas::labeled_fs;
+use snapfaas::fs;
 
 fn input_to_dclabel(si_clauses: [Vec<&str>; 2]) -> DCLabel {
     let mut components = Vec::new();

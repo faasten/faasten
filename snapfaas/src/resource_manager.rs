@@ -176,7 +176,7 @@ impl ResourceManager {
             self.free_mem -= function_config.memory;
 
             debug!("Allocating new VM. ID: {:?}, App: {:?}", id, function_name);
-            Ok(Vm::new(id, self.config.firerunner_path.clone(), function_name.to_string(), function_config, self.config.allow_network))
+            Ok(Vm::new(id, self.config.firerunner_path.clone(), function_name.to_string(), function_config, self.config.allow_network, crate::fs::FS::new(&*crate::labeled_fs::DBENV)))
         } else {
             Err(Error::LowMemory(self.free_mem))
         }
