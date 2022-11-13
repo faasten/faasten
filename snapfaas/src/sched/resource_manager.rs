@@ -88,14 +88,6 @@ impl ResourceManager {
         }
     }
 
-    // pub fn find_node(&mut self, function: &String) -> Option<Node> {
-        // // return the first node founded
-        // self.cached
-            // .get_mut(function)
-            // .and_then(|v| v.pop())
-            // .map(|n| n.0)
-    // }
-
     pub fn add_idle(&mut self, stream: TcpStream) {
         let addr = stream.peer_addr().unwrap();
         let node = Node(addr.ip());
@@ -133,6 +125,8 @@ impl ResourceManager {
                         v.retain(|n| n.1 != 0);
                         fst
                     });
+        // Find idle worker
+        // FIXME assume that all workers can handle any function
         match node {
             Some(n) => {
                 let worker = self.idle
