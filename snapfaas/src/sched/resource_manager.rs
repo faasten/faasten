@@ -23,8 +23,8 @@ pub struct Node(IpAddr);
 #[derive(Debug)]
 pub struct NodeInfo {
     pub node: Node,
-    _total_mem: usize,
-    _free_mem: usize,
+    total_mem: usize,
+    free_mem: usize,
     dirty: bool,
 }
 
@@ -33,8 +33,8 @@ impl NodeInfo {
         NodeInfo {
             node,
             dirty: false,
-            _total_mem: Default::default(),
-            _free_mem: Default::default(),
+            total_mem: Default::default(),
+            free_mem: Default::default(),
         }
     }
 
@@ -190,19 +190,6 @@ impl ResourceManager {
         log::debug!("update {:?}", info);
         let node = Node(addr);
 
-        // let has_node = self.info.contains_key(&node);
-        // if has_node {
-            // self.info
-                // .get_mut(&node)
-                // .unwrap()
-                // .set_dirty(false);
-        // } else {
-            // self.info.insert(
-                // node.clone(),
-                // NodeInfo::new(node.clone())
-            // );
-        // }
-
         let success = self.try_add_node(&node);
         if !success {
             self.info
@@ -212,6 +199,11 @@ impl ResourceManager {
         }
 
         // TODO update mem info as well
+        let nodeinfo = self.info
+                            .get_mut(&node)
+                            .unwrap();
+        nodeinfo.total_mem = info.total_mem;
+        nodeinfo.free_mem = info.free_mem;
 
         for (f, num_cached) in info.stats.into_iter() {
             let nodes = self.cached.get_mut(&f);
@@ -235,6 +227,19 @@ impl ResourceManager {
         }
     }
 
+    pub fn remove(&mut self, addr: IpAddr) {
+        let node = Node(addr);
+        // They must have no idle worker
+        for (_, v) in self.cached.iter_mut() {
+            if let Some(pos) = v.iter().position(|&n| n.0 == node) {
+                // This doesn't preserve ordering
+                v.swap_remove(pos);
+            }
+        }
+        self.info.remove(&node);
+        self.idle.remove(&node);
+    }
+
     fn try_add_node(&mut self, node: &Node) -> bool {
         let has_node = self.info.contains_key(&node);
         if !has_node {
@@ -245,18 +250,6 @@ impl ResourceManager {
         }
         !has_node
     }
-
-    // pub fn total_num_vms(&self) -> usize {
-        // self.total_num_vms
-    // }
-
-    // pub fn total_mem(&self) -> usize {
-        // self.total_mem
-    // }
-
-    // pub fn free_mem(&self) -> usize {
-        // self.free_mem
-    // }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

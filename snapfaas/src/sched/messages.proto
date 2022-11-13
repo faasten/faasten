@@ -18,8 +18,9 @@ message Request {
         bytes invoke = 3; // request bytes
         // Local resource manager
         bytes updateResource = 4;
+        bytes dropResource = 5;
         // Debug
-        bytes shutdownAll = 5;
+        bytes shutdownAll = 6;
     }
 }
 

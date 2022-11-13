@@ -106,13 +106,20 @@ impl ResourceManager {
                             }
                             Message::Shutdown => {
                                 // TODO info remote resource manager
+                                debug!("local resource manager shutdown received");
+                                let _ = sched.drop_resource();
                                 return;
                             }
                             _ => (),
                         }
                         // TODO update info
-                        // let mut sched = sched::Scheduler::connect(&self.sched_addr);
-                        let _ = sched.update_resource(&self);
+                        use sched::resource_manager::LocalResourceManagerInfo;
+                        let info = LocalResourceManagerInfo {
+                            stats: self.get_vm_stats(),
+                            total_mem: self.total_mem(),
+                            free_mem: self.free_mem(),
+                        };
+                        let _ = sched.update_resource(info);
                     }
                     Err(e) => {
                         panic!("ResourceManager cannot read requests: {:?}", e);
