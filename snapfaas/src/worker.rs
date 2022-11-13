@@ -31,8 +31,6 @@ pub struct Worker {
 
 fn handle_request(
     req: Request,
-    // rsp_sender: Sender<Response>,
-    // func_req_sender: Sender<Message>,
     sched: &Scheduler,
     vm_req_sender: Sender<Message>,
     vm_listener: UnixListener,
@@ -130,7 +128,6 @@ fn handle_request(
 
     response
 
-    // TODO send result back to the scheduler
     // let _ = rsp_sender.send(Response {
         // status: result
     // });
@@ -141,9 +138,7 @@ fn handle_request(
 
 impl Worker {
     pub fn new(
-        // receiver: Arc<Mutex<Receiver<Message>>>, // from worker pool
-        vm_req_sender: Sender<Message>, // to local resource manager
-        // func_req_sender: Sender<Message>, // to worker pool?
+        vm_req_sender: Sender<Message>,
         cid: u32,
         mock_github: Option<String>,
         sched_addr: String,
@@ -169,10 +164,6 @@ impl Worker {
                     Err(e) => panic!("Failed to clone unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
                 };
 
-                // TODO replace it to a RPC call to get the request
-                // let msg: Message = receiver.lock().unwrap().recv().unwrap();
-
-                // let mut sched = sched::Scheduler::connect(&sched_addr);
                 let message = sched.recv(); // wait for request
                 let request = {
                     use sched::message::response::Kind;
@@ -189,37 +180,24 @@ impl Worker {
                                     stat.flush();
                                     return;
                                 }
-                                _ => continue,
+                                _ => {
+                                    error!("[Worker {:?}] Invalid response: {:?}", id, res);
+                                    continue
+                                }
                             }
                         }
-                        Err(_) => continue,
+                        Err(_) => {
+                            error!("[Worker {:?}] Invalid message: {:?}", id, message);
+                            continue
+                        }
                     }
                 };
 
-                let result = handle_request(request, &sched, //func_req_sender.clone(),
+                let result = handle_request(request, &sched,
                     vm_req_sender.clone(), vm_listener_dup, &mut stat, cid,
                     mock_github.as_ref().map(String::as_str));
 
-                let _ = sched.retn(result.unwrap_or(vec![]));
-
-
-
-                // match msg {
-                    // // To shutdown, dump collected statistics and then terminate
-                    // Message::Shutdown => {
-                        // debug!("[Worker {:?}] shutdown received", id);
-                        // stat.flush();
-                        // return;
-                    // }
-                    // Message::Request((req, tsps)) => {
-                        // handle_request(req, rsp_sender, func_req_sender.clone(), vm_req_sender.clone(),
-                            // vm_listener_dup, tsps, &mut stat, cid,
-                            // mock_github.as_ref().map(String::as_str))
-                    // }
-                    // _ => {
-                        // error!("[Worker {:?}] Invalid message: {:?}", id, msg);
-                    // }
-                // }
+                let _ = sched.retn(result.unwrap_or(vec![])); // return the result
             }
         });
 
