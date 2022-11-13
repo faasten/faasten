@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use snapfaas::sched::{
     schedule,
+    Scheduler,
     gateway::{
         Gateway,
         HTTPGateway,
@@ -47,6 +48,9 @@ fn main() {
     let manager_dup = Arc::clone(&manager);
     let mut schedgate = SchedGateway::listen(&sched_addr, Some(manager_dup));
 
+    // Register signal handler
+    set_ctrlc_handler(sched_addr.clone());
+
     // Start HTTP gateway
     if let Some(l) = matches.value_of("http listen address") {
         let gateway = HTTPGateway::listen(l, None);
@@ -60,4 +64,13 @@ fn main() {
             }
         }
     }
+}
+
+fn set_ctrlc_handler(sched_addr: String) {
+    ctrlc::set_handler(move || {
+        log::warn!("{}", "Handling Ctrl-C. Shutting down...");
+        let sched = Scheduler::new(sched_addr.clone());
+        let _ = sched.shutdown_all();
+        std::process::exit(0);
+    }).expect("Error setting Ctrl-C handler");
 }
