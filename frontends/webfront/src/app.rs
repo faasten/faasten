@@ -234,7 +234,7 @@ impl App {
         let txn = self.dbenv.begin_ro_txn().unwrap();
         let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
         txn.commit().expect("commit");
-        if !(admins.contains(&login) || ["start_assignment", "add_to_repo", "delete_repo"].contains(&function_name.as_str())) {
+        if !(admins.contains(&login) || ["start_assignment", "add_to_repo", "delete_repo", "cos326_find_ungraded", "cos326_find_not_submitted"].contains(&function_name.as_str())) {
             return Err(Response::json(&serde_json::json!({ "error": "user not authorized to make request" })).with_status_code(401))
         }
 

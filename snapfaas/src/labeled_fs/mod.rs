@@ -8,6 +8,7 @@ lazy_static::lazy_static! {
         
         lmdb::Environment::new()
             .set_map_size(100 * 1024 * 1024 * 1024)
+            .set_max_readers(1024)
             .open(std::path::Path::new("storage"))
             .unwrap()
     };
