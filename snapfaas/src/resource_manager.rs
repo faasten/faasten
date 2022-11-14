@@ -105,14 +105,12 @@ impl ResourceManager {
                                 self.delete(vm);
                             }
                             Message::Shutdown => {
-                                // TODO info remote resource manager
                                 debug!("local resource manager shutdown received");
                                 let _ = sched.drop_resource();
                                 return;
                             }
                             _ => (),
                         }
-                        // TODO update info
                         use sched::resource_manager::LocalResourceManagerInfo;
                         let info = LocalResourceManagerInfo {
                             stats: self.get_vm_stats(),

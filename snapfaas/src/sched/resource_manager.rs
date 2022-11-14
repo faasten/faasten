@@ -184,6 +184,7 @@ impl ResourceManager {
         log::debug!("update {:?}", info);
         let node = Node(addr);
 
+        // Set node to not dirty bc we are sure of its state
         let success = self.try_add_node(&node);
         if !success {
             self.info
@@ -192,13 +193,14 @@ impl ResourceManager {
                 .set_dirty(false);
         }
 
-        // TODO update mem info as well
+        // Update mem info as well
         let nodeinfo = self.info
                             .get_mut(&node)
                             .unwrap();
         nodeinfo.total_mem = info.total_mem;
         nodeinfo.free_mem = info.free_mem;
 
+        // Update number of cached VMs per funciton
         for (f, num_cached) in info.stats.into_iter() {
             let nodes = self.cached.get_mut(&f);
             match nodes {
