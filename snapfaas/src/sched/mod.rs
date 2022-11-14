@@ -121,17 +121,24 @@ impl Scheduler {
     /// resource status, such as number of cached VMs per function
     pub fn update_resource(
         &self,
-        manager: &LocalResourceManger
+        info: LocalResourceManagerInfo
     ) -> Result<(), Box<dyn Error>> {
         let mut stream = self.connect()?;
-        let info = LocalResourceManagerInfo {
-            stats: manager.get_vm_stats(),
-            total_mem: manager.total_mem(),
-            free_mem: manager.free_mem(),
-        };
         let buf = serde_json::to_vec(&info).unwrap();
         let req = Request {
             kind: Some(request::Kind::UpdateResource(buf)),
+        };
+        message::write(&mut stream, req)?;
+        let _ = message::read_response(&mut stream)?;
+        Ok(())
+    }
+
+    /// TODO This method is for local resrouce managers to drop itself
+    pub fn drop_resource(&self) -> Result<(), Box<dyn Error>> {
+        let mut stream = self.connect()?;
+        let buf = "".as_bytes().to_vec();
+        let req = Request {
+            kind: Some(request::Kind::DropResource(buf)),
         };
         message::write(&mut stream, req)?;
         let _ = message::read_response(&mut stream)?;

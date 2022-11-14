@@ -2,12 +2,6 @@ syntax = "proto3";
 
 package snapfaas.sched.messages;
 
-// message Ready {
-    // uint64 id = 1;
-    // uint64 msg = 2;
-// }
-
-
 // message ShutdownAll {}
 
 message Request {
@@ -18,8 +12,9 @@ message Request {
         bytes invoke = 3; // request bytes
         // Local resource manager
         bytes updateResource = 4;
+        bytes dropResource = 5;
         // Debug
-        bytes shutdownAll = 5;
+        bytes shutdownAll = 6;
     }
 }
 

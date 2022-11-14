@@ -180,6 +180,14 @@ impl Gateway for SchedGateway {
                                     let _ = message::write(&mut stream, res);
                                 }
                             }
+                            Some(Kind::DropResource(_)) => {
+                                debug!("RPC DROP received");
+                                let manager = &mut manager.lock().unwrap();
+                                let addr = stream.peer_addr().unwrap().ip();
+                                manager.remove(addr);
+                                let res = Response { kind: None };
+                                let _ = message::write(&mut stream, res);
+                            }
                             _ => {}
                         }
                     });
