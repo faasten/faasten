@@ -279,7 +279,7 @@ pub mod utils {
                 super::DirEntry::File(_) => Err(Error::BadPath)
             }
         } else {
-            Err(Error::BadPath)
+            Ok(fs.root().into())
         }
     }
 }
