@@ -11,6 +11,12 @@ message InvokeResponse {
   bool success = 1;
 }
 
+message DupGate {
+  Component privilege = 1;
+  Component invoking = 2;
+  string gate = 3;
+}
+
 message Clause {
   // A disjuction of principals
   repeated string principals = 1;

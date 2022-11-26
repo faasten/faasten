@@ -9,6 +9,7 @@ use labeled::{dclabel::{DCLabel, Component, Principal}, Label};
 pub use errors::*;
 
 thread_local!(static CURRENT_LABEL: RefCell<DCLabel> = RefCell::new(DCLabel::public()));
+thread_local!(static PRIVILEGE: RefCell<Component> = RefCell::new(Component::DCFalse));
 
 type UID = u64;
 
@@ -168,10 +169,19 @@ impl FacetedDirectoryInner {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct Gate {
+    privilege: Component,
+    invoking: Component,
+    image: File,
+    object_id: UID,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub enum DirEntry {
     Directory(Directory),
     File(File),
     FacetedDirectory(FacetedDirectory),
+    Gate(Gate),
 }
 
 mod errors {
@@ -191,6 +201,12 @@ mod errors {
     pub enum LabelError {
         CannotRead,
         CannotWrite,
+    }
+
+    #[derive(Debug)]
+    pub enum GateError {
+        CannotDelegate,
+        CannotInvoke,
     }
 }
 
@@ -243,6 +259,54 @@ impl<S: BackingStore> FS<S> {
         FacetedDirectory {
             object_id: uid,
         }
+    }
+
+    pub fn create_gate(&self, privilege: Component, invoking: Component, image: File) -> Result<Gate, GateError> {
+        PRIVILEGE.with(|owned_privilege| {
+            if (*owned_privilege).borrow().implies(&privilege) {
+                let mut uid: UID = rand::random();
+                while !self.storage.add(&uid.to_be_bytes(), &[]) {
+                    uid = rand::random();
+                }
+                Ok(Gate{
+                    privilege,
+                    invoking,
+                    image,
+                    object_id: uid
+                })
+            } else {
+                Err(GateError::CannotDelegate)
+            }
+        })
+    }
+
+    pub fn dup_gate(&self, privilege: Component, invoking: Component, gate: &Gate) -> Result<Gate, GateError> {
+        PRIVILEGE.with(|owned_privilege| {
+            if (*owned_privilege).borrow().implies(&privilege) {
+                let mut uid: UID = rand::random();
+                while !self.storage.add(&uid.to_be_bytes(), &[]) {
+                    uid = rand::random();
+                }
+                Ok(Gate{
+                    privilege,
+                    invoking,
+                    image: gate.image.clone(),
+                    object_id: uid
+                })
+            } else {
+                Err(GateError::CannotDelegate)
+            }
+        })
+    }
+
+    pub fn invoke_gate(&self, gate: &Gate) -> Result<File, GateError> {
+        CURRENT_LABEL.with(|current_label| {
+            if (*current_label).borrow().integrity.implies(&gate.invoking) {
+                Ok(gate.image.clone())
+            } else {
+                Err(GateError::CannotInvoke)
+            }
+        })
     }
 
     pub fn list(&self, dir: Directory) -> Result<HashMap<String, DirEntry>, LabelError> {
@@ -416,6 +480,12 @@ impl From<FacetedDirectory> for DirEntry {
     }
 }
 
+impl From<Gate> for DirEntry {
+    fn from(gate: Gate) -> Self {
+        DirEntry::Gate(gate)
+    }
+}
+
 pub mod utils {
     use super::*;
 
@@ -441,7 +511,7 @@ pub mod utils {
                 super::DirEntry::FacetedDirectory(fdir) => {
                     fs.open_facet(fdir, comp).map(|d| DirEntry::Directory(d))
                 },
-                super::DirEntry::File(_) => Err(Error::BadPath)
+                super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
             }
         })
     }

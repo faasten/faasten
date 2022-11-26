@@ -437,10 +437,29 @@ impl Vm {
                 Some(SC::Response(r)) => {
                     return Ok(r.payload);
                 }
-                Some(SC::Invoke(invoke)) => {
-                    let result = syscalls::InvokeResponse { success: self.send_req(invoke) };
+                Some(SC::Invoke(req)) => {
+                    let value = fs::utils::read_path(&self.fs, req.function.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                        match entry {
+                            fs::DirEntry::Gate(gate) => self.fs.invoke_gate(&gate).ok(),
+                            _ => None,
+                        }
+                    });
+                    let mut result = syscalls::InvokeResponse { success: value.is_some() };
+                    if value.is_some() {
+                        // TODO: make use of the gate
+                        result.success = self.send_req(req)
+                    }
                     self.send_into_vm(result.encode_to_vec())?;
-                }
+                },
+                //Some(SC::DupGate(req)) => {
+                //    let value = fs::utils::read_path(&self.fs, req.gate.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                //        match entry {
+                //            fs::DirEntry::Gate(gate) => self.fs.dup_gate(req.privilege, req.invoking, &req.gate).ok(),
+                //            _ => None,
+                //        }
+                //    });
+                //    let mut result
+                //},
                 Some(SC::ReadKey(rk)) => {
                     let txn = DBENV.begin_ro_txn().unwrap();
                     let result = syscalls::ReadKeyResponse {
