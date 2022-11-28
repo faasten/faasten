@@ -19,7 +19,7 @@ use crate::message::Message;
 use crate::{blobstore, syscalls};
 use crate::request::Request;
 use crate::labeled_fs::DBENV;
-use crate::fs;
+use crate::fs::{self, DirEntry};
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
@@ -495,8 +495,8 @@ impl Vm {
                 Some(SC::FsRead(req)) => {
                     let value = fs::utils::read_path(&self.fs, req.path.split("/").skip_while(|s| s.is_empty()).map(String::from).collect()).ok().and_then(|entry| {
                         match entry {
-                            fs::DirEntry::Directory(_) => None,
-                            fs::DirEntry::File(file) => self.fs.read(&file).ok()
+                            fs::DirEntry::File(file) => self.fs.read(&file).ok(),
+                            _ => None,
                         }
                     });
                     let result = syscalls::ReadKeyResponse {
@@ -505,11 +505,43 @@ impl Vm {
 
                     self.send_into_vm(result)?;
                 },
+                Some(SC::FsList(req)) => {
+                    let value = fs::utils::read_path(&self.fs, req.path.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                        match entry {
+                            fs::DirEntry::Directory(dir) => self.fs.list(dir).ok().map(|m| syscalls::EntryNameArr { names: m.keys().cloned().collect() }),
+                            _ => None,
+                        }
+                    });
+                    let result = syscalls::FsListResponse {
+                        value
+                    }.encode_to_vec();
+                    self.send_into_vm(result)?;
+                },
+                Some(SC::FsFacetedList(req)) => {
+                    let value = fs::utils::read_path(&self.fs, req.path.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                        match entry {
+                            fs::DirEntry::FacetedDirectory(fdir) => Some(syscalls::FsFacetedListInner{
+                                facets: self.fs.faceted_list(fdir).iter()
+                                    .fold(HashMap::<String, syscalls::EntryNameArr>::new(),
+                                        |mut m, kv| {
+                                            m.insert(kv.0.clone(), syscalls::EntryNameArr{ names: kv.1.keys().cloned().collect() });
+                                            m
+                                        })
+                            }),
+                            _ => None,
+                        }
+                    });
+                    let result = syscalls::FsFacetedListResponse {
+                        value
+                    }
+                    .encode_to_vec();
+                    self.send_into_vm(result)?;
+                },
                 Some(SC::FsWrite(req)) => {
                     let value = fs::utils::read_path(&self.fs, req.path.split("/").skip_while(|s| s.is_empty()).map(String::from).collect()).ok().and_then(|entry| {
                         match entry {
-                            fs::DirEntry::Directory(_) => None,
-                            fs::DirEntry::File(file) => self.fs.write(&file, &req.data).ok()
+                            fs::DirEntry::File(file) => self.fs.write(&file, &req.data).ok(),
+                            _ => None,
                         }
                     });
                     let result = syscalls::WriteKeyResponse {
@@ -519,15 +551,39 @@ impl Vm {
 
                     self.send_into_vm(result)?;
                 },
+                Some(SC::FsCreateFacetedDir(req)) => {
+                    let value = fs::utils::read_path(&self.fs, req.base_dir.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                        match entry {
+                            DirEntry::Directory(dir) => {
+                                let newfdir = self.fs.create_faceted_directory();
+                                self.fs.link(&dir, req.name, fs::DirEntry::FacetedDirectory(newfdir)).ok()
+                            },
+                            DirEntry::FacetedDirectory(fdir) => {
+                                let newfdir = self.fs.create_faceted_directory();
+                                self.fs.faceted_link(&fdir, req.name, fs::DirEntry::FacetedDirectory(newfdir)).ok()
+                            },
+                            _ => None,
+                        }
+                    });
+                    let result = syscalls::WriteKeyResponse {
+                        success: value.is_some(),
+                    }
+                    .encode_to_vec();
+                    self.send_into_vm(result)?;
+                }
                 Some(SC::FsCreateDir(req)) => {
                     let label = proto_label_to_dc_label(req.label.clone().expect("label"));
                     let value = fs::utils::read_path(&self.fs, req.base_dir.split("/").skip_while(|s| s.is_empty()).map(String::from).collect()).ok().and_then(|entry| {
                         match entry {
-                            fs::DirEntry::Directory(dir) => {
+                            DirEntry::Directory(dir) => {
                                 let newdir = self.fs.create_directory(label);
                                 self.fs.link(&dir, req.name, fs::DirEntry::Directory(newdir)).ok()
                             },
-                            fs::DirEntry::File(_) => None,
+                            DirEntry::FacetedDirectory(fdir) => {
+                                let newdir = self.fs.create_directory(label);
+                                self.fs.faceted_link(&fdir, req.name, fs::DirEntry::Directory(newdir)).ok()
+                            },
+                            _ => None,
                         }
                     });
                     let result = syscalls::WriteKeyResponse {
@@ -545,7 +601,11 @@ impl Vm {
                                 let newfile = self.fs.create_file(label);
                                 self.fs.link(&dir, req.name, fs::DirEntry::File(newfile)).ok()
                             },
-                            fs::DirEntry::File(_) => None,
+                            DirEntry::FacetedDirectory(fdir) => {
+                                let newfile = self.fs.create_file(label);
+                                self.fs.faceted_link(&fdir, req.name, fs::DirEntry::File(newfile)).ok()
+                            },
+                            _ => None,
                         }
                     });
                     let result = syscalls::WriteKeyResponse {

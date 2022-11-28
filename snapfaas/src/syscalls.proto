@@ -142,6 +142,35 @@ message BlobClose {
   uint64 fd = 1;
 }
 
+message FSList {
+  string path = 1;
+}
+
+message EntryNameArr {
+  repeated string names = 1;
+}
+
+message FSListResponse {
+  optional EntryNameArr value = 1;
+}
+
+message FSFacetedList {
+  string path = 1;
+}
+
+message FSFacetedListInner {
+  map<string, EntryNameArr> facets = 1;
+}
+
+message FSFacetedListResponse {
+  optional FSFacetedListInner value = 1;
+}
+
+message FSCreateFacetedDir {
+  string baseDir = 1;
+  string name = 2;
+}
+
 message Syscall {
   oneof syscall {
     Response response = 1;
@@ -163,5 +192,8 @@ message Syscall {
     BlobRead readBlob = 17;
     BlobClose closeBlob = 18;
     ReadDir readDir = 19;
+    FSList fsList = 20;
+    FSFacetedList fsFacetedList = 21;
+    FSCreateFacetedDir fsCreateFacetedDir = 22;
   }
 }
