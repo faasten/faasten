@@ -33,7 +33,7 @@ impl r2d2::ManageConnection for SnapFaasManager {
 
     fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
         let req = request::Request {
-            function: String::from("ping"),
+            gate: String::from("ping"),
             payload: serde_json::Value::Null,
         };
         request::write_u8(&req.to_vec(), conn)?;
@@ -83,7 +83,7 @@ impl App {
             dbenv,
             default_db,
             blobstore,
-            pkey, 
+            pkey,
             pubkey,
             gh_creds,
             base_url,
@@ -145,7 +145,7 @@ impl App {
                 .with_additional_header("Access-Control-Allow-Origin", "*")
                 .with_additional_header("Access-Control-Allow-Headers", "Authorization, Content-type")
                 .with_additional_header("Access-Control-Allow-Methods", "*");
-            
+
         }
         rouille::router!(request,
             (GET) (/login/github) => {
@@ -195,8 +195,43 @@ impl App {
             (POST) (/invoke/{function_name}) => {
                 self.invoke(request, function_name)
             },
+            (POST) (/gate) => {
+                self.gate(request)
+            },
             _ => Ok(Response::empty_404())
         ).unwrap_or_else(|e| e).with_additional_header("Access-Control-Allow-Origin", "*")
+    }
+
+    fn gate(&self, request: &Request) -> Result<Response, Response> {
+        let login = self.verify_jwt(request)?;
+
+        let conn = &mut self.conn.get().map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to get snapfaas connection"
+            })).with_status_code(500))?;
+        let input_json: Value = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
+
+        let req = request::Request {
+            gate: "sys_gate".to_string(),
+            payload: serde_json::json!({
+                "payload": input_json,
+                "login": login,
+            }),
+        };
+        request::write_u8(&req.to_vec(), conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to send request"
+            })).with_status_code(500))?;
+
+        let resp_buf = request::read_u8(conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to read response"
+            })).with_status_code(500))?;
+        let rsp: request::Response = serde_json::from_slice(&resp_buf).unwrap();
+        match rsp.status {
+            request::RequestStatus::SentToVM(response) => Ok(Response::text(response)),
+            _ => Err(Response::json(&serde_json::json!({"error": format!("{:?}", rsp.status)}))),
+        }
     }
 
     fn whoami(&self, request: &Request) -> Result<Response, Response> {
@@ -239,7 +274,7 @@ impl App {
         }
 
         let req = request::Request {
-            function: function_name,
+            gate: function_name,
             payload: serde_json::json!({
                 "payload": input_json,
                 "login": login,
@@ -294,7 +329,7 @@ impl App {
         txn.commit().expect("commit");
 
         let req = request::Request {
-            function: "start_assignment".to_string(),
+            gate: "start_assignment".to_string(),
             payload: serde_json::json!({
                 "assignment": input_json.assignment,
                 "users": input_json.users,

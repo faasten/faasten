@@ -17,6 +17,7 @@ use crate::request::{RequestStatus, Response, Request};
 use crate::vm;
 use crate::metrics::{self, RequestTimestamps};
 use crate::resource_manager;
+use crate::fs;
 
 // one hour
 const FLUSH_INTERVAL_SECS: u64 = 3600;
@@ -28,11 +29,23 @@ pub struct Worker {
 }
 
 fn handle_request(req: Request, rsp_sender: Sender<Response>, func_req_sender: Sender<Message>, vm_req_sender: Sender<Message>, vm_listener: UnixListener, mut tsps: RequestTimestamps, stat: &mut metrics::WorkerMetrics, cid: u32) {
-    debug!("processing request to function {}", &req.function);
+    debug!("processing request to function {}", &req.gate);
 
     tsps.arrived = precise_time_ns();
 
-    let function_name = req.function.clone();
+    let fs = fs::FS::new(&*crate::labeled_fs::DBENV);
+    fs::utils::clear_label();
+    let function_name = fs::utils::read_path(&fs, req.gate.split("/").map(String::from).collect()).ok().and_then(|entry| {
+        match entry {
+            fs::DirEntry::Gate(gate) => fs.invoke_gate(&gate).ok(),
+            _ => None,
+        }
+    });
+    if function_name.is_none() {
+        let _ = rsp_sender.send(Response { status: RequestStatus::GateNotExist });
+        return;
+    }
+    let function_name = function_name.unwrap();
     let mut i = 0;
     let result = loop {
         let mut tsps = tsps.clone();

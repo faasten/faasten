@@ -23,7 +23,7 @@ impl r2d2::ManageConnection for SnapFaasManager {
 
     fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
         let req = request::Request {
-            function: String::from("ping"),
+            gate: String::from("ping"),
             payload: serde_json::Value::Null,
         };
         request::write_u8(&req.to_vec(), conn)?;
@@ -91,7 +91,7 @@ impl App {
                 event_body.insert(String::from("event"), etype.into());
 
                 let req = request::Request {
-                    function: "gh_repo".to_string(),
+                    gate: "gh_repo".to_string(),
                     payload: event_body.into(),
                 };
 
@@ -111,7 +111,7 @@ impl App {
                         debug!("Reponse {:?}", rsp);
                         match rsp.status {
                             request::RequestStatus::ResourceExhausted => Err(StatusCode::TOO_MANY_REQUESTS),
-                            request::RequestStatus::FunctionNotExist | request::RequestStatus::Dropped => Err(StatusCode::BAD_REQUEST),
+                            request::RequestStatus::GateNotExist | request::RequestStatus::FunctionNotExist | request::RequestStatus::Dropped => Err(StatusCode::BAD_REQUEST),
                             request::RequestStatus::LaunchFailed => Err(StatusCode::INTERNAL_SERVER_ERROR),
                             request::RequestStatus::SentToVM(response) => Ok(Bytes::from(response)),
                             request::RequestStatus::ProcessRequestFailed => Err(StatusCode::INTERNAL_SERVER_ERROR),

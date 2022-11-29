@@ -20,24 +20,23 @@ fn main() -> std::io::Result<()> {
                 .help("Address on which SnapFaaS is listening for connections"),
         )
         .arg(
-            Arg::with_name("function")
-                .value_name("FUNCTION")
-                .long("function")
-                .short("f")
+            Arg::with_name("gate")
+                .value_name("GATE")
+                .long("gate")
                 .takes_value(true)
                 .required(true)
-                .help("Function name"),
+                .help("Path of the gate to be invoked."),
         )
         .get_matches();
 
 
     let addr = cmd_arguments.value_of("server address").unwrap();
-    let function = cmd_arguments.value_of("function").unwrap().to_string();
+    let gate = cmd_arguments.value_of("function").unwrap().to_string();
     let mut input = Vec::new();
     stdin().read_to_end(&mut input)?;
     let payload = serde_json::from_slice(&input)?;
     let request = request::Request {
-        function,
+        gate,
         payload,
     };
 

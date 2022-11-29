@@ -10,6 +10,7 @@ pub enum RequestStatus {
     LaunchFailed,
     ProcessRequestFailed,
     SentToVM(String),
+    GateNotExist,
 }
                 
 #[derive(Debug, Serialize, Deserialize)]
@@ -25,7 +26,7 @@ impl Response {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Request {
-    pub function: String,
+    pub gate: String,
     pub payload: Value,
 }
 

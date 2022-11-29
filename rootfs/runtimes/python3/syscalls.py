@@ -17,7 +17,62 @@ def recvall(sock, n):
     return bytes(data)
 ### end of helper functions ###
 
+# special facets: public--(True, True), bottom--(True, False), top--(False, True)
+def clauses_to_pb_component(component):
+    if component is True:
+        return syscalls_pb2.Component()
+    elif component is False:
+        return None
+    else:
+        pb_component = syscalls_pb2.Component()
+        for clause in component:
+            pb_clause = pb_component.clauses.add()
+            pb_clause.principals.extend(clause)
+        return pb_component
+
+def parse(s):
+
+### end of helper functions ###
+
+class Component():
+    def __init__(self, pb_component):
+        self.component
+
+class DCLabel():
+    def __init__(self, s):
+        self.pb_label = parse(s)
+
+    @property
+    def integrity(self):
+        return self.pb_label.integrity
+
+    @integrity.setter
+    def integrity(self, integrity):
+        self.pb_label.integrity = clauses_to_pb_component(integrity)
+
+    @property
+    def secrecy(self):
+        return self.pb_label.secrecy
+
+    @secrecy.setter
+    def secrecy(self, secrecy):
+        self.pb_label.secrecy = clauses_to_pb_component(secrecy)
+
 class Syscall():
+    @staticmethod
+    def new_dclabel(secrecy, integrity):
+        pb_label = syscalls_pb2.DcLabel()
+        pb_label.secrecy = clauses_to_pb_component(secrecy)
+        pb_label.integrity = clauses_to_pb_component(integrity)
+        return DCLabel(pb_label)
+
+    @staticmethod
+    def public_dclabel():
+        pb_label = syscalls_pb2.DcLabel()
+        pb_label.secrecy = syscalls_pb2.Component()
+        pb_label.integrity = syscalls_pb2.Component()
+        return DCLabel(pb_label)
+
     def __init__(self, sock):
         self.sock = sock
 
@@ -72,7 +127,7 @@ class Syscall():
         response = self._recv(syscalls_pb2.DcLabel())
         return response
 
-    def taint(self, label):
+    def taint_with_label(self, label):
         req = syscalls_pb2.Syscall(taintWithLabel = label)
         self._send(req)
         response = self._recv(syscalls_pb2.DcLabel())
@@ -83,9 +138,29 @@ class Syscall():
         """
         req = syscalls_pb2.Syscall(declassify = secrecy)
         self._send(req)
-        response = self._recv(syscalls_pb2.WriteKeyResponse())
-        return response.success
+        response = self._recv(syscalls_pb2.DeclassifyResponse())
+        return response.label
     ### end of label APIs ###
+
+    ### gate & privilege ###
+    def sub_privilege(self, suffix):
+        req = syscalls_pb2.Syscall(subPrivilege = syscalls_pb2.TokenList(tokens = suffix))
+        self._send(req)
+        response = self._recv(syscalls_pb2.DcLabel())
+        return response.secrecy
+
+    def dup_gate(self, gate, policy):
+        request = syscalls_pb2.Syscall(dupGate = syscalls_pb2.DupGate(gate=gate, policy=policy))
+        self._send(req)
+        response = self._recv(syscalls_pb2.DcLabel())
+        return response.success
+
+    def buckle_parse(self, s):
+        """ Return a syscalls_pb2.DcLabel if s is valid. Otherwise, None."""
+        request = syscalls_pb2.Syscall(buckleParse = s)
+        self._send(req)
+        response = self._recv(syscalls_pb2.DeclassifyResponse())
+        return response.label
 
     ### github APIs ###
     def github_rest_get(self, route, toblob=False):
@@ -116,8 +191,8 @@ class Syscall():
         return response
     ### end of github APIs ###
 
-    def invoke(self, function, payload):
-        req = syscalls_pb2.Syscall(invoke = syscalls_pb2.Invoke(function = function, payload = payload))
+    def invoke(self, gate, payload):
+        req = syscalls_pb2.Syscall(invoke = syscalls_pb2.Invoke(gate = gate, payload = payload))
         self._send(req)
         response= self._recv(syscalls_pb2.InvokeResponse())
         return response.success
