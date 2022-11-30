@@ -10,7 +10,7 @@
 //!   3. function store and their files' locations
 
 use clap::{App, Arg};
-use log::{warn};
+use log::warn;
 use snapfaas::configs;
 use snapfaas::resource_manager::ResourceManager;
 use snapfaas::gateway;
@@ -59,6 +59,21 @@ fn main() {
     let config_path = matches.value_of("config").unwrap();
     let config = configs::ResourceManagerConfig::new(config_path);
 
+    let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
+    if let Ok(snapfaas::fs::DirEntry::Directory(root)) = snapfaas::fs::utils::read_path(&fs, vec![]) {
+        // set up home directories
+        let fdir = fs.create_faceted_directory();
+        let _ = fs.link(&root, "home".to_string(), snapfaas::fs::DirEntry::FacetedDirectory(fdir));
+        // TODO: for now, set up gates for functions in the configuration directly under the root
+        // with empty privilege and no invoking restriction.
+        for image in config.functions.keys() {
+            let gate = fs.create_gate(true.into(), true.into(), image.clone()).unwrap();
+            let _ = fs.link(&root, image.clone(), snapfaas::fs::DirEntry::Gate(gate));
+        }
+    } else {
+        panic!("Failed to read the root");
+    }
+
     // create the resource manager
     let (mut manager, manager_sender) = ResourceManager::new(config);
 
@@ -103,7 +118,7 @@ fn new_workerpool(pool_size: usize, manager_sender: Sender<Message>) -> (Vec<Wor
 }
 
 fn set_ctrlc_handler(request_sender: Sender<Message>, mut pool: Vec<Worker>, manager_sender: Sender<Message>, mut manager_handle: Option<JoinHandle<()>>) {
-    ctrlc::set_handler(move || { 
+    ctrlc::set_handler(move || {
         println!("");
         warn!("{}", "Handling Ctrl-C. Shutting down...");
         let pool_size = pool.len();

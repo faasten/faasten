@@ -4,11 +4,12 @@
 use lmdb::{Transaction, WriteFlags};
 use serde::{Serialize, Deserialize};
 use std::{collections::HashMap, cell::RefCell};
-use labeled::{dclabel::{DCLabel, Component, Principal}, Label};
+use labeled::{buckle::{Buckle, Component, Principal}, Label};
 
 pub use errors::*;
 
-thread_local!(static CURRENT_LABEL: RefCell<DCLabel> = RefCell::new(DCLabel::public()));
+thread_local!(static CURRENT_LABEL: RefCell<Buckle> = RefCell::new(Buckle::public()));
+thread_local!(static PRIVILEGE: RefCell<Component> = RefCell::new(Component::dc_true()));
 
 type UID = u64;
 
@@ -68,13 +69,13 @@ pub struct FS<S> {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Directory {
-    label: DCLabel,
+    label: Buckle,
     object_id: UID
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct File {
-    label: DCLabel,
+    label: Buckle,
     object_id: UID,
 }
 
@@ -95,7 +96,7 @@ struct FacetedDirectoryInner {
 impl FacetedDirectoryInner {
     pub fn open_facet(&self, facet: &String) -> Result<Directory, utils::Error> {
         use utils::Error;
-        let label: DCLabel = serde_json::de::from_str(facet).map_err(|_| Error::BadPath)?;
+        let label: Buckle = serde_json::de::from_str(facet).map_err(|_| Error::BadPath)?;
         CURRENT_LABEL.with(|current_label| {
             if label.can_flow_to(&*current_label.borrow()) {
                 Ok(self.allocated.get(facet).map(|idx| -> Directory {
@@ -122,16 +123,15 @@ impl FacetedDirectoryInner {
                         let clause = clauses.iter().next().unwrap();
                         if clause.0.len() == 1 {
                             let p = clause.0.iter().next().unwrap();
-                            self.principal_indexing.get(p).map(|v|
-                                v.iter().fold(Vec::new(), |mut dirs, idx| {
-                                    dirs.push(self.facets[idx.clone()].clone()); dirs}))
-                                .unwrap_or_default()
-                        } else {
-                            self.dummy_list_facets()
+                            if p.len() == 1 {
+                                return self.principal_indexing.get(p.first().unwrap()).map(|v|
+                                    v.iter().fold(Vec::new(), |mut dirs, idx| {
+                                        dirs.push(self.facets[idx.clone()].clone()); dirs}))
+                                    .unwrap_or_default()
+                            }
                         }
-                    } else {
-                        self.dummy_list_facets()
                     }
+                    return self.dummy_list_facets()
                 }
                 Component::DCFalse => self.dummy_list_facets(),
             }
@@ -152,10 +152,10 @@ impl FacetedDirectoryInner {
                         if clauses.len() == 1 {
                             let clause = &clauses.iter().next().unwrap().0;
                             for p in clause.iter() {
-                                if !self.principal_indexing.contains_key(p) {
-                                    self.principal_indexing.insert(p.clone(), Vec::new());
+                                if !self.principal_indexing.contains_key(p.first().unwrap()) {
+                                    self.principal_indexing.insert(p.first().unwrap().clone(), Vec::new());
                                 }
-                                self.principal_indexing.get_mut(p).unwrap().push(idx);
+                                self.principal_indexing.get_mut(p.first().unwrap()).unwrap().push(idx);
                             }
                         }
                     }
@@ -168,10 +168,20 @@ impl FacetedDirectoryInner {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct Gate {
+    privilege: Component,
+    invoking: Component,
+    // TODO: for now, use the configurations function-name:host-fs-path
+    image: String,
+    object_id: UID,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub enum DirEntry {
     Directory(Directory),
     File(File),
     FacetedDirectory(FacetedDirectory),
+    Gate(Gate),
 }
 
 mod errors {
@@ -192,6 +202,12 @@ mod errors {
         CannotRead,
         CannotWrite,
     }
+
+    #[derive(Debug)]
+    pub enum GateError {
+        CannotDelegate,
+        CannotInvoke,
+    }
 }
 
 impl<S> FS<S> {
@@ -205,12 +221,12 @@ impl<S> FS<S> {
 impl<S: BackingStore> FS<S> {
     pub fn root(&self) -> Directory {
         Directory {
-            label: DCLabel::public(),
+            label: Buckle::public(),
             object_id: 0
         }
     }
 
-    pub fn create_directory(&self, label: DCLabel) -> Directory {
+    pub fn create_directory(&self, label: Buckle) -> Directory {
         let dir_contents = serde_json::ser::to_vec(&HashMap::<String, DirEntry>::new()).unwrap_or((&b"{}"[..]).into());
         let mut uid: UID = rand::random();
         while !self.storage.add(&uid.to_be_bytes(), &dir_contents) {
@@ -223,7 +239,7 @@ impl<S: BackingStore> FS<S> {
         }
     }
 
-    pub fn create_file(&self, label: DCLabel) -> File {
+    pub fn create_file(&self, label: Buckle) -> File {
         let mut uid: UID = rand::random();
         while !self.storage.add(&uid.to_be_bytes(), &[]) {
             uid = rand::random();
@@ -243,6 +259,59 @@ impl<S: BackingStore> FS<S> {
         FacetedDirectory {
             object_id: uid,
         }
+    }
+
+    pub fn create_gate(&self, dpriv: Component, invoking: Component, image: String) -> Result<Gate, GateError> {
+        PRIVILEGE.with(|opriv| {
+            if opriv.borrow().implies(&dpriv) {
+                let mut uid: UID = rand::random();
+                while !self.storage.add(&uid.to_be_bytes(), &[]) {
+                    uid = rand::random();
+                }
+                Ok(Gate{
+                    privilege: dpriv,
+                    invoking,
+                    image,
+                    object_id: uid
+                })
+            } else {
+                Err(GateError::CannotDelegate)
+            }
+        })
+    }
+
+    pub fn dup_gate(&self, policy: Buckle, gate: &Gate) -> Result<Gate, GateError> {
+        PRIVILEGE.with(|opriv| {
+            let dpriv = policy.secrecy;
+            if opriv.borrow().implies(&dpriv) {
+                let mut uid: UID = rand::random();
+                while !self.storage.add(&uid.to_be_bytes(), &[]) {
+                    uid = rand::random();
+                }
+                Ok(Gate{
+                    privilege: dpriv,
+                    invoking: policy.integrity,
+                    image: gate.image.clone(),
+                    object_id: uid
+                })
+            } else {
+                Err(GateError::CannotDelegate)
+            }
+        })
+    }
+
+    pub fn invoke_gate(&self, gate: &Gate) -> Result<String, GateError> {
+        CURRENT_LABEL.with(|current_label| {
+            if (current_label.borrow()).integrity.implies(&gate.invoking) {
+                *current_label.borrow_mut() = current_label.borrow().clone().lub(Buckle::new(true, gate.invoking.clone()));
+                PRIVILEGE.with(|opriv| {
+                    *opriv.borrow_mut() = gate.privilege.clone();
+                });
+                Ok(gate.image.clone())
+            } else {
+                Err(GateError::CannotInvoke)
+            }
+        })
     }
 
     pub fn list(&self, dir: Directory) -> Result<HashMap<String, DirEntry>, LabelError> {
@@ -337,7 +406,7 @@ impl<S: BackingStore> FS<S> {
                 match fdir_contents.open_facet(&facet) {
                     Ok(dir) => return Ok(self.link(&dir, name.clone(), direntry.clone())?),
                     Err(utils::Error::UnallocatedFacet) => {
-                        let dir = self.create_directory((*current_label).borrow().clone());
+                        let dir = self.create_directory(current_label.borrow().clone());
                         let _ = self.link(&dir, name.clone(), direntry.clone());
                         fdir_contents.append(dir);
                         match self.storage.cas(&fdir.object_id.to_be_bytes(), raw_fdir.as_ref().map(|e| e.as_ref()), &serde_json::to_vec(&fdir_contents).unwrap_or_default()) {
@@ -387,13 +456,13 @@ impl<S: BackingStore> FS<S> {
 }
 
 impl Directory {
-    pub fn label(&self) -> &DCLabel {
+    pub fn label(&self) -> &Buckle {
         &self.label
     }
 }
 
 impl File {
-    pub fn label(&self) -> &DCLabel {
+    pub fn label(&self) -> &Buckle {
         &self.label
     }
 }
@@ -413,6 +482,12 @@ impl From<File> for DirEntry {
 impl From<FacetedDirectory> for DirEntry {
     fn from(fdir: FacetedDirectory) -> Self {
         DirEntry::FacetedDirectory(fdir)
+    }
+}
+
+impl From<Gate> for DirEntry {
+    fn from(gate: Gate) -> Self {
+        DirEntry::Gate(gate)
     }
 }
 
@@ -441,8 +516,41 @@ pub mod utils {
                 super::DirEntry::FacetedDirectory(fdir) => {
                     fs.open_facet(fdir, comp).map(|d| DirEntry::Directory(d))
                 },
-                super::DirEntry::File(_) => Err(Error::BadPath)
+                super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
             }
+        })
+    }
+
+    pub fn get_current_label() -> Buckle {
+        CURRENT_LABEL.with(|l| l.borrow().clone())
+    }
+
+    pub fn taint_with_label(label: Buckle) -> Buckle {
+        CURRENT_LABEL.with(|l| {
+            *l.borrow_mut() = l.borrow().clone().lub(label);
+            l.borrow().clone()
+        })
+    }
+
+    pub fn clear_label() {
+        CURRENT_LABEL.with(|current_label| {
+            *current_label.borrow_mut() = Buckle::public();
+        })
+    }
+
+    pub fn my_privilege() -> Component {
+        PRIVILEGE.with(|p| p.borrow().clone())
+    }
+
+    pub fn declassify(target: Component) -> Result<Buckle, Buckle> {
+        CURRENT_LABEL.with(|l| {
+            PRIVILEGE.with(|opriv| {
+                if (target.clone() & opriv.borrow().clone()).implies(&l.borrow().secrecy) {
+                    Ok(Buckle::new(target, l.borrow().integrity.clone()))
+                } else {
+                    Err(l.borrow().clone())
+                }
+            })
         })
     }
 }

@@ -27,60 +27,42 @@ const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
 const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
 const USER_AGENT: &str = "snapfaas";
 
-use labeled::dclabel::{Clause, Component, DCLabel};
-use labeled::{Label, HasPrivilege};
+use labeled::buckle::{Clause, Component, Buckle};
 
-fn proto_label_to_dc_label(label: syscalls::DcLabel) -> DCLabel {
-    DCLabel {
-        secrecy: match label.secrecy {
-            None => Component::DCFalse,
-            Some(set) => Component::DCFormula(
-                set.clauses
-                    .iter()
-                    .map(|c| {
-                        Clause(c.principals.iter().map(Clone::clone).collect())
-                    })
-                    .collect(),
-            ),
-        },
-        integrity: match label.integrity {
-            None => Component::DCFalse,
-            Some(set) => Component::DCFormula(
-                set.clauses
-                    .iter()
-                    .map(|c| {
-                        Clause(c.principals.iter().map(Clone::clone).collect())
-                    })
-                    .collect(),
-            ),
-        },
+fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Component {
+    match component {
+        None => Component::DCFalse,
+        Some(set) => Component::DCFormula(set.clauses.iter()
+            .map(|c| Clause(c.principals.iter().map(|p| p.tokens.iter().cloned().collect()).collect()))
+            .collect()),
     }
 }
 
-fn dc_label_to_proto_label(label: &DCLabel) -> syscalls::DcLabel {
+fn pblabel_to_buckle(label: &syscalls::DcLabel) -> Buckle {
+    Buckle {
+        secrecy: pbcomponent_to_component(&label.secrecy),
+        integrity: pbcomponent_to_component(&label.integrity),
+    }
+}
+
+fn component_to_pbcomponent(component: &Component) -> Option<syscalls::Component> {
+    match component {
+        Component::DCFalse => None,
+        Component::DCFormula(set) => Some(syscalls::Component {
+            clauses: set
+                .iter()
+                .map(|clause| syscalls::Clause {
+                    principals: clause.0.iter().map(|vp| syscalls::TokenList { tokens: vp.clone() }).collect(),
+                })
+                .collect(),
+        }),
+    }
+}
+
+pub fn buckle_to_pblabel(label: &Buckle) -> syscalls::DcLabel {
     syscalls::DcLabel {
-        secrecy: match &label.secrecy {
-            Component::DCFalse => None,
-            Component::DCFormula(set) => Some(syscalls::Component {
-                clauses: set
-                    .iter()
-                    .map(|clause| syscalls::Clause {
-                        principals: clause.0.iter().map(Clone::clone).collect(),
-                    })
-                    .collect(),
-            }),
-        },
-        integrity: match &label.integrity {
-            Component::DCFalse => None,
-            Component::DCFormula(set) => Some(syscalls::Component {
-                clauses: set
-                    .iter()
-                    .map(|clause| syscalls::Clause {
-                        principals: clause.0.iter().map(Clone::clone).collect(),
-                    })
-                    .collect(),
-            }),
-        },
+        secrecy: component_to_pbcomponent(&label.secrecy),
+        integrity: component_to_pbcomponent(&label.integrity),
     }
 }
 
@@ -136,8 +118,8 @@ pub struct Vm {
     allow_network: bool,
     function_name: String,
     function_config: FunctionConfig,
-    current_label: DCLabel,
-    privilege: Component,
+    //current_label: DCLabel,
+    //privilege: Component,
     handle: Option<VmHandle>,
     blobstore: blobstore::Blobstore,
     create_blobs: HashMap<u64, blobstore::NewBlob>,
@@ -165,8 +147,8 @@ impl Vm {
             // We should also probably have a clearance to mitigate side channel attacks, but
             // meh for now...
             /// Starting label with public secrecy and integrity has app-name
-            current_label: DCLabel::new(true, [[function_name.clone()]]),
-            privilege: Component::formula([[function_name]]),
+            //current_label: DCLabel::new(true, [[function_name.clone()]]),
+            //privilege: Component::formula([[function_name]]),
             handle: None,
             blobstore: Default::default(),
             create_blobs: Default::default(),
@@ -393,7 +375,7 @@ impl Vm {
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
             let (tx, _) = mpsc::channel();
             let req = Request {
-                function: invoke.function,
+                gate: invoke.gate,
                 payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
             };
             use crate::metrics::RequestTimestamps;
@@ -437,10 +419,60 @@ impl Vm {
                 Some(SC::Response(r)) => {
                     return Ok(r.payload);
                 }
-                Some(SC::Invoke(invoke)) => {
-                    let result = syscalls::InvokeResponse { success: self.send_req(invoke) };
-                    self.send_into_vm(result.encode_to_vec())?;
+                Some(SC::BuckleParse(s)) => {
+                    let result = syscalls::DeclassifyResponse {
+                        label: Buckle::parse(&s).ok().map(|l| buckle_to_pblabel(&l)),
+                    }
+                    .encode_to_vec();
+                    
+                    self.send_into_vm(result)?;
                 }
+                Some(SC::SubPrivilege(suffix)) => {
+                    // omnipotent privilege: dc_false + suffix = dc_false
+                    // empty privilege: dc_true + suffix = dc_true
+                    let mut my_priv = component_to_pbcomponent(&fs::utils::my_privilege());
+                    if let Some(clauses) = my_priv.as_mut() {
+                        if let Some(clause) = clauses.clauses.first_mut() {
+                            clause.principals.first_mut().unwrap().tokens.extend(suffix.tokens);
+                        }
+                    }
+                    let result = syscalls::DcLabel {
+                        secrecy: my_priv,
+                        integrity: None,
+                    }
+                    .encode_to_vec();
+
+                    self.send_into_vm(result)?;
+                }
+                Some(SC::Invoke(req)) => {
+                    let value = fs::utils::read_path(&self.fs, req.gate.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                        match entry {
+                            fs::DirEntry::Gate(gate) => self.fs.invoke_gate(&gate).ok(),
+                            _ => None,
+                        }
+                    });
+                    let mut result = syscalls::WriteKeyResponse { success: value.is_some() };
+                    if value.is_some() {
+                        result.success = self.send_req(req)
+                    }
+                    self.send_into_vm(result.encode_to_vec())?;
+                },
+                Some(SC::DupGate(req)) => {
+                    let value = fs::utils::read_path(&self.fs, req.gate.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                        match entry {
+                            fs::DirEntry::Gate(gate) => {
+                                let policy = pblabel_to_buckle(&req.policy.unwrap());
+                                self.fs.dup_gate(policy, &gate).ok()
+                            },
+                            _ => None,
+                        }
+                    });
+                    let result = syscalls::WriteKeyResponse {
+                        success: value.is_some()
+                    }
+                    .encode_to_vec();
+                    self.send_into_vm(result)?;
+                },
                 Some(SC::ReadKey(rk)) => {
                     let txn = DBENV.begin_ro_txn().unwrap();
                     let result = syscalls::ReadKeyResponse {
@@ -572,7 +604,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 }
                 Some(SC::FsCreateDir(req)) => {
-                    let label = proto_label_to_dc_label(req.label.clone().expect("label"));
+                    let label = pblabel_to_buckle(&req.label.clone().expect("label"));
                     let value = fs::utils::read_path(&self.fs, req.base_dir.split("/").skip_while(|s| s.is_empty()).map(String::from).collect()).ok().and_then(|entry| {
                         match entry {
                             DirEntry::Directory(dir) => {
@@ -594,7 +626,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsCreateFile(req)) => {
-                    let label = proto_label_to_dc_label(req.label.clone().expect("label"));
+                    let label = pblabel_to_buckle(&req.label.clone().expect("label"));
                     let value = fs::utils::read_path(&self.fs, req.base_dir.split("/").map(String::from).collect()).ok().and_then(|entry| {
                         match entry {
                             fs::DirEntry::Directory(dir) => {
@@ -665,24 +697,22 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::GetCurrentLabel(_)) => {
-                    let result = dc_label_to_proto_label(&self.current_label);
-                    let result = result.encode_to_vec();
+                    let result = buckle_to_pblabel(&fs::utils::get_current_label());
 
-                    self.send_into_vm(result)?;
+                    self.send_into_vm(result.encode_to_vec())?;
                 }
                 Some(SC::TaintWithLabel(label)) => {
-                    let dclabel = proto_label_to_dc_label(label);
-                    self.current_label = self.current_label.clone().lub(dclabel);
-                    let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
+                    let label = pblabel_to_buckle(&label);
+                    let result = buckle_to_pblabel(&fs::utils::taint_with_label(label));
 
-                    self.send_into_vm(result)?;
+                    self.send_into_vm(result.encode_to_vec())?;
                 }
-                Some(SC::ExercisePrivilege(target)) => {
-                    let dclabel = proto_label_to_dc_label(target);
-                    if self.current_label.can_flow_to_with_privilege(&dclabel, &self.privilege) {
-                        self.current_label = dclabel;
+                Some(SC::Declassify(target)) => {
+                    let target = pbcomponent_to_component(&Some(target));
+                    let result = syscalls::DeclassifyResponse{
+                        label: fs::utils::declassify(target).map(|l| buckle_to_pblabel(&l)).ok(),
                     }
-                    let result = dc_label_to_proto_label(&self.current_label).encode_to_vec();
+                    .encode_to_vec();
 
                     self.send_into_vm(result)?;
                 },

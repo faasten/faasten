@@ -3,17 +3,26 @@ syntax = "proto3";
 package snapfaas.syscalls;
 
 message Invoke {
-  string function = 1;
+  string gate = 1;
   string payload = 2;
 }
 
-message InvokeResponse {
-  bool success = 1;
+message DupGate {
+  string gate = 1;
+  DcLabel policy = 2;
+}
+
+message DeclassifyResponse {
+  optional DcLabel label = 1;
+}
+
+message TokenList {
+  repeated string tokens = 1;
 }
 
 message Clause {
   // A disjuction of principals
-  repeated string principals = 1;
+  repeated TokenList principals = 1;
 }
 
 message Component {
@@ -184,7 +193,7 @@ message Syscall {
     FSWrite fsWrite = 9;
     FSCreateDir fsCreateDir = 10;
     FSCreateFile fsCreateFile = 11;
-    DcLabel exercisePrivilege = 12;
+    Component declassify = 12;
     BlobCreate createBlob = 13;
     BlobWrite writeBlob = 14;
     BlobFinalize finalizeBlob = 15;
@@ -195,5 +204,8 @@ message Syscall {
     FSList fsList = 20;
     FSFacetedList fsFacetedList = 21;
     FSCreateFacetedDir fsCreateFacetedDir = 22;
+    DupGate dupGate = 23;
+    TokenList subPrivilege = 24;
+    string buckleParse = 25;
   }
 }
