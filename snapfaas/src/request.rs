@@ -12,7 +12,7 @@ pub enum RequestStatus {
     SentToVM(String),
     GateNotExist,
 }
-                
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Response {
     pub status: RequestStatus,
@@ -34,7 +34,7 @@ impl Request {
     pub fn to_vec(&self) -> Vec<u8> {
         serde_json::to_vec(&self).unwrap()
     }
-    
+
     /// return payload as a JSON string
     pub fn payload_as_string(&self) -> String {
         return self.payload.to_string();
@@ -52,7 +52,7 @@ pub fn parse_u8_request(buf: Vec<u8>) -> Result<Request, serde_json::Error> {
 /// this includes TcpStream and stdin pipe for Firerunner processes.
 /// `write_u8` will first write 4 bytes ([u8; 4]) into the channel. These 4 bytes
 /// encodes the size of the buf in big endian. It then writes the buf into the
-/// channel. 
+/// channel.
 /// On success, `write_u8` returns Ok(()).
 /// If either one of the `write_all()` calls fails, `write_u8` returns
 /// the corresponding std::io::Error.

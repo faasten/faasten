@@ -1,11 +1,11 @@
 use std::sync::mpsc::Sender;
 
-use crate::request::{Request, Response};
+use crate::request::Response;
 use crate::vm::Vm;
 use crate::resource_manager;
 use crate::metrics::RequestTimestamps;
 
-pub type RequestInfo = (Request, Sender<Response>, RequestTimestamps);
+pub type RequestInfo = (crate::syscalls::Invoke, Sender<Response>, RequestTimestamps);
 
 #[derive(Debug)]
 pub enum Message {

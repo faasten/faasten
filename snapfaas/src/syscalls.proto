@@ -3,12 +3,12 @@ syntax = "proto3";
 package snapfaas.syscalls;
 
 message Invoke {
-  string gate = 1;
+  repeated PathComponent gate = 1;
   string payload = 2;
 }
 
 message DupGate {
-  string gate = 1;
+  repeated PathComponent gate = 1;
   DcLabel policy = 2;
 }
 
@@ -92,23 +92,30 @@ message GithubRestResponse {
 message GetCurrentLabel {
 }
 
+message PathComponent {
+  oneof component {
+    string dscrp = 1;
+    DcLabel facet = 2;
+  }
+}
+
 message FSRead {
-  string path = 1;
+  repeated PathComponent path = 1;
 }
 
 message FSWrite {
-  string path = 1;
+  repeated PathComponent path = 1;
   bytes data = 2;
 }
 
 message FSCreateDir {
-  string baseDir = 1;
+  repeated PathComponent baseDir = 1;
   string name = 2;
   DcLabel label = 3;
 }
 
 message FSCreateFile {
-  string baseDir = 1;
+  repeated PathComponent baseDir = 1;
   string name = 2;
   DcLabel label = 3;
 }
@@ -152,7 +159,7 @@ message BlobClose {
 }
 
 message FSList {
-  string path = 1;
+  repeated PathComponent path = 1;
 }
 
 message EntryNameArr {
@@ -164,7 +171,7 @@ message FSListResponse {
 }
 
 message FSFacetedList {
-  string path = 1;
+  repeated PathComponent path = 1;
 }
 
 message FSFacetedListInner {
@@ -176,7 +183,7 @@ message FSFacetedListResponse {
 }
 
 message FSCreateFacetedDir {
-  string baseDir = 1;
+  repeated PathComponent baseDir = 1;
   string name = 2;
 }
 

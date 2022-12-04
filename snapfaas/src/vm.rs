@@ -12,12 +12,10 @@ use std::collections::{HashMap, HashSet};
 
 use log::{debug, error};
 use tokio::process::{Child, Command};
-use serde_json::Value;
 
 use crate::configs::FunctionConfig;
 use crate::message::Message;
 use crate::{blobstore, syscalls};
-use crate::request::Request;
 use crate::labeled_fs::DBENV;
 use crate::fs::{self, DirEntry};
 
@@ -38,7 +36,7 @@ fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Componen
     }
 }
 
-fn pblabel_to_buckle(label: &syscalls::DcLabel) -> Buckle {
+pub fn pblabel_to_buckle(label: &syscalls::DcLabel) -> Buckle {
     Buckle {
         secrecy: pbcomponent_to_component(&label.secrecy),
         integrity: pbcomponent_to_component(&label.integrity),
@@ -312,11 +310,11 @@ impl Vm {
     }
 
     /// Send request to vm and wait for its response
-    pub fn process_req(&mut self, req: Value) -> Result<String, Error> {
+    pub fn process_req(&mut self, payload: String) -> Result<String, Error> {
         use prost::Message;
 
         let sys_req = syscalls::Request {
-            payload: req.to_string(),
+            payload,
         }
         .encode_to_vec();
 
@@ -374,17 +372,13 @@ impl Vm {
         use time::precise_time_ns;
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
             let (tx, _) = mpsc::channel();
-            let req = Request {
-                gate: invoke.gate,
-                payload: serde_json::from_str(invoke.payload.as_str()).expect("json"),
-            };
             use crate::metrics::RequestTimestamps;
             let timestamps = RequestTimestamps {
                 at_vmm: precise_time_ns(),
-                request: req.clone(),
+                //request: req.clone(),
                 ..Default::default()
             };
-            invoke_handle.send(Message::Request((req, tx, timestamps))).is_ok()
+            invoke_handle.send(Message::Request((invoke, tx, timestamps))).is_ok()
         } else {
             debug!("No invoke handle, ignoring invoke syscall. {:?}", invoke);
             false
@@ -424,7 +418,7 @@ impl Vm {
                         label: Buckle::parse(&s).ok().map(|l| buckle_to_pblabel(&l)),
                     }
                     .encode_to_vec();
-                    
+
                     self.send_into_vm(result)?;
                 }
                 Some(SC::SubPrivilege(suffix)) => {
@@ -445,7 +439,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 }
                 Some(SC::Invoke(req)) => {
-                    let value = fs::utils::read_path(&self.fs, req.gate.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                    let value = fs::utils::read_path(&self.fs, &req.gate).ok().and_then(|entry| {
                         match entry {
                             fs::DirEntry::Gate(gate) => self.fs.invoke_gate(&gate).ok(),
                             _ => None,
@@ -458,7 +452,7 @@ impl Vm {
                     self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::DupGate(req)) => {
-                    let value = fs::utils::read_path(&self.fs, req.gate.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                    let value = fs::utils::read_path(&self.fs, &req.gate).ok().and_then(|entry| {
                         match entry {
                             fs::DirEntry::Gate(gate) => {
                                 let policy = pblabel_to_buckle(&req.policy.unwrap());
@@ -525,7 +519,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsRead(req)) => {
-                    let value = fs::utils::read_path(&self.fs, req.path.split("/").skip_while(|s| s.is_empty()).map(String::from).collect()).ok().and_then(|entry| {
+                    let value = fs::utils::read_path(&self.fs, &req.path).ok().and_then(|entry| {
                         match entry {
                             fs::DirEntry::File(file) => self.fs.read(&file).ok(),
                             _ => None,
@@ -538,7 +532,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsList(req)) => {
-                    let value = fs::utils::read_path(&self.fs, req.path.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                    let value = fs::utils::read_path(&self.fs, &req.path).ok().and_then(|entry| {
                         match entry {
                             fs::DirEntry::Directory(dir) => self.fs.list(dir).ok().map(|m| syscalls::EntryNameArr { names: m.keys().cloned().collect() }),
                             _ => None,
@@ -550,7 +544,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsFacetedList(req)) => {
-                    let value = fs::utils::read_path(&self.fs, req.path.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                    let value = fs::utils::read_path(&self.fs, &req.path).ok().and_then(|entry| {
                         match entry {
                             fs::DirEntry::FacetedDirectory(fdir) => Some(syscalls::FsFacetedListInner{
                                 facets: self.fs.faceted_list(fdir).iter()
@@ -570,7 +564,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsWrite(req)) => {
-                    let value = fs::utils::read_path(&self.fs, req.path.split("/").skip_while(|s| s.is_empty()).map(String::from).collect()).ok().and_then(|entry| {
+                    let value = fs::utils::read_path(&self.fs, &req.path).ok().and_then(|entry| {
                         match entry {
                             fs::DirEntry::File(file) => self.fs.write(&file, &req.data).ok(),
                             _ => None,
@@ -584,7 +578,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsCreateFacetedDir(req)) => {
-                    let value = fs::utils::read_path(&self.fs, req.base_dir.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                    let value = fs::utils::read_path(&self.fs, &req.base_dir).ok().and_then(|entry| {
                         match entry {
                             DirEntry::Directory(dir) => {
                                 let newfdir = self.fs.create_faceted_directory();
@@ -605,7 +599,7 @@ impl Vm {
                 }
                 Some(SC::FsCreateDir(req)) => {
                     let label = pblabel_to_buckle(&req.label.clone().expect("label"));
-                    let value = fs::utils::read_path(&self.fs, req.base_dir.split("/").skip_while(|s| s.is_empty()).map(String::from).collect()).ok().and_then(|entry| {
+                    let value = fs::utils::read_path(&self.fs, &req.base_dir).ok().and_then(|entry| {
                         match entry {
                             DirEntry::Directory(dir) => {
                                 let newdir = self.fs.create_directory(label);
@@ -627,7 +621,7 @@ impl Vm {
                 },
                 Some(SC::FsCreateFile(req)) => {
                     let label = pblabel_to_buckle(&req.label.clone().expect("label"));
-                    let value = fs::utils::read_path(&self.fs, req.base_dir.split("/").map(String::from).collect()).ok().and_then(|entry| {
+                    let value = fs::utils::read_path(&self.fs, &req.base_dir).ok().and_then(|entry| {
                         match entry {
                             fs::DirEntry::Directory(dir) => {
                                 let newfile = self.fs.create_file(label);
