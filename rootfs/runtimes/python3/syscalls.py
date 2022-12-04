@@ -37,12 +37,8 @@ class Syscall():
 
     def _send(self, obj):
         objData = obj.SerializeToString()
-        try:
-            self.sock.sendall(struct.pack(">I", len(objData)))
-            self.sock.sendall(objData)
-        except:
-            while True:
-                continue
+        self.sock.sendall(struct.pack(">I", len(objData)))
+        self.sock.sendall(objData)
 
     def _recv(self, obj):
         data = self.sock.recv(4, socket.MSG_WAITALL)
