@@ -13,7 +13,7 @@ use log::{error, debug};
 use time::precise_time_ns;
 
 use crate::message::Message;
-use crate::request::{RequestStatus, Response, Request};
+use crate::request::{RequestStatus, Response};
 use crate::vm;
 use crate::metrics::{self, RequestTimestamps};
 use crate::resource_manager;
@@ -28,14 +28,15 @@ pub struct Worker {
     pub thread: JoinHandle<()>,
 }
 
-fn handle_request(req: Request, rsp_sender: Sender<Response>, func_req_sender: Sender<Message>, vm_req_sender: Sender<Message>, vm_listener: UnixListener, mut tsps: RequestTimestamps, stat: &mut metrics::WorkerMetrics, cid: u32) {
-    debug!("processing request to function {}", &req.gate);
+fn handle_request(req: crate::syscalls::Invoke, rsp_sender: Sender<Response>, func_req_sender: Sender<Message>, vm_req_sender: Sender<Message>, vm_listener: UnixListener, mut tsps: RequestTimestamps, stat: &mut metrics::WorkerMetrics, cid: u32) {
+    debug!("processing request to function {:?}", &req.gate);
 
     tsps.arrived = precise_time_ns();
 
+    // TODO: fix this to use gate
     let fs = fs::FS::new(&*crate::labeled_fs::DBENV);
     fs::utils::clear_label();
-    let function_name = fs::utils::read_path(&fs, req.gate.split("/").map(String::from).collect()).ok().and_then(|entry| {
+    let function_name = fs::utils::read_path(&fs, &req.gate).ok().and_then(|entry| {
         match entry {
             fs::DirEntry::Gate(gate) => fs.invoke_gate(&gate).ok(),
             _ => None,

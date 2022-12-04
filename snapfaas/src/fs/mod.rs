@@ -94,12 +94,12 @@ struct FacetedDirectoryInner {
 }
 
 impl FacetedDirectoryInner {
-    pub fn open_facet(&self, facet: &String) -> Result<Directory, utils::Error> {
+    pub fn open_facet(&self, facet: &Buckle) -> Result<Directory, utils::Error> {
         use utils::Error;
-        let label: Buckle = serde_json::de::from_str(facet).map_err(|_| Error::BadPath)?;
+        let jsonfacet = serde_json::to_string(facet).unwrap();
         CURRENT_LABEL.with(|current_label| {
-            if label.can_flow_to(&*current_label.borrow()) {
-                Ok(self.allocated.get(facet).map(|idx| -> Directory {
+            if facet.can_flow_to(&*current_label.borrow()) {
+                Ok(self.allocated.get(&jsonfacet).map(|idx| -> Directory {
                     self.facets.get(idx.clone()).unwrap().clone()
                 }).ok_or(Error::UnallocatedFacet))
             } else {
@@ -342,7 +342,7 @@ impl<S: BackingStore> FS<S> {
         }
     }
 
-    fn open_facet(&self, fdir: FacetedDirectory, facet: &String) -> Result<Directory, utils::Error> {
+    fn open_facet(&self, fdir: FacetedDirectory, facet: &Buckle) -> Result<Directory, utils::Error> {
         use utils::Error::BadPath;
         match self.storage.get(&fdir.object_id.to_be_bytes()) {
             Some(bs) => {
@@ -399,11 +399,11 @@ impl<S: BackingStore> FS<S> {
 
     pub fn faceted_link(&self, fdir: &FacetedDirectory, name: String, direntry: DirEntry) -> Result<String, LinkError> {
         CURRENT_LABEL.with(|current_label| {
-            let facet = serde_json::to_string(&*current_label.borrow()).unwrap();
+            let facet = &*current_label.borrow();
             let mut raw_fdir: Option<Vec<u8>> = self.storage.get(&fdir.object_id.to_be_bytes());
             loop{
                 let mut fdir_contents: FacetedDirectoryInner = raw_fdir.as_ref().and_then(|fdir_contents| serde_json::from_slice(fdir_contents.as_slice()).ok()).unwrap_or_default();
-                match fdir_contents.open_facet(&facet) {
+                match fdir_contents.open_facet(facet) {
                     Ok(dir) => return Ok(self.link(&dir, name.clone(), direntry.clone())?),
                     Err(utils::Error::UnallocatedFacet) => {
                         let dir = self.create_directory(current_label.borrow().clone());
@@ -422,10 +422,10 @@ impl<S: BackingStore> FS<S> {
 
     pub fn faceted_unlink(&self, fdir: &FacetedDirectory, name: String) -> Result<String, UnlinkError> {
         CURRENT_LABEL.with(|current_label| {
-            let facet = serde_json::to_string(&*current_label.borrow()).unwrap();
+            let facet = &*current_label.borrow();
             let raw_fdir = self.storage.get(&fdir.object_id.to_be_bytes());
             let fdir_contents: FacetedDirectoryInner = raw_fdir.as_ref().and_then(|fdir_contents| serde_json::from_slice(fdir_contents.as_slice()).ok()).unwrap_or_default();
-            match fdir_contents.open_facet(&facet) {
+            match fdir_contents.open_facet(facet) {
                 Ok(dir) => return Ok(self.unlink(&dir, name.clone())?),
                 Err(utils::Error::UnallocatedFacet) => return Err(UnlinkError::DoesNotExists),
                 Err(_) => panic!("unexpected error."),
@@ -492,6 +492,8 @@ impl From<Gate> for DirEntry {
 }
 
 pub mod utils {
+    use crate::syscalls;
+
     use super::*;
 
     #[derive(Debug)]
@@ -507,14 +509,24 @@ pub mod utils {
         }
     }
 
-    pub fn read_path<S: Clone + BackingStore>(fs: &FS<S>, path: Vec<String>) -> Result<DirEntry, Error> {
+    pub fn read_path<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<DirEntry, Error> {
+        use syscalls::path_component::Component as PC;
         path.iter().try_fold(fs.root().into(), |de, comp| -> Result<DirEntry, Error> {
             match de {
                 super::DirEntry::Directory(dir) => {
-                    fs.list(dir)?.get(comp).map(Clone::clone).ok_or(Error::BadPath)
+                    match comp.component.as_ref() {
+                        Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
+                        _ => Err(Error::BadPath),
+                    }
                 },
                 super::DirEntry::FacetedDirectory(fdir) => {
-                    fs.open_facet(fdir, comp).map(|d| DirEntry::Directory(d))
+                    match comp.component.as_ref() {
+                        Some(PC::Facet(f)) => {
+                            let facet = crate::vm::pblabel_to_buckle(f);
+                            fs.open_facet(fdir, &facet).map(|d| DirEntry::Directory(d))
+                        },
+                        _ => Err(Error::BadPath),
+                    }
                 },
                 super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
             }

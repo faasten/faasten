@@ -7,7 +7,7 @@ extern crate clap;
 use snapfaas::vm::Vm;
 use snapfaas::unlink_unix_sockets;
 use snapfaas::configs::FunctionConfig;
-use std::io::{BufRead};
+use std::io::BufRead;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Instant;
 use log;
@@ -259,7 +259,7 @@ fn main() {
     for req in requests {
         let t1 = Instant::now();
         log::debug!("request: {:?}", req);
-        match vm.process_req(req) {
+        match vm.process_req(req.to_string()) {
             Ok(rsp) => {
                 let t2 = Instant::now();
                 println!("request returned in: {} us", t2.duration_since(t1).as_micros());

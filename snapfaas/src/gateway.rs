@@ -1,11 +1,19 @@
 use std::net::TcpListener;
+use std::io::{Write, Read};
 use std::sync::mpsc::{channel, Receiver};
 
 use log::{error, debug};
+use prost::Message;
 
-use crate::request;
-use crate::metrics::RequestTimestamps;
 use crate::message::RequestInfo;
+use crate::request;
+
+fn write_response(buf: &[u8], channel: &mut std::net::TcpStream) {
+    let size = buf.len().to_be_bytes();
+    if channel.write_all(&size).is_err() || channel.write_all(buf).is_err() {
+        error!("Failed to respond");
+    }
+}
 
 /// A gateway listens on a endpoint and accepts requests
 /// For example a FileGateway "listens" to a file and accepts
@@ -35,30 +43,38 @@ impl HTTPGateway {
                     debug!("connection from {:?}", stream.peer_addr());
                     let requests = requests_tx.clone();
                     std::thread::spawn(move || {
-                        while let Ok(buf) = request::read_u8(&mut stream) {
-                            // there's a request sitting in the stream
-
-                            // If parse succeeds, return the Request value and a
-                            // clone of the TcpStream value.
-                            match request::parse_u8_request(buf) {
-                                Err(e) => {
-                                    error!("request parsing failed: {:?}", e);
-                                    return;
+                        loop {
+                            let buf = {
+                                let mut lenbuf = [0;4];
+                                if stream.read_exact(&mut lenbuf).is_err() {
+                                    write_response("Error reading size".as_bytes(), &mut stream);
                                 }
-                                Ok(req) => {
-                                    use time::precise_time_ns;
-                                    let timestamps = RequestTimestamps {
-                                        at_gateway: precise_time_ns(),
-                                        request: req.clone(),
-                                        ..Default::default()
-                                    };
-                                    let (tx, rx) = channel::<request::Response>();
-                                    let _ = requests.send((req, tx, timestamps));
-                                    if let Ok(response) = rx.recv() {
-                                        if let Err(e) = request::write_u8(&response.to_vec(), &mut stream) {
-                                            error!("Failed to respond to TCP client at {:?}: {:?}", stream.peer_addr(), e);
+                                let size = u32::from_be_bytes(lenbuf);
+                                let mut buf = vec![0u8; size as usize];
+                                if stream.read_exact(&mut buf).is_err() {
+                                    write_response("Error reading invoke".as_bytes(), &mut stream);
+                                }
+                                buf
+                            };
+
+                            use crate::syscalls::Syscall;
+                            use crate::syscalls::syscall::Syscall as SC;
+                            match Syscall::decode(buf.as_ref()) {
+                                Err(_) => write_response("Error decoing invoke".as_bytes(), &mut stream),
+                                Ok(sc) => match sc.syscall {
+                                    Some(SC::Invoke(req)) => {
+                                        use time::precise_time_ns;
+                                        let timestamps = crate::metrics::RequestTimestamps {
+                                            at_gateway: precise_time_ns(),
+                                            ..Default::default()
                                         };
+                                        let (tx, rx) = channel::<request::Response>();
+                                        let _ = requests.send((req, tx, timestamps));
+                                        if let Ok(response) = rx.recv() {
+                                            write_response(&response.to_vec(), &mut stream);
+                                        }
                                     }
+                                    _ => write_response("Not invoke".as_bytes(), &mut stream),
                                 }
                             }
                         }
