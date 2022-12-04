@@ -29,50 +29,9 @@ def clauses_to_pb_component(component):
             pb_clause = pb_component.clauses.add()
             pb_clause.principals.extend(clause)
         return pb_component
-
-def parse(s):
-
 ### end of helper functions ###
 
-class Component():
-    def __init__(self, pb_component):
-        self.component
-
-class DCLabel():
-    def __init__(self, s):
-        self.pb_label = parse(s)
-
-    @property
-    def integrity(self):
-        return self.pb_label.integrity
-
-    @integrity.setter
-    def integrity(self, integrity):
-        self.pb_label.integrity = clauses_to_pb_component(integrity)
-
-    @property
-    def secrecy(self):
-        return self.pb_label.secrecy
-
-    @secrecy.setter
-    def secrecy(self, secrecy):
-        self.pb_label.secrecy = clauses_to_pb_component(secrecy)
-
 class Syscall():
-    @staticmethod
-    def new_dclabel(secrecy, integrity):
-        pb_label = syscalls_pb2.DcLabel()
-        pb_label.secrecy = clauses_to_pb_component(secrecy)
-        pb_label.integrity = clauses_to_pb_component(integrity)
-        return DCLabel(pb_label)
-
-    @staticmethod
-    def public_dclabel():
-        pb_label = syscalls_pb2.DcLabel()
-        pb_label.secrecy = syscalls_pb2.Component()
-        pb_label.integrity = syscalls_pb2.Component()
-        return DCLabel(pb_label)
-
     def __init__(self, sock):
         self.sock = sock
 
@@ -140,6 +99,20 @@ class Syscall():
         self._send(req)
         response = self._recv(syscalls_pb2.DeclassifyResponse())
         return response.label
+
+    def buckle_parse(self, s):
+        """ Return a syscalls_pb2.DcLabel if string s is valid. Otherwise, None.
+
+        A valid string s has the following format:
+        The string separates secrecy and integrity with a comma, clauses
+        separated with a '&' and principle vectors with a '|', and delegated
+        principles with '/'. The backslash character ('\') allows escaping these
+        special characters (including itself).
+        """
+        request = syscalls_pb2.Syscall(buckleParse = s)
+        self._send(req)
+        response = self._recv(syscalls_pb2.DeclassifyResponse())
+        return response.label
     ### end of label APIs ###
 
     ### gate & privilege ###
@@ -154,13 +127,6 @@ class Syscall():
         self._send(req)
         response = self._recv(syscalls_pb2.DcLabel())
         return response.success
-
-    def buckle_parse(self, s):
-        """ Return a syscalls_pb2.DcLabel if s is valid. Otherwise, None."""
-        request = syscalls_pb2.Syscall(buckleParse = s)
-        self._send(req)
-        response = self._recv(syscalls_pb2.DeclassifyResponse())
-        return response.label
 
     ### github APIs ###
     def github_rest_get(self, route, toblob=False):
