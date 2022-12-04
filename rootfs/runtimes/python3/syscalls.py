@@ -21,7 +21,7 @@ def convert_path(path):
     for comp in path:
         m = syscalls_pb2.PathComponent()
         if isinstance(comp, str):
-            m.name = comp
+            m.dscrp = comp
         else:
             m.facet = comp
         converted.append(m)
