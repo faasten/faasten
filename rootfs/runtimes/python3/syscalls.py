@@ -17,20 +17,6 @@ def recvall(sock, n):
     return bytes(data)
 ### end of helper functions ###
 
-# special facets: public--(True, True), bottom--(True, False), top--(False, True)
-def clauses_to_pb_component(component):
-    if component is True:
-        return syscalls_pb2.Component()
-    elif component is False:
-        return None
-    else:
-        pb_component = syscalls_pb2.Component()
-        for clause in component:
-            pb_clause = pb_component.clauses.add()
-            pb_clause.principals.extend(clause)
-        return pb_component
-### end of helper functions ###
-
 class Syscall():
     def __init__(self, sock):
         self.sock = sock
