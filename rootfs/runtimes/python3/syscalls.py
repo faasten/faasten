@@ -15,6 +15,18 @@ def recvall(sock, n):
             return None
         data.extend(packet)
     return bytes(data)
+
+def convert_path(path):
+    converted = []
+    for comp in path:
+        m = syscalls_pb2.PathComponent()
+        if isinstance(comp, str):
+            m.name = comp
+        else:
+            m.facet = comp
+        converted.append(m)
+    return converted
+
 ### end of helper functions ###
 
 class Syscall():
@@ -150,13 +162,13 @@ class Syscall():
         """Read the file at the `path`.
 
         Args:
-            path (str): slash separated string starting with a slash.
+            path ([str|syscalls_pb2.DcLabel]): list of either str or syscalls_pb2.DcLabel instances.
 
         Returns:
             bytes: if success
             None: otherwise
         """
-        req = syscalls_pb2.Syscall(fsRead = syscalls_pb2.FSRead(path = path))
+        req = syscalls_pb2.Syscall(fsRead = syscalls_pb2.FSRead(path = convert_path(path)))
         self._send(req)
         response = self._recv(syscalls_pb2.ReadKeyResponse())
         return response.value
@@ -166,13 +178,13 @@ class Syscall():
         The host-side handler always endorse before writing.
 
         Args:
-            path (str): slash separated string starting with a slash.
+            path ([str|syscalls_pb2.DcLabel]): list of either str or syscalls_pb2.DcLabel instances.
             data (bytes): data to write
 
         Returns:
             bool: True for success, False otherwise
         """
-        req = syscalls_pb2.Syscall(fsWrite = syscalls_pb2.FSWrite(path = path, data = data))
+        req = syscalls_pb2.Syscall(fsWrite = syscalls_pb2.FSWrite(path = convert_path(path), data = data))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
@@ -182,16 +194,16 @@ class Syscall():
         The host-side handler always endorse before creating the directory.
 
         Args:
-            path (str): slash separated string starting with a slash.
+            path ([str|syscalls_pb2.DcLabel]): list of either str or syscalls_pb2.DcLabel instances.
             label (syscalls_pb2.DcLabel, optional): Defaults to None.
                 The default None instructs the host-side handler to use the function's current label.
 
         Returns:
             bool: True for success, False otherwise
         """
-        basePath, name = os.path.split(path)
+        base, name = os.path.split(path)
         req = syscalls_pb2.Syscall(fsCreateDir = syscalls_pb2.FSCreateDir(
-            basePath = basePath, name = name, label = label))
+            baseDir = convert_path(base), name = name, label = label))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
@@ -201,16 +213,33 @@ class Syscall():
         The host-side handler always endorse before creating the file.
 
         Args:
-            path (str): slash separated string starting with a slash.
+            path ([str|syscalls_pb2.DcLabel]): list of either str or syscalls_pb2.DcLabel instances.
             label (syscalls_pb2.DcLabel, optional): Defaults to None.
                 The default None instructs the host-side handler to use the function's current label.
 
         Returns:
             bool: True for success, False otherwise
         """
-        basePath, name = os.path.split(path)
+        base, name = os.path.split(path)
         req = syscalls_pb2.Syscall(fsCreateFile = syscalls_pb2.FSCreateFile(
-            basePath = basePath, name = name, label = label))
+            baseDir = convert_path(base), name = name, label = label))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+    def fs_createfaceted(self, path):
+        """Create a file at the `path` with the `label`.
+        The host-side handler always endorse before creating the file.
+
+        Args:
+            path ([str|syscalls_pb2.DcLabel]): list of either str or syscalls_pb2.DcLabel instances.
+
+        Returns:
+            bool: True for success, False otherwise
+        """
+        base, name = os.path.split(path)
+        req = syscalls_pb2.Syscall(fsCreateFacetedDir = syscalls_pb2.FSCreateFacetedDir(
+            baseDir = convert_path(base), name = name))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
