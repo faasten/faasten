@@ -103,7 +103,7 @@ class Syscall():
         principles with '/'. The backslash character ('\') allows escaping these
         special characters (including itself).
         """
-        request = syscalls_pb2.Syscall(buckleParse = s)
+        req = syscalls_pb2.Syscall(buckleParse = s)
         self._send(req)
         response = self._recv(syscalls_pb2.DeclassifyResponse())
         return response.label
