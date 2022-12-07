@@ -532,12 +532,14 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsList(req)) => {
-                    let value = fs::utils::read_path(&self.fs, &req.path).ok().and_then(|entry| {
-                        match entry {
-                            fs::DirEntry::Directory(dir) => self.fs.list(dir).ok().map(|m| syscalls::EntryNameArr { names: m.keys().cloned().collect() }),
+                    let value = match fs::utils::read_path(&self.fs, &req.path) {
+                        Ok(entry) => match entry {
+                            DirEntry::Directory(dir) => self.fs.list(dir).ok().map(|m| syscalls::EntryNameArr { names: m.keys().cloned().collect() }),
                             _ => None,
                         }
-                    });
+                        Err(fs::utils::Error::FacetedDir(_, _)) => Some(syscalls::EntryNameArr { names: Vec::new() }),
+                        _ => None,
+                    };
                     let result = syscalls::FsListResponse {
                         value
                     }.encode_to_vec();
@@ -578,19 +580,24 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsCreateFacetedDir(req)) => {
-                    let value = fs::utils::read_path(&self.fs, &req.base_dir).ok().and_then(|entry| {
-                        match entry {
+                    let value = match fs::utils::read_path(&self.fs, &req.base_dir) {
+                        Ok(entry) => match entry {
                             DirEntry::Directory(dir) => {
                                 let newfdir = self.fs.create_faceted_directory();
                                 self.fs.link(&dir, req.name, fs::DirEntry::FacetedDirectory(newfdir)).ok()
                             },
                             DirEntry::FacetedDirectory(fdir) => {
                                 let newfdir = self.fs.create_faceted_directory();
-                                self.fs.faceted_link(&fdir, req.name, fs::DirEntry::FacetedDirectory(newfdir)).ok()
+                                self.fs.faceted_link(&fdir, None, req.name, fs::DirEntry::FacetedDirectory(newfdir)).ok()
                             },
                             _ => None,
-                        }
-                    });
+                        },
+                        Err(fs::utils::Error::FacetedDir(fdir, facet)) => {
+                            let newfdir = self.fs.create_faceted_directory();
+                            self.fs.faceted_link(&fdir, Some(&facet), req.name, fs::DirEntry::FacetedDirectory(newfdir)).ok()
+                        },
+                        _ => None,
+                    };
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     }
@@ -599,19 +606,24 @@ impl Vm {
                 }
                 Some(SC::FsCreateDir(req)) => {
                     let label = pblabel_to_buckle(&req.label.clone().expect("label"));
-                    let value = fs::utils::read_path(&self.fs, &req.base_dir).ok().and_then(|entry| {
-                        match entry {
+                    let value = match fs::utils::read_path(&self.fs, &req.base_dir) {
+                        Ok(entry) => match entry {
                             DirEntry::Directory(dir) => {
                                 let newdir = self.fs.create_directory(label);
                                 self.fs.link(&dir, req.name, fs::DirEntry::Directory(newdir)).ok()
                             },
                             DirEntry::FacetedDirectory(fdir) => {
                                 let newdir = self.fs.create_directory(label);
-                                self.fs.faceted_link(&fdir, req.name, fs::DirEntry::Directory(newdir)).ok()
+                                self.fs.faceted_link(&fdir, None, req.name, fs::DirEntry::Directory(newdir)).ok()
                             },
                             _ => None,
+                        },
+                        Err(fs::utils::Error::FacetedDir(fdir, facet)) => {
+                            let newdir = self.fs.create_directory(label);
+                            self.fs.faceted_link(&fdir, Some(&facet), req.name, fs::DirEntry::Directory(newdir)).ok()
                         }
-                    });
+                        _ => None,
+                    };
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some()
                     }
@@ -621,19 +633,24 @@ impl Vm {
                 },
                 Some(SC::FsCreateFile(req)) => {
                     let label = pblabel_to_buckle(&req.label.clone().expect("label"));
-                    let value = fs::utils::read_path(&self.fs, &req.base_dir).ok().and_then(|entry| {
-                        match entry {
+                    let value = match fs::utils::read_path(&self.fs, &req.base_dir) {
+                        Ok(entry) => match entry {
                             fs::DirEntry::Directory(dir) => {
                                 let newfile = self.fs.create_file(label);
                                 self.fs.link(&dir, req.name, fs::DirEntry::File(newfile)).ok()
                             },
                             DirEntry::FacetedDirectory(fdir) => {
                                 let newfile = self.fs.create_file(label);
-                                self.fs.faceted_link(&fdir, req.name, fs::DirEntry::File(newfile)).ok()
+                                self.fs.faceted_link(&fdir, None, req.name, fs::DirEntry::File(newfile)).ok()
                             },
                             _ => None,
                         }
-                    });
+                        Err(fs::utils::Error::FacetedDir(fdir, facet)) => {
+                            let newfile = self.fs.create_file(label);
+                            self.fs.faceted_link(&fdir, Some(&facet), req.name, fs::DirEntry::File(newfile)).ok()
+                        }
+                        _ => None,
+                    };
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some()
                     }

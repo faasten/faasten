@@ -60,6 +60,7 @@ fn main() {
     let config = configs::ResourceManagerConfig::new(config_path);
 
     let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
+    fs.initialize();
     if let Ok(snapfaas::fs::DirEntry::Directory(root)) = snapfaas::fs::utils::read_path(&fs, &vec![]) {
         // set up home directories
         let fdir = fs.create_faceted_directory();
