@@ -3,7 +3,6 @@ import socket
 import struct
 import json
 from contextlib import contextmanager
-import os.path
 
 ### helper functions ###
 def recvall(sock, n):
@@ -16,6 +15,15 @@ def recvall(sock, n):
         data.extend(packet)
     return bytes(data)
 
+def split_path(path):
+    if not path:
+        return [], '', False
+    name = path.pop()
+    if not isinstance(name, str) or not name:
+        return [], '', False
+    base = path
+    return base, name, True
+
 def convert_path(path):
     converted = []
     for comp in path:
@@ -23,7 +31,7 @@ def convert_path(path):
         if isinstance(comp, str):
             m.dscrp = comp
         else:
-            m.facet = comp
+            m.facet.CopyFrom(comp)
         converted.append(m)
     return converted
 
@@ -201,7 +209,9 @@ class Syscall():
         Returns:
             bool: True for success, False otherwise
         """
-        base, name = os.path.split(path)
+        base, name, ok = split_path(path)
+        if not ok:
+            return False
         req = syscalls_pb2.Syscall(fsCreateDir = syscalls_pb2.FSCreateDir(
             baseDir = convert_path(base), name = name, label = label))
         self._send(req)
@@ -220,7 +230,9 @@ class Syscall():
         Returns:
             bool: True for success, False otherwise
         """
-        base, name = os.path.split(path)
+        base, name, ok = split_path(path)
+        if not ok:
+            return False
         req = syscalls_pb2.Syscall(fsCreateFile = syscalls_pb2.FSCreateFile(
             baseDir = convert_path(base), name = name, label = label))
         self._send(req)
@@ -237,7 +249,9 @@ class Syscall():
         Returns:
             bool: True for success, False otherwise
         """
-        base, name = os.path.split(path)
+        base, name, ok = split_path(path)
+        if not ok:
+            return False
         req = syscalls_pb2.Syscall(fsCreateFacetedDir = syscalls_pb2.FSCreateFacetedDir(
             baseDir = convert_path(base), name = name))
         self._send(req)
