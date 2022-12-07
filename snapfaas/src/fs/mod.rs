@@ -79,7 +79,7 @@ pub struct File {
     object_id: UID,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FacetedDirectory {
     object_id: UID
 }
@@ -219,6 +219,12 @@ impl<S> FS<S> {
 }
 
 impl<S: BackingStore> FS<S> {
+    pub fn initialize(&self) {
+        let dir_contents = serde_json::ser::to_vec(&HashMap::<String, DirEntry>::new()).unwrap_or((&b"{}"[..]).into());
+        let uid: UID = 0;
+        let _ = self.storage.add(&uid.to_be_bytes(), &dir_contents);
+    }
+
     pub fn root(&self) -> Directory {
         Directory {
             label: Buckle::public(),
@@ -342,7 +348,7 @@ impl<S: BackingStore> FS<S> {
         }
     }
 
-    fn open_facet(&self, fdir: FacetedDirectory, facet: &Buckle) -> Result<Directory, utils::Error> {
+    fn open_facet(&self, fdir: &FacetedDirectory, facet: &Buckle) -> Result<Directory, utils::Error> {
         use utils::Error::BadPath;
         match self.storage.get(&fdir.object_id.to_be_bytes()) {
             Some(bs) => {
@@ -397,13 +403,12 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
-    pub fn faceted_link(&self, fdir: &FacetedDirectory, name: String, direntry: DirEntry) -> Result<String, LinkError> {
+    pub fn faceted_link(&self, fdir: &FacetedDirectory, facet: Option<&Buckle>, name: String, direntry: DirEntry) -> Result<String, LinkError> {
         CURRENT_LABEL.with(|current_label| {
-            let facet = &*current_label.borrow();
             let mut raw_fdir: Option<Vec<u8>> = self.storage.get(&fdir.object_id.to_be_bytes());
             loop{
                 let mut fdir_contents: FacetedDirectoryInner = raw_fdir.as_ref().and_then(|fdir_contents| serde_json::from_slice(fdir_contents.as_slice()).ok()).unwrap_or_default();
-                match fdir_contents.open_facet(facet) {
+                match fdir_contents.open_facet(facet.unwrap_or(&*current_label.borrow())) {
                     Ok(dir) => return Ok(self.link(&dir, name.clone(), direntry.clone())?),
                     Err(utils::Error::UnallocatedFacet) => {
                         let dir = self.create_directory(current_label.borrow().clone());
@@ -501,6 +506,7 @@ pub mod utils {
         BadPath,
         UnallocatedFacet,
         LabelError(LabelError),
+        FacetedDir(FacetedDirectory, Buckle),
     }
 
     impl From<LabelError> for Error {
@@ -511,26 +517,54 @@ pub mod utils {
 
     pub fn read_path<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<DirEntry, Error> {
         use syscalls::path_component::Component as PC;
-        path.iter().try_fold(fs.root().into(), |de, comp| -> Result<DirEntry, Error> {
-            match de {
+        if let Some((last, path)) = path.split_last() {
+            let direntry = path.iter().try_fold(fs.root().into(), |de, comp| -> Result<DirEntry, Error> {
+                match de {
+                    super::DirEntry::Directory(dir) => {
+                        match comp.component.as_ref() {
+                            Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
+                            _ => Err(Error::BadPath),
+                        }
+                    },
+                    super::DirEntry::FacetedDirectory(fdir) => {
+                        match comp.component.as_ref() {
+                            Some(PC::Facet(f)) => {
+                                let facet = crate::vm::pblabel_to_buckle(f);
+                                fs.open_facet(&fdir, &facet).map(|d| DirEntry::Directory(d))
+                            },
+                            _ => Err(Error::BadPath),
+                        }
+                    },
+                    super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
+                }
+            })?;
+            // corner case: the last component is an unallocated facet.
+            match direntry {
                 super::DirEntry::Directory(dir) => {
-                    match comp.component.as_ref() {
+                    match last.component.as_ref() {
                         Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
                         _ => Err(Error::BadPath),
                     }
                 },
                 super::DirEntry::FacetedDirectory(fdir) => {
-                    match comp.component.as_ref() {
+                    match last.component.as_ref() {
                         Some(PC::Facet(f)) => {
                             let facet = crate::vm::pblabel_to_buckle(f);
-                            fs.open_facet(fdir, &facet).map(|d| DirEntry::Directory(d))
+                            match fs.open_facet(&fdir, &facet) {
+                                Ok(d) => Ok(DirEntry::Directory(d)),
+                                Err(Error::UnallocatedFacet) => Err(Error::FacetedDir(fdir, facet)),
+                                Err(e) => Err(e),
+                            }
                         },
                         _ => Err(Error::BadPath),
                     }
                 },
                 super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
             }
-        })
+        } else {
+            // corner case: empty vector is the root's path
+            Ok(fs.root().into())
+        }
     }
 
     pub fn get_current_label() -> Buckle {
