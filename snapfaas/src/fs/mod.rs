@@ -167,12 +167,12 @@ impl FacetedDirectoryInner {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Gate {
-    privilege: Component,
+    pub privilege: Component,
     invoking: Component,
     // TODO: for now, use the configurations function-name:host-fs-path
-    image: String,
+    pub image: String,
     object_id: UID,
 }
 
@@ -306,17 +306,18 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
-    pub fn invoke_gate(&self, gate: &Gate) -> Result<String, GateError> {
+    pub fn invoke_gate(&self, gate: &Gate) -> Result<Gate, GateError> {
         CURRENT_LABEL.with(|current_label| {
-            if (current_label.borrow()).integrity.implies(&gate.invoking) {
-                *current_label.borrow_mut() = current_label.borrow().clone().lub(Buckle::new(true, gate.invoking.clone()));
-                PRIVILEGE.with(|opriv| {
-                    *opriv.borrow_mut() = gate.privilege.clone();
-                });
-                Ok(gate.image.clone())
-            } else {
-                Err(GateError::CannotInvoke)
-            }
+            PRIVILEGE.with(|opriv| {
+                // implicit endorsement
+                *current_label.borrow_mut() = current_label.borrow().clone().endorse(&*opriv.borrow());
+                // check integrity
+                if current_label.borrow().integrity.implies(&gate.invoking) {
+                    Ok(gate.clone())
+                } else {
+                    Err(GateError::CannotInvoke)
+                }
+            })
         })
     }
 
@@ -586,6 +587,12 @@ pub mod utils {
 
     pub fn my_privilege() -> Component {
         PRIVILEGE.with(|p| p.borrow().clone())
+    }
+
+    pub fn set_my_privilge(newpriv: Component) {
+        PRIVILEGE.with(|opriv| {
+            *opriv.borrow_mut() = newpriv;
+        });
     }
 
     pub fn declassify(target: Component) -> Result<Buckle, Buckle> {

@@ -1,13 +1,13 @@
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
 use clap::{App, Arg};
-use labeled::buckle;
-use prost::Message;
-use snapfaas::{request, syscalls, vm};
+use labeled::buckle::{self, Clause};
+use snapfaas::request::LabeledInvoke;
+use snapfaas::{fs, request, syscalls, vm};
 use std::net::TcpStream;
 use std::io::{Read, stdin};
 
-fn main() -> std::io::Result<()> {
+fn main() {
     let cmd_arguments = App::new("SnapFaaS CLI Client")
         .version(crate_version!())
         .author(crate_authors!())
@@ -29,10 +29,19 @@ fn main() -> std::io::Result<()> {
                 .required(true)
                 .help("Slash separated path of the gate to be invoked. Sfclient tries to parse each component first as a Buckle label. If failure, sfclient uses it as it is."),
         )
+        .arg(
+            Arg::with_name("principal")
+                .value_name("PRINCIPAL")
+                .long("principal")
+                .takes_value(true)
+                .required(true)
+                .help("Comma-separated principal string"),
+        )
         .get_matches();
 
 
     let addr = cmd_arguments.value_of("server address").unwrap();
+    let principal: Vec<&str> = cmd_arguments.value_of("principal").unwrap().split(',').collect();
     let mut gate = cmd_arguments.value_of("function").unwrap();
     if let Some(p) = gate.strip_prefix('/') {
         gate = p;
@@ -46,18 +55,29 @@ fn main() -> std::io::Result<()> {
             syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Dscrp(s.to_string())) }
         }
     }).collect();
+    let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
+    fs::utils::clear_label();
+    fs::utils::set_my_privilge([Clause::new_from_vec(vec![principal])].into());
+    let gate = match fs::utils::read_path(&fs, &path) {
+        Ok(fs::DirEntry::Gate(g)) => fs.invoke_gate(&g).ok(),
+        _ => None,
+    };
+    if gate.is_none() {
+        eprintln!("Cannot invoke the gate.");
+        return;
+    }
     let mut input = Vec::new();
-    stdin().read_to_end(&mut input)?;
-    let payload = serde_json::from_slice(&input)?;
-    let request = syscalls::Invoke {
-        gate: path,
+    stdin().read_to_end(&mut input).unwrap();
+    let payload = serde_json::from_slice(&input).unwrap();
+    let request = LabeledInvoke {
+        gate: gate.unwrap(),
+        label: fs::utils::get_current_label(),
         payload,
     };
 
-    let mut connection = TcpStream::connect(addr)?;
-    request::write_u8(&request.encode_to_vec(), &mut connection)?;
-    input = request::read_u8(&mut connection)?;
-    let response: request::Response = serde_json::from_slice(&input)?;
+    let mut connection = TcpStream::connect(addr).unwrap();
+    request::write_u8(serde_json::to_vec(&request).unwrap().as_ref(), &mut connection).unwrap();
+    input = request::read_u8(&mut connection).unwrap();
+    let response: request::Response = serde_json::from_slice(&input).unwrap();
     println!("{:?}", response);
-    Ok(())
 }

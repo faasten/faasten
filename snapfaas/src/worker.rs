@@ -13,7 +13,7 @@ use log::{error, debug};
 use time::precise_time_ns;
 
 use crate::message::Message;
-use crate::request::{RequestStatus, Response};
+use crate::request::{RequestStatus, Response, LabeledInvoke};
 use crate::vm;
 use crate::metrics::{self, RequestTimestamps};
 use crate::resource_manager;
@@ -28,31 +28,15 @@ pub struct Worker {
     pub thread: JoinHandle<()>,
 }
 
-fn handle_request(req: crate::syscalls::LabeledInvoke, rsp_sender: Sender<Response>, func_req_sender: Sender<Message>, vm_req_sender: Sender<Message>, vm_listener: UnixListener, mut tsps: RequestTimestamps, stat: &mut metrics::WorkerMetrics, cid: u32) {
-    debug!("invoke syscall: {:?}", &req.invoke);
+fn handle_request(req: LabeledInvoke, rsp_sender: Sender<Response>, func_req_sender: Sender<Message>, vm_req_sender: Sender<Message>, vm_listener: UnixListener, mut tsps: RequestTimestamps, stat: &mut metrics::WorkerMetrics, cid: u32) {
+    debug!("invoke: {:?}", &req);
 
     tsps.arrived = precise_time_ns();
 
-    let fs = fs::FS::new(&*crate::labeled_fs::DBENV);
-    if req.invoke.is_none() || req.label.is_none() {
-        let id = thread::current().id();
-        error!("[Worker {:?}] empty invoke or label: {:?}", id, req);
-        return;
-    }
     fs::utils::clear_label();
-    fs::utils::taint_with_label(crate::vm::pblabel_to_buckle(&req.label.unwrap()));
-    let req = req.invoke.unwrap();
-    let function_name = fs::utils::read_path(&fs, &req.gate).ok().and_then(|entry| {
-        match entry {
-            fs::DirEntry::Gate(gate) => fs.invoke_gate(&gate).ok(),
-            _ => None,
-        }
-    });
-    if function_name.is_none() {
-        let _ = rsp_sender.send(Response { status: RequestStatus::GateNotExist });
-        return;
-    }
-    let function_name = function_name.unwrap();
+    fs::utils::taint_with_label(labeled::buckle::Buckle::new(req.label.secrecy, true));
+    fs::utils::set_my_privilge(req.gate.privilege);
+    let function_name = req.gate.image;
     let mut i = 0;
     let result = loop {
         let mut tsps = tsps.clone();

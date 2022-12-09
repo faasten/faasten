@@ -1,9 +1,8 @@
 use std::net::TcpListener;
-use std::io::{Write, Read};
+use std::io::Write;
 use std::sync::mpsc::{channel, Receiver};
 
 use log::{error, debug};
-use prost::Message;
 
 use crate::message::RequestInfo;
 use crate::request;
@@ -44,33 +43,24 @@ impl HTTPGateway {
                     let requests = requests_tx.clone();
                     std::thread::spawn(move || {
                         loop {
-                            let buf = {
-                                let mut lenbuf = [0;4];
-                                if stream.read_exact(&mut lenbuf).is_err() {
-                                    write_response("Error reading size".as_bytes(), &mut stream);
-                                }
-                                let size = u32::from_be_bytes(lenbuf);
-                                let mut buf = vec![0u8; size as usize];
-                                if stream.read_exact(&mut buf).is_err() {
-                                    write_response("Error reading invoke".as_bytes(), &mut stream);
-                                }
-                                buf
-                            };
-
-                            match crate::syscalls::LabeledInvoke::decode(buf.as_ref()) {
-                                Err(_) => write_response("Error decoding invoke".as_bytes(), &mut stream),
-                                Ok(labeled) => {
+                            if let Ok(buf) = request::read_u8(&mut stream) {
+                                if let Ok(parsed) = request::parse_u8_invoke(buf)  {
                                     use time::precise_time_ns;
                                     let timestamps = crate::metrics::RequestTimestamps {
                                         at_gateway: precise_time_ns(),
                                         ..Default::default()
                                     };
                                     let (tx, rx) = channel::<request::Response>();
-                                    let _ = requests.send((labeled, tx, timestamps));
+                                    let _ = requests.send((parsed, tx, timestamps));
                                     if let Ok(response) = rx.recv() {
                                         write_response(&response.to_vec(), &mut stream);
                                     }
+
+                                } else {
+                                    write_response("Error decoding invoke".as_bytes(), &mut stream);
                                 }
+                            } else {
+                                write_response("Error reading invoke".as_bytes(), &mut stream);
                             }
                         }
                     });

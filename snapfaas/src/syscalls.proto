@@ -2,11 +2,6 @@ syntax = "proto3";
 
 package snapfaas.syscalls;
 
-message LabeledInvoke {
-  Invoke invoke = 1;
-  Buckle label = 2;
-}
-
 message Invoke {
   repeated PathComponent gate = 1;
   string payload = 2;

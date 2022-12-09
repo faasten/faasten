@@ -15,6 +15,7 @@ use tokio::process::{Child, Command};
 
 use crate::configs::FunctionConfig;
 use crate::message::Message;
+use crate::request::LabeledInvoke;
 use crate::{blobstore, syscalls};
 use crate::labeled_fs::DBENV;
 use crate::fs::{self, DirEntry};
@@ -368,7 +369,7 @@ impl Vm {
         }
     }
 
-    fn send_req(&self, invoke: syscalls::Invoke) -> bool {
+    fn sched_invoke(&self, invoke: LabeledInvoke) -> bool {
         use time::precise_time_ns;
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
             let (tx, _) = mpsc::channel();
@@ -378,13 +379,9 @@ impl Vm {
                 //request: req.clone(),
                 ..Default::default()
             };
-            let labeled = syscalls::LabeledInvoke {
-                invoke: Some(invoke),
-                label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
-            };
-            invoke_handle.send(Message::Request((labeled, tx, timestamps))).is_ok()
+            invoke_handle.send(Message::Request((invoke, tx, timestamps))).is_ok()
         } else {
-            debug!("No invoke handle, ignoring invoke syscall. {:?}", invoke);
+            debug!("No invoke handle, ignoring invoke syscall.");
             false
         }
     }
@@ -451,7 +448,12 @@ impl Vm {
                     });
                     let mut result = syscalls::WriteKeyResponse { success: value.is_some() };
                     if value.is_some() {
-                        result.success = self.send_req(req)
+                        let labeled = LabeledInvoke {
+                            gate: value.clone().unwrap(),
+                            label: fs::utils::get_current_label(),
+                            payload: req.payload,
+                        };
+                        result.success = self.sched_invoke(labeled)
                     }
                     self.send_into_vm(result.encode_to_vec())?;
                 },
