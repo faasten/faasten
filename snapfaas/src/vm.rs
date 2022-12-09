@@ -36,7 +36,7 @@ fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Componen
     }
 }
 
-pub fn pblabel_to_buckle(label: &syscalls::DcLabel) -> Buckle {
+pub fn pblabel_to_buckle(label: &syscalls::Buckle) -> Buckle {
     Buckle {
         secrecy: pbcomponent_to_component(&label.secrecy),
         integrity: pbcomponent_to_component(&label.integrity),
@@ -57,8 +57,8 @@ fn component_to_pbcomponent(component: &Component) -> Option<syscalls::Component
     }
 }
 
-pub fn buckle_to_pblabel(label: &Buckle) -> syscalls::DcLabel {
-    syscalls::DcLabel {
+pub fn buckle_to_pblabel(label: &Buckle) -> syscalls::Buckle {
+    syscalls::Buckle {
         secrecy: component_to_pbcomponent(&label.secrecy),
         integrity: component_to_pbcomponent(&label.integrity),
     }
@@ -378,7 +378,11 @@ impl Vm {
                 //request: req.clone(),
                 ..Default::default()
             };
-            invoke_handle.send(Message::Request((invoke, tx, timestamps))).is_ok()
+            let labeled = syscalls::LabeledInvoke {
+                invoke: Some(invoke),
+                label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
+            };
+            invoke_handle.send(Message::Request((labeled, tx, timestamps))).is_ok()
         } else {
             debug!("No invoke handle, ignoring invoke syscall. {:?}", invoke);
             false
@@ -430,7 +434,7 @@ impl Vm {
                             clause.principals.first_mut().unwrap().tokens.extend(suffix.tokens);
                         }
                     }
-                    let result = syscalls::DcLabel {
+                    let result = syscalls::Buckle {
                         secrecy: my_priv,
                         integrity: None,
                     }

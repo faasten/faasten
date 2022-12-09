@@ -28,13 +28,20 @@ pub struct Worker {
     pub thread: JoinHandle<()>,
 }
 
-fn handle_request(req: crate::syscalls::Invoke, rsp_sender: Sender<Response>, func_req_sender: Sender<Message>, vm_req_sender: Sender<Message>, vm_listener: UnixListener, mut tsps: RequestTimestamps, stat: &mut metrics::WorkerMetrics, cid: u32) {
-    debug!("processing request to function {:?}", &req.gate);
+fn handle_request(req: crate::syscalls::LabeledInvoke, rsp_sender: Sender<Response>, func_req_sender: Sender<Message>, vm_req_sender: Sender<Message>, vm_listener: UnixListener, mut tsps: RequestTimestamps, stat: &mut metrics::WorkerMetrics, cid: u32) {
+    debug!("invoke syscall: {:?}", &req.invoke);
 
     tsps.arrived = precise_time_ns();
 
     let fs = fs::FS::new(&*crate::labeled_fs::DBENV);
+    if req.invoke.is_none() || req.label.is_none() {
+        let id = thread::current().id();
+        error!("[Worker {:?}] empty invoke or label: {:?}", id, req);
+        return;
+    }
     fs::utils::clear_label();
+    fs::utils::taint_with_label(crate::vm::pblabel_to_buckle(&req.label.unwrap()));
+    let req = req.invoke.unwrap();
     let function_name = fs::utils::read_path(&fs, &req.gate).ok().and_then(|entry| {
         match entry {
             fs::DirEntry::Gate(gate) => fs.invoke_gate(&gate).ok(),
@@ -57,6 +64,7 @@ fn handle_request(req: crate::syscalls::Invoke, rsp_sender: Sender<Response>, fu
         vm_req_sender.send(Message::GetVm(function_name.clone(), tx)).expect("Failed to send GetVm request");
         match rx.recv().expect("Failed to receive GetVm response") {
             Ok(mut vm) => {
+                // TODO: label cached VM
                 tsps.allocated = precise_time_ns();
                 if !vm.is_launched() {
                     // newly allocated VM is returned, launch it first

@@ -57,24 +57,19 @@ impl HTTPGateway {
                                 buf
                             };
 
-                            use crate::syscalls::Syscall;
-                            use crate::syscalls::syscall::Syscall as SC;
-                            match Syscall::decode(buf.as_ref()) {
-                                Err(_) => write_response("Error decoing invoke".as_bytes(), &mut stream),
-                                Ok(sc) => match sc.syscall {
-                                    Some(SC::Invoke(req)) => {
-                                        use time::precise_time_ns;
-                                        let timestamps = crate::metrics::RequestTimestamps {
-                                            at_gateway: precise_time_ns(),
-                                            ..Default::default()
-                                        };
-                                        let (tx, rx) = channel::<request::Response>();
-                                        let _ = requests.send((req, tx, timestamps));
-                                        if let Ok(response) = rx.recv() {
-                                            write_response(&response.to_vec(), &mut stream);
-                                        }
+                            match crate::syscalls::LabeledInvoke::decode(buf.as_ref()) {
+                                Err(_) => write_response("Error decoding invoke".as_bytes(), &mut stream),
+                                Ok(labeled) => {
+                                    use time::precise_time_ns;
+                                    let timestamps = crate::metrics::RequestTimestamps {
+                                        at_gateway: precise_time_ns(),
+                                        ..Default::default()
+                                    };
+                                    let (tx, rx) = channel::<request::Response>();
+                                    let _ = requests.send((labeled, tx, timestamps));
+                                    if let Ok(response) = rx.recv() {
+                                        write_response(&response.to_vec(), &mut stream);
                                     }
-                                    _ => write_response("Not invoke".as_bytes(), &mut stream),
                                 }
                             }
                         }

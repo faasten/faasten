@@ -5,7 +5,7 @@ use crate::vm::Vm;
 use crate::resource_manager;
 use crate::metrics::RequestTimestamps;
 
-pub type RequestInfo = (crate::syscalls::Invoke, Sender<Response>, RequestTimestamps);
+pub type RequestInfo = (crate::syscalls::LabeledInvoke, Sender<Response>, RequestTimestamps);
 
 #[derive(Debug)]
 pub enum Message {
