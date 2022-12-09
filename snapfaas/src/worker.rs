@@ -33,7 +33,6 @@ fn handle_request(req: crate::syscalls::Invoke, rsp_sender: Sender<Response>, fu
 
     tsps.arrived = precise_time_ns();
 
-    // TODO: fix this to use gate
     let fs = fs::FS::new(&*crate::labeled_fs::DBENV);
     fs::utils::clear_label();
     let function_name = fs::utils::read_path(&fs, &req.gate).ok().and_then(|entry| {
