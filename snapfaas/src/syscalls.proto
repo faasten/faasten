@@ -8,8 +8,10 @@ message Invoke {
 }
 
 message DupGate {
-  repeated PathComponent gate = 1;
-  Buckle policy = 2;
+  repeated PathComponent orig = 1;
+  repeated PathComponent baseDir = 2;
+  string name = 3;
+  Buckle policy = 4;
 }
 
 message DeclassifyResponse {

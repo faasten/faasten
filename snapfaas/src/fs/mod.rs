@@ -508,11 +508,25 @@ pub mod utils {
         UnallocatedFacet,
         LabelError(LabelError),
         FacetedDir(FacetedDirectory, Buckle),
+        GateError(GateError),
+        LinkError(LinkError),
     }
 
     impl From<LabelError> for Error {
         fn from(err: LabelError) -> Self {
             Error::LabelError(err)
+        }
+    }
+
+    impl From<GateError> for Error {
+        fn from(err: GateError) -> Self {
+            Error::GateError(err)
+        }
+    }
+
+    impl From<LinkError> for Error {
+        fn from(err: LinkError) -> Self {
+            Error::LinkError(err)
         }
     }
 
@@ -565,6 +579,20 @@ pub mod utils {
         } else {
             // corner case: empty vector is the root's path
             Ok(fs.root().into())
+        }
+    }
+
+    pub fn create_gate<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, policy: Buckle, image: String) -> Result<(), Error> {
+        let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::GateError(e))?;
+        CURRENT_LABEL.with(|current_label| {
+            PRIVILEGE.with(|opriv| { *current_label.borrow_mut() = current_label.borrow().clone().endorse(&*opriv.borrow())});
+        });
+        match read_path(&fs, base_dir) {
+            Ok(DirEntry::Directory(dir)) =>
+                fs.link(&dir, name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e)),
+            Ok(DirEntry::FacetedDirectory(fdir)) =>
+                fs.faceted_link(&fdir, None, name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e)),
+            _ => Err(Error::BadPath),
         }
     }
 

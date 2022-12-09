@@ -458,11 +458,10 @@ impl Vm {
                     self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::DupGate(req)) => {
-                    let value = fs::utils::read_path(&self.fs, &req.gate).ok().and_then(|entry| {
-                        match entry {
+                    let value = fs::utils::read_path(&self.fs, &req.orig).ok().and_then(|entry| { match entry {
                             fs::DirEntry::Gate(gate) => {
                                 let policy = pblabel_to_buckle(&req.policy.unwrap());
-                                self.fs.dup_gate(policy, &gate).ok()
+                                fs::utils::create_gate(&self.fs, &req.base_dir, req.name, policy, gate.image).ok()
                             },
                             _ => None,
                         }
