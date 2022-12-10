@@ -310,7 +310,8 @@ impl<S: BackingStore> FS<S> {
         CURRENT_LABEL.with(|current_label| {
             PRIVILEGE.with(|opriv| {
                 // implicit endorsement
-                *current_label.borrow_mut() = current_label.borrow().clone().endorse(&*opriv.borrow());
+                let clone = current_label.borrow().clone();
+                *current_label.borrow_mut() = clone.endorse(&*opriv.borrow());
                 // check integrity
                 if current_label.borrow().integrity.implies(&gate.invoking) {
                     Ok(gate.clone())
@@ -538,7 +539,8 @@ pub mod utils {
                     match de {
                         super::DirEntry::Directory(dir) => {
                             // implicitly raising the secrecy
-                            *current_label.borrow_mut() = current_label.borrow().clone().lub(Buckle::new(dir.label.secrecy.clone(), true));
+                            let clone = current_label.borrow().clone();
+                            *current_label.borrow_mut() = clone.lub(Buckle::new(dir.label.secrecy.clone(), true));
                             match comp.component.as_ref() {
                                 Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
                                 _ => Err(Error::BadPath),
@@ -549,7 +551,8 @@ pub mod utils {
                                 Some(PC::Facet(f)) => {
                                     let facet = crate::vm::pblabel_to_buckle(f);
                                     // implicitly raising the secrecy
-                                    *current_label.borrow_mut() = current_label.borrow().clone().lub(Buckle::new(facet.secrecy.clone(), true));
+                                    let clone = current_label.borrow().clone();
+                                    *current_label.borrow_mut() = clone.lub(Buckle::new(facet.secrecy.clone(), true));
                                     fs.open_facet(&fdir, &facet).map(|d| DirEntry::Directory(d))
                                 },
                                 _ => Err(Error::BadPath),
@@ -562,7 +565,8 @@ pub mod utils {
                 match direntry {
                     super::DirEntry::Directory(dir) => {
                         // implicitly raising the secrecy
-                        *current_label.borrow_mut() = current_label.borrow().clone().lub(Buckle::new(dir.label.secrecy.clone(), true));
+                        let clone = current_label.borrow().clone();
+                        *current_label.borrow_mut() = clone.lub(Buckle::new(dir.label.secrecy.clone(), true));
                         match last.component.as_ref() {
                             Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
                             _ => Err(Error::BadPath),
@@ -573,7 +577,8 @@ pub mod utils {
                             Some(PC::Facet(f)) => {
                                 let facet = crate::vm::pblabel_to_buckle(f);
                                 // implicitly raising the secrecy
-                                *current_label.borrow_mut() = current_label.borrow().clone().lub(Buckle::new(facet.secrecy.clone(), true));
+                                let clone = current_label.borrow().clone();
+                                *current_label.borrow_mut() = clone.lub(Buckle::new(facet.secrecy.clone(), true));
                                 match fs.open_facet(&fdir, &facet) {
                                     Ok(d) => Ok(DirEntry::Directory(d)),
                                     Err(Error::UnallocatedFacet) => Err(Error::FacetedDir(fdir, facet)),
@@ -595,7 +600,9 @@ pub mod utils {
     pub fn create_gate<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, policy: Buckle, image: String) -> Result<(), Error> {
         let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::GateError(e))?;
         CURRENT_LABEL.with(|current_label| {
-            PRIVILEGE.with(|opriv| { *current_label.borrow_mut() = current_label.borrow().clone().endorse(&*opriv.borrow())});
+            PRIVILEGE.with(|opriv| {
+                let clone = current_label.borrow().clone();
+                *current_label.borrow_mut() = clone.endorse(&*opriv.borrow())});
         });
         match read_path(&fs, base_dir) {
             Ok(DirEntry::Directory(dir)) =>
@@ -612,7 +619,8 @@ pub mod utils {
 
     pub fn taint_with_label(label: Buckle) -> Buckle {
         CURRENT_LABEL.with(|l| {
-            *l.borrow_mut() = l.borrow().clone().lub(label);
+            let clone = l.borrow().clone();
+            *l.borrow_mut() = clone.lub(label);
             l.borrow().clone()
         })
     }

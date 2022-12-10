@@ -1,18 +1,10 @@
 use std::net::TcpListener;
-use std::io::Write;
 use std::sync::mpsc::{channel, Receiver};
 
 use log::{error, debug};
 
 use crate::message::RequestInfo;
 use crate::request;
-
-fn write_response(buf: &[u8], channel: &mut std::net::TcpStream) {
-    let size = buf.len().to_be_bytes();
-    if channel.write_all(&size).is_err() || channel.write_all(buf).is_err() {
-        error!("Failed to respond");
-    }
-}
 
 /// A gateway listens on a endpoint and accepts requests
 /// For example a FileGateway "listens" to a file and accepts
@@ -42,25 +34,25 @@ impl HTTPGateway {
                     debug!("connection from {:?}", stream.peer_addr());
                     let requests = requests_tx.clone();
                     std::thread::spawn(move || {
-                        loop {
-                            if let Ok(buf) = request::read_u8(&mut stream) {
-                                if let Ok(parsed) = request::parse_u8_invoke(buf)  {
-                                    use time::precise_time_ns;
-                                    let timestamps = crate::metrics::RequestTimestamps {
-                                        at_gateway: precise_time_ns(),
-                                        ..Default::default()
-                                    };
-                                    let (tx, rx) = channel::<request::Response>();
-                                    let _ = requests.send((parsed, tx, timestamps));
-                                    if let Ok(response) = rx.recv() {
-                                        write_response(&response.to_vec(), &mut stream);
+                        while let Ok(buf) = request::read_u8(&mut stream) {
+                            if let Ok(parsed) = request::parse_u8_invoke(buf)  {
+                                use time::precise_time_ns;
+                                let timestamps = crate::metrics::RequestTimestamps {
+                                    at_gateway: precise_time_ns(),
+                                    ..Default::default()
+                                };
+                                let (tx, rx) = channel::<request::Response>();
+                                let _ = requests.send((parsed, tx, timestamps));
+                                if let Ok(response) = rx.recv() {
+                                    if request::write_u8(&response.to_vec(), &mut stream).is_err() {
+                                        error!("Failed to write response");
                                     }
-
-                                } else {
-                                    write_response("Error decoding invoke".as_bytes(), &mut stream);
                                 }
+
                             } else {
-                                write_response("Error reading invoke".as_bytes(), &mut stream);
+                                if request::write_u8("Error decoding invoke".as_bytes(), &mut stream).is_err() {
+                                    error!("Failed to write response");
+                                }
                             }
                         }
                     });
