@@ -607,21 +607,88 @@ pub mod utils {
     }
 
     pub fn create_gate<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, policy: Buckle, image: String) -> Result<(), Error> {
-        let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::GateError(e))?;
         endorse_with_owned();
         match read_path(&fs, base_dir) {
-            Ok(DirEntry::Directory(dir)) =>
-                fs.link(&dir, name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e)),
-            Ok(DirEntry::FacetedDirectory(fdir)) =>
-                fs.faceted_link(&fdir, None, name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e)),
+            Ok(DirEntry::Directory(dir)) => {
+            let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::from(e))?;
+                fs.link(&dir, name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e))
+            },
+            Ok(DirEntry::FacetedDirectory(fdir)) => {
+            let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::from(e))?;
+                fs.faceted_link(&fdir, None, name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e))
+            },
             Err(Error::FacetedDir(fdir, facet)) => {
-        CURRENT_LABEL.with(|current_label| {
-            println!("{:?}", &*current_label.borrow());
-        });
+            let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::GateError(e))?;
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e))
             }
             Ok(_) => Err(Error::BadPath),
-            Err(e) => { println!("error: {:?}", e); Err(Error::BadPath) }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn create_directory<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, label: Buckle) -> Result<(), Error> {
+        endorse_with_owned();
+        match read_path(&fs, base_dir) {
+            Ok(entry) => match entry {
+                DirEntry::Directory(dir) => {
+                    let newdir = fs.create_directory(label);
+                    fs.link(&dir, name, DirEntry::Directory(newdir)).map(|_| ()).map_err(|e| Error::from(e))
+                },
+                DirEntry::FacetedDirectory(fdir) => {
+                    let newdir = fs.create_directory(label);
+                    fs.faceted_link(&fdir, None, name, DirEntry::Directory(newdir)).map(|_| ()).map_err(|e| Error::from(e))
+                },
+                _ => Err(Error::BadPath),
+            },
+            Err(Error::FacetedDir(fdir, facet)) => {
+                let newdir = fs.create_directory(label);
+                fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Directory(newdir)).map(|_| ()).map_err(|e| Error::from(e))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn create_file<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, label: Buckle) -> Result<(), Error> {
+        endorse_with_owned();
+        match read_path(&fs, base_dir) {
+            Ok(entry) => match entry {
+                DirEntry::Directory(dir) => {
+                    let newfile = fs.create_file(label);
+                    fs.link(&dir, name, DirEntry::File(newfile)).map(|_| ()).map_err(|e| Error::from(e))
+                },
+                DirEntry::FacetedDirectory(fdir) => {
+                    let newfile = fs.create_file(label);
+                    fs.faceted_link(&fdir, None, name, DirEntry::File(newfile)).map(|_| ()).map_err(|e| Error::from(e))
+                },
+                _ => Err(Error::BadPath),
+            },
+            Err(Error::FacetedDir(fdir, facet)) => {
+                let newfile = fs.create_file(label);
+                fs.faceted_link(&fdir, Some(&facet), name, DirEntry::File(newfile)).map(|_| ()).map_err(|e| Error::from(e))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn create_faceted<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String) -> Result<(), Error> {
+        endorse_with_owned();
+        match read_path(&fs, base_dir) {
+            Ok(entry) => match entry {
+                DirEntry::Directory(dir) => {
+                    let newfdir = fs.create_faceted_directory();
+                    fs.link(&dir, name, DirEntry::FacetedDirectory(newfdir)).map(|_| ()).map_err(|e| Error::from(e))
+                },
+                DirEntry::FacetedDirectory(fdir) => {
+                    let newfdir = fs.create_faceted_directory();
+                    fs.faceted_link(&fdir, None, name, DirEntry::FacetedDirectory(newfdir)).map(|_| ()).map_err(|e| Error::from(e))
+                },
+                _ => Err(Error::BadPath),
+            },
+            Err(Error::FacetedDir(fdir, facet)) => {
+                let newfdir = fs.create_faceted_directory();
+                fs.faceted_link(&fdir, Some(&facet), name, DirEntry::FacetedDirectory(newfdir)).map(|_| ()).map_err(|e| Error::from(e))
+            }
+            Err(e) => Err(e),
         }
     }
 

@@ -7,6 +7,19 @@ use snapfaas::{fs, request, syscalls, vm};
 use std::net::TcpStream;
 use std::io::stdin;
 
+fn parse_path_vec(mut path: Vec<&str>) -> Vec<syscalls::PathComponent> {
+    path.remove(0);
+    path.iter().map(|s| {
+        // try parse it as a facet, if failure, as a regular name
+        if let Ok(l) = buckle::Buckle::parse(s) {
+            let f = vm::buckle_to_pblabel(&l);
+            syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Facet(f)) }
+        } else {
+            syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Dscrp(s.to_string())) }
+        }
+    }).collect()
+}
+
 fn main() {
     let cmd_arguments = App::new("SnapFaaS CLI Client")
         .version(crate_version!())
@@ -34,7 +47,7 @@ fn main() {
            )
            .arg(
                Arg::with_name("path")
-                   .value_name("GATE")
+                   .value_name("GATE PATH")
                    .long("gate")
                    .takes_value(true)
                    .required(true)
@@ -45,39 +58,39 @@ fn main() {
        .subcommand(
            SubCommand::with_name("newgate")
            .about("Act as the principal PRINCIPAL and create a gate at GATE from the function name.")
-            .arg(
-                Arg::with_name("base-dir")
-                    .value_name("BASE DIR")
-                    .long("base-dir")
-                    .takes_value(true)
-                    .required(true)
-                    .value_delimiter(":")
-                    .help("Colon separated path of the directory to create the gate in. Sfclient tries to parse each component first as a Buckle label. If failure, sfclient uses it as it is."),
-            )
-            .arg(
-                Arg::with_name("gate-name")
-                    .value_name("GATE NAME")
-                    .long("gate-name")
-                    .takes_value(true)
-                    .required(true)
-                    .help("Name of the gate to be created"),
-            )
-            .arg(
-                Arg::with_name("policy")
-                    .value_name("POLICY")
-                    .long("policy")
-                    .takes_value(true)
-                    .required(true)
-                    .help("A parsable Buckle string piggybacking the gate's policy. The secrecy should be the gate's privilege. The integrity should be the gate's integrity."),
-            )
-            .arg(
-                Arg::with_name("function")
-                    .value_name("FUNCTION NAME")
-                    .long("function")
-                    .takes_value(true)
-                    .required(true)
-                    .help("Function name string."),
-            )
+           .arg(
+               Arg::with_name("base-dir")
+                   .value_name("BASE DIR")
+                   .long("base-dir")
+                   .takes_value(true)
+                   .required(true)
+                   .value_delimiter(":")
+                   .help("Colon separated path of the directory to create the gate in. Sfclient tries to parse each component first as a Buckle label. If failure, sfclient uses it as it is."),
+           )
+           .arg(
+               Arg::with_name("gate-name")
+                   .value_name("GATE NAME")
+                   .long("gate-name")
+                   .takes_value(true)
+                   .required(true)
+                   .help("Name of the gate to be created"),
+           )
+           .arg(
+               Arg::with_name("policy")
+                   .value_name("POLICY")
+                   .long("policy")
+                   .takes_value(true)
+                   .required(true)
+                   .help("A parsable Buckle string piggybacking the gate's policy. The secrecy should be the gate's privilege. The integrity should be the gate's integrity."),
+           )
+           .arg(
+               Arg::with_name("function")
+                   .value_name("FUNCTION NAME")
+                   .long("function")
+                   .takes_value(true)
+                   .required(true)
+                   .help("Function name string."),
+           )
        )
        .subcommand(
            SubCommand::with_name("ls")
@@ -87,6 +100,41 @@ fn main() {
                .index(1)
                .value_delimiter(":")
                .help("A directory/faceted directory path."),
+            )
+       )
+       .subcommand(
+           SubCommand::with_name("create")
+           .about("create a directory")
+           .arg(
+               Arg::with_name("type")
+               .index(1)
+               .possible_values(&["dir", "file", "faceted"])
+               .help("Type of the object"),
+            )
+           .arg(
+               Arg::with_name("base-dir")
+               .value_name("BASE DIR")
+               .long("base-dir")
+               .value_delimiter(":")
+               .takes_value(true)
+               .required(true)
+               .help("Path of the base directory"),
+            )
+           .arg(
+               Arg::with_name("name")
+               .value_name("NAME")
+               .long("name")
+               .takes_value(true)
+               .required(true)
+               .help("Path of the base directory"),
+            )
+           .arg(
+               Arg::with_name("label")
+               .value_name("LABEL")
+               .long("label")
+               .takes_value(true)
+               .required_ifs(&[("type", "dir"), ("type", "file")])
+               .help("Path of the base directory"),
             )
        )
        .get_matches();
@@ -101,15 +149,7 @@ fn main() {
         ("invoke", Some(sub_m)) => {
             let addr = sub_m.value_of("server address").unwrap();
             let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
-            let path = path.iter().map(|s| {
-                // try parse it as a facet, if failure, as a regular name
-                if let Ok(l) = buckle::Buckle::parse(s) {
-                    let f = vm::buckle_to_pblabel(&l);
-                    syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Facet(f)) }
-                } else {
-                    syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Dscrp(s.to_string())) }
-                }
-            }).collect();
+            let path = parse_path_vec(path);
             let gate = match fs::utils::read_path(&fs, &path) {
                 Ok(fs::DirEntry::Gate(g)) => fs.invoke_gate(&g).ok(),
                 _ => None,
@@ -142,15 +182,7 @@ fn main() {
             }
             let policy = policy.unwrap();
             let base_dir = sub_m.values_of("base-dir").unwrap().collect::<Vec<&str>>();
-            let base_dir = base_dir.iter().map(|s| {
-                // try parse it as a facet, if failure, as a regular name
-                if let Ok(l) = buckle::Buckle::parse(s) {
-                    let f = vm::buckle_to_pblabel(&l);
-                    syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Facet(f)) }
-                } else {
-                    syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Dscrp(s.to_string())) }
-                }
-            }).collect();
+            let base_dir = parse_path_vec(base_dir);
 
             // TODO: use global function name for now
             if let Err(e) = fs::utils::create_gate(&fs, &base_dir, name.to_string(), policy, function) {
@@ -158,17 +190,8 @@ fn main() {
             }
         },
         ("ls", Some(sub_m)) => {
-            let mut path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
-            let _ = path.remove(0);
-            let path = path.iter().map(|s| {
-                // try parse it as a facet, if failure, as a regular name
-                if let Ok(l) = buckle::Buckle::parse(s) {
-                    let f = vm::buckle_to_pblabel(&l);
-                    syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Facet(f)) }
-                } else {
-                    syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Dscrp(s.to_string())) }
-                }
-            }).collect();
+            let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
+            let path = parse_path_vec(path);
             let entries = match fs::utils::read_path(&fs, &path) {
                 Ok(fs::DirEntry::Directory(dir)) => fs.list(dir).map(|m| m.keys().cloned().collect::<Vec<String>>()).ok(),
                 Ok(fs::DirEntry::FacetedDirectory(fdir)) => {
@@ -189,7 +212,35 @@ fn main() {
             } else {
                 eprintln!("Failed to list.");
             }
-        }
+        },
+        ("create", Some(sub_m)) => {
+            let objtype = sub_m.value_of("type").unwrap();
+            let base_dir = sub_m.values_of("base-dir").unwrap().collect();
+            let name = sub_m.value_of("name").unwrap().to_string();
+            let base_dir = parse_path_vec(base_dir);
+            let label = buckle::Buckle::parse(sub_m.value_of("label").unwrap());
+            if label.is_err() {
+                eprintln!("Bad label: {}.", label.unwrap_err());
+                return;
+            }
+            let label = label.unwrap();
+
+            if objtype == "dir" {
+                if let Err(e) = fs::utils::create_directory(&fs, &base_dir, name, label) {
+                    eprintln!("Cannot create the directory: {:?}", e);
+                }
+            } else if objtype == "faceted" {
+                if let Err(e) = fs::utils::create_faceted(&fs, &base_dir, name) {
+                    eprintln!("Cannot create the directory: {:?}", e);
+                }
+            } else if objtype == "file" {
+                if let Err(e) = fs::utils::create_file(&fs, &base_dir, name, label) {
+                    eprintln!("Cannot create the directory: {:?}", e);
+                }
+            } else {
+                panic!("{} is not a valid type.", objtype);
+            }
+        },
         (&_, _) => {
             eprintln!("{}", cmd_arguments.usage());
         }

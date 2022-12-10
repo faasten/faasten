@@ -586,24 +586,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsCreateFacetedDir(req)) => {
-                    let value = match fs::utils::read_path(&self.fs, &req.base_dir) {
-                        Ok(entry) => match entry {
-                            DirEntry::Directory(dir) => {
-                                let newfdir = self.fs.create_faceted_directory();
-                                self.fs.link(&dir, req.name, fs::DirEntry::FacetedDirectory(newfdir)).ok()
-                            },
-                            DirEntry::FacetedDirectory(fdir) => {
-                                let newfdir = self.fs.create_faceted_directory();
-                                self.fs.faceted_link(&fdir, None, req.name, fs::DirEntry::FacetedDirectory(newfdir)).ok()
-                            },
-                            _ => None,
-                        },
-                        Err(fs::utils::Error::FacetedDir(fdir, facet)) => {
-                            let newfdir = self.fs.create_faceted_directory();
-                            self.fs.faceted_link(&fdir, Some(&facet), req.name, fs::DirEntry::FacetedDirectory(newfdir)).ok()
-                        },
-                        _ => None,
-                    };
+                    let value = fs::utils::create_faceted(&self.fs, &req.base_dir, req.name).ok();
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     }
@@ -612,24 +595,7 @@ impl Vm {
                 }
                 Some(SC::FsCreateDir(req)) => {
                     let label = pblabel_to_buckle(&req.label.clone().expect("label"));
-                    let value = match fs::utils::read_path(&self.fs, &req.base_dir) {
-                        Ok(entry) => match entry {
-                            DirEntry::Directory(dir) => {
-                                let newdir = self.fs.create_directory(label);
-                                self.fs.link(&dir, req.name, fs::DirEntry::Directory(newdir)).ok()
-                            },
-                            DirEntry::FacetedDirectory(fdir) => {
-                                let newdir = self.fs.create_directory(label);
-                                self.fs.faceted_link(&fdir, None, req.name, fs::DirEntry::Directory(newdir)).ok()
-                            },
-                            _ => None,
-                        },
-                        Err(fs::utils::Error::FacetedDir(fdir, facet)) => {
-                            let newdir = self.fs.create_directory(label);
-                            self.fs.faceted_link(&fdir, Some(&facet), req.name, fs::DirEntry::Directory(newdir)).ok()
-                        }
-                        _ => None,
-                    };
+                    let value = fs::utils::create_directory(&self.fs, &req.base_dir, req.name, label).ok();
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some()
                     }
@@ -639,24 +605,7 @@ impl Vm {
                 },
                 Some(SC::FsCreateFile(req)) => {
                     let label = pblabel_to_buckle(&req.label.clone().expect("label"));
-                    let value = match fs::utils::read_path(&self.fs, &req.base_dir) {
-                        Ok(entry) => match entry {
-                            fs::DirEntry::Directory(dir) => {
-                                let newfile = self.fs.create_file(label);
-                                self.fs.link(&dir, req.name, fs::DirEntry::File(newfile)).ok()
-                            },
-                            DirEntry::FacetedDirectory(fdir) => {
-                                let newfile = self.fs.create_file(label);
-                                self.fs.faceted_link(&fdir, None, req.name, fs::DirEntry::File(newfile)).ok()
-                            },
-                            _ => None,
-                        }
-                        Err(fs::utils::Error::FacetedDir(fdir, facet)) => {
-                            let newfile = self.fs.create_file(label);
-                            self.fs.faceted_link(&fdir, Some(&facet), req.name, fs::DirEntry::File(newfile)).ok()
-                        }
-                        _ => None,
-                    };
+                    let value = fs::utils::create_file(&self.fs, &req.base_dir, req.name, label).ok();
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some()
                     }
