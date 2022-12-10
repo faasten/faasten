@@ -1,6 +1,7 @@
 use std::io::{Error, ErrorKind, Write, Read};
+use labeled::buckle::Buckle;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+//use serde_json::Value;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RequestStatus {
@@ -24,10 +25,17 @@ impl Response {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LabeledInvoke {
+    pub gate: crate::fs::Gate,
+    pub payload: String,
+    pub label: Buckle,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Request {
     pub gate: String,
-    pub payload: Value,
+    pub payload: serde_json::Value,
 }
 
 impl Request {
@@ -43,7 +51,7 @@ impl Request {
 }
 
 /// Given a [u8], parse it to a Requst value
-pub fn parse_u8_request(buf: Vec<u8>) -> Result<Request, serde_json::Error> {
+pub fn parse_u8_invoke(buf: Vec<u8>) -> Result<LabeledInvoke, serde_json::Error> {
     serde_json::from_slice(&buf)
 }
 

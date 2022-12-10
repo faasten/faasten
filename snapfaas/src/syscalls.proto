@@ -8,12 +8,14 @@ message Invoke {
 }
 
 message DupGate {
-  repeated PathComponent gate = 1;
-  DcLabel policy = 2;
+  repeated PathComponent orig = 1;
+  repeated PathComponent baseDir = 2;
+  string name = 3;
+  Buckle policy = 4;
 }
 
 message DeclassifyResponse {
-  optional DcLabel label = 1;
+  optional Buckle label = 1;
 }
 
 message TokenList {
@@ -30,7 +32,7 @@ message Component {
   repeated Clause clauses = 1;
 }
 
-message DcLabel {
+message Buckle {
   // None means DcFalse, empty clauses means DcTrue, otherwise DcFormula
   optional Component secrecy = 1;
   // None means DcFalse, empty clauses means DcTrue, otherwise DcFormula
@@ -95,7 +97,7 @@ message GetCurrentLabel {
 message PathComponent {
   oneof component {
     string dscrp = 1;
-    DcLabel facet = 2;
+    Buckle facet = 2;
   }
 }
 
@@ -111,17 +113,17 @@ message FSWrite {
 message FSCreateDir {
   repeated PathComponent baseDir = 1;
   string name = 2;
-  DcLabel label = 3;
+  Buckle label = 3;
 }
 
 message FSCreateFile {
   repeated PathComponent baseDir = 1;
   string name = 2;
-  DcLabel label = 3;
+  Buckle label = 3;
 }
 
 message ExercisePrivilege {
-  DcLabel target = 1;
+  Buckle target = 1;
 }
 
 message BlobCreate {
@@ -193,7 +195,7 @@ message Syscall {
     ReadKey readKey = 2;
     WriteKey writeKey = 3;
     GetCurrentLabel getCurrentLabel = 4;
-    DcLabel taintWithLabel = 5;
+    Buckle taintWithLabel = 5;
     GithubRest githubRest = 6;
     Invoke invoke = 7;
     FSRead fsRead = 8;

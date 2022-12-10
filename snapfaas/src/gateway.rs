@@ -1,19 +1,10 @@
 use std::net::TcpListener;
-use std::io::{Write, Read};
 use std::sync::mpsc::{channel, Receiver};
 
 use log::{error, debug};
-use prost::Message;
 
 use crate::message::RequestInfo;
 use crate::request;
-
-fn write_response(buf: &[u8], channel: &mut std::net::TcpStream) {
-    let size = buf.len().to_be_bytes();
-    if channel.write_all(&size).is_err() || channel.write_all(buf).is_err() {
-        error!("Failed to respond");
-    }
-}
 
 /// A gateway listens on a endpoint and accepts requests
 /// For example a FileGateway "listens" to a file and accepts
@@ -43,38 +34,24 @@ impl HTTPGateway {
                     debug!("connection from {:?}", stream.peer_addr());
                     let requests = requests_tx.clone();
                     std::thread::spawn(move || {
-                        loop {
-                            let buf = {
-                                let mut lenbuf = [0;4];
-                                if stream.read_exact(&mut lenbuf).is_err() {
-                                    write_response("Error reading size".as_bytes(), &mut stream);
-                                }
-                                let size = u32::from_be_bytes(lenbuf);
-                                let mut buf = vec![0u8; size as usize];
-                                if stream.read_exact(&mut buf).is_err() {
-                                    write_response("Error reading invoke".as_bytes(), &mut stream);
-                                }
-                                buf
-                            };
-
-                            use crate::syscalls::Syscall;
-                            use crate::syscalls::syscall::Syscall as SC;
-                            match Syscall::decode(buf.as_ref()) {
-                                Err(_) => write_response("Error decoing invoke".as_bytes(), &mut stream),
-                                Ok(sc) => match sc.syscall {
-                                    Some(SC::Invoke(req)) => {
-                                        use time::precise_time_ns;
-                                        let timestamps = crate::metrics::RequestTimestamps {
-                                            at_gateway: precise_time_ns(),
-                                            ..Default::default()
-                                        };
-                                        let (tx, rx) = channel::<request::Response>();
-                                        let _ = requests.send((req, tx, timestamps));
-                                        if let Ok(response) = rx.recv() {
-                                            write_response(&response.to_vec(), &mut stream);
-                                        }
+                        while let Ok(buf) = request::read_u8(&mut stream) {
+                            if let Ok(parsed) = request::parse_u8_invoke(buf)  {
+                                use time::precise_time_ns;
+                                let timestamps = crate::metrics::RequestTimestamps {
+                                    at_gateway: precise_time_ns(),
+                                    ..Default::default()
+                                };
+                                let (tx, rx) = channel::<request::Response>();
+                                let _ = requests.send((parsed, tx, timestamps));
+                                if let Ok(response) = rx.recv() {
+                                    if request::write_u8(&response.to_vec(), &mut stream).is_err() {
+                                        error!("Failed to write response");
                                     }
-                                    _ => write_response("Not invoke".as_bytes(), &mut stream),
+                                }
+
+                            } else {
+                                if request::write_u8("Error decoding invoke".as_bytes(), &mut stream).is_err() {
+                                    error!("Failed to write response");
                                 }
                             }
                         }

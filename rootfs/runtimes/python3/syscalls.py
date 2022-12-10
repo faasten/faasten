@@ -124,8 +124,11 @@ class Syscall():
         response = self._recv(syscalls_pb2.DcLabel())
         return response.secrecy
 
-    def dup_gate(self, gate, policy):
-        request = syscalls_pb2.Syscall(dupGate = syscalls_pb2.DupGate(gate=gate, policy=policy))
+    def dup_gate(self, orig, path, policy):
+        base, name, ok = split_path(path)
+        if not ok:
+            return False
+        request = syscalls_pb2.Syscall(dupGate = syscalls_pb2.DupGate(orig = convert_path(orig), baseDir = convert_path(base), name = name, policy = policy))
         self._send(req)
         response = self._recv(syscalls_pb2.DcLabel())
         return response.success

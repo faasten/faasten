@@ -15,6 +15,7 @@ use tokio::process::{Child, Command};
 
 use crate::configs::FunctionConfig;
 use crate::message::Message;
+use crate::request::LabeledInvoke;
 use crate::{blobstore, syscalls};
 use crate::labeled_fs::DBENV;
 use crate::fs::{self, DirEntry};
@@ -36,7 +37,7 @@ fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Componen
     }
 }
 
-pub fn pblabel_to_buckle(label: &syscalls::DcLabel) -> Buckle {
+pub fn pblabel_to_buckle(label: &syscalls::Buckle) -> Buckle {
     Buckle {
         secrecy: pbcomponent_to_component(&label.secrecy),
         integrity: pbcomponent_to_component(&label.integrity),
@@ -57,8 +58,8 @@ fn component_to_pbcomponent(component: &Component) -> Option<syscalls::Component
     }
 }
 
-pub fn buckle_to_pblabel(label: &Buckle) -> syscalls::DcLabel {
-    syscalls::DcLabel {
+pub fn buckle_to_pblabel(label: &Buckle) -> syscalls::Buckle {
+    syscalls::Buckle {
         secrecy: component_to_pbcomponent(&label.secrecy),
         integrity: component_to_pbcomponent(&label.integrity),
     }
@@ -368,7 +369,7 @@ impl Vm {
         }
     }
 
-    fn send_req(&self, invoke: syscalls::Invoke) -> bool {
+    fn sched_invoke(&self, invoke: LabeledInvoke) -> bool {
         use time::precise_time_ns;
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
             let (tx, _) = mpsc::channel();
@@ -380,7 +381,7 @@ impl Vm {
             };
             invoke_handle.send(Message::Request((invoke, tx, timestamps))).is_ok()
         } else {
-            debug!("No invoke handle, ignoring invoke syscall. {:?}", invoke);
+            debug!("No invoke handle, ignoring invoke syscall.");
             false
         }
     }
@@ -411,6 +412,7 @@ impl Vm {
             };
             match Syscall::decode(buf.as_ref()).map_err(|e| Error::Rpc(e))?.syscall {
                 Some(SC::Response(r)) => {
+                    debug!("function response: {}", r.payload);
                     return Ok(r.payload);
                 }
                 Some(SC::BuckleParse(s)) => {
@@ -430,7 +432,7 @@ impl Vm {
                             clause.principals.first_mut().unwrap().tokens.extend(suffix.tokens);
                         }
                     }
-                    let result = syscalls::DcLabel {
+                    let result = syscalls::Buckle {
                         secrecy: my_priv,
                         integrity: None,
                     }
@@ -447,16 +449,20 @@ impl Vm {
                     });
                     let mut result = syscalls::WriteKeyResponse { success: value.is_some() };
                     if value.is_some() {
-                        result.success = self.send_req(req)
+                        let labeled = LabeledInvoke {
+                            gate: value.clone().unwrap(),
+                            label: fs::utils::get_current_label(),
+                            payload: req.payload,
+                        };
+                        result.success = self.sched_invoke(labeled)
                     }
                     self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::DupGate(req)) => {
-                    let value = fs::utils::read_path(&self.fs, &req.gate).ok().and_then(|entry| {
-                        match entry {
+                    let value = fs::utils::read_path(&self.fs, &req.orig).ok().and_then(|entry| { match entry {
                             fs::DirEntry::Gate(gate) => {
                                 let policy = pblabel_to_buckle(&req.policy.unwrap());
-                                self.fs.dup_gate(policy, &gate).ok()
+                                fs::utils::create_gate(&self.fs, &req.base_dir, req.name, policy, gate.image).ok()
                             },
                             _ => None,
                         }
