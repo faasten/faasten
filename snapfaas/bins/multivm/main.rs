@@ -61,6 +61,8 @@ fn main() {
 
     let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
     fs.initialize();
+    let sys_principal = Vec::<String>::new();
+    snapfaas::fs::utils::set_my_privilge([labeled::buckle::Clause::new_from_vec(vec![sys_principal])].into());
     if let Ok(snapfaas::fs::DirEntry::Directory(root)) = snapfaas::fs::utils::read_path(&fs, &vec![]) {
         // set up home directories
         let fdir = fs.create_faceted_directory();
