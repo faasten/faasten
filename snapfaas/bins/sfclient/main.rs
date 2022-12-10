@@ -5,7 +5,7 @@ use labeled::buckle::{self, Clause};
 use snapfaas::request::LabeledInvoke;
 use snapfaas::{fs, request, syscalls, vm};
 use std::net::TcpStream;
-use std::io::{Read, stdin};
+use std::io::stdin;
 
 fn main() {
     let cmd_arguments = App::new("SnapFaaS CLI Client")
@@ -99,20 +99,19 @@ fn main() {
                 eprintln!("Cannot invoke the gate.");
                 return;
             }
-            let mut input = Vec::new();
-            stdin().read_to_end(&mut input).unwrap();
-            let payload = serde_json::from_slice(&input).unwrap();
-            let request = LabeledInvoke {
-                gate: gate.unwrap(),
-                label: fs::utils::get_current_label(),
-                payload,
-            };
+            for line in stdin().lines().map(|l| l.unwrap()) {
+                let request = LabeledInvoke {
+                    gate: gate.clone().unwrap(),
+                    label: fs::utils::get_current_label(),
+                    payload: line,
+                };
 
-            let mut connection = TcpStream::connect(addr).unwrap();
-            request::write_u8(serde_json::to_vec(&request).unwrap().as_ref(), &mut connection).unwrap();
-            input = request::read_u8(&mut connection).unwrap();
-            let response: request::Response = serde_json::from_slice(&input).unwrap();
-            println!("{:?}", response);
+                let mut connection = TcpStream::connect(addr).unwrap();
+                request::write_u8(serde_json::to_vec(&request).unwrap().as_ref(), &mut connection).unwrap();
+                let buf = request::read_u8(&mut connection).unwrap();
+                let response: request::Response = serde_json::from_slice(&buf).unwrap();
+                println!("{:?}", response);
+            }
         },
         ("newgate", Some(sub_m)) => {
             let function = sub_m.value_of("function").unwrap().to_string();
