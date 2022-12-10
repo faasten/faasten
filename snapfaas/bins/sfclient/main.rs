@@ -99,6 +99,7 @@ fn main() {
                Arg::with_name("path")
                .index(1)
                .value_delimiter(":")
+               .required(true)
                .help("A directory/faceted directory path."),
             )
        )
@@ -109,6 +110,7 @@ fn main() {
                Arg::with_name("type")
                .index(1)
                .possible_values(&["dir", "file", "faceted"])
+               .required(true)
                .help("Type of the object"),
             )
            .arg(
