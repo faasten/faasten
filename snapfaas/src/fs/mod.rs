@@ -2,9 +2,10 @@
 
 
 use lmdb::{Transaction, WriteFlags};
+use log::info;
 use serde::{Serialize, Deserialize};
 use std::{collections::HashMap, cell::RefCell};
-use labeled::{buckle::{Buckle, Component, Principal}, Label};
+use labeled::{buckle::{Clause, Buckle, Component, Principal}, Label};
 
 pub use errors::*;
 
@@ -220,14 +221,17 @@ impl<S> FS<S> {
 
 impl<S: BackingStore> FS<S> {
     pub fn initialize(&self) {
-        let dir_contents = serde_json::ser::to_vec(&HashMap::<String, DirEntry>::new()).unwrap_or((&b"{}"[..]).into());
+        let dir_contents = serde_json::ser::to_vec(&HashMap::<String, DirEntry>::new()).unwrap();
         let uid: UID = 0;
-        let _ = self.storage.add(&uid.to_be_bytes(), &dir_contents);
+        if !self.storage.add(&uid.to_be_bytes(), &dir_contents) {
+            info!("Existing root directory found.")
+        }
     }
 
     pub fn root(&self) -> Directory {
+        let sys_principal = Vec::<String>::new();
         Directory {
-            label: Buckle::public(),
+            label: Buckle::new(true, [Clause::new_from_vec(vec![sys_principal])]),
             object_id: 0
         }
     }
@@ -330,6 +334,7 @@ impl<S: BackingStore> FS<S> {
                     None => Default::default()
                 })
             } else {
+                println!("dir label: {:?}. current_label: {:?}", dir.label, &*current_label.borrow());
                 Err(LabelError::CannotRead)
             }
         })
@@ -407,12 +412,20 @@ impl<S: BackingStore> FS<S> {
 
     pub fn faceted_link(&self, fdir: &FacetedDirectory, facet: Option<&Buckle>, name: String, direntry: DirEntry) -> Result<String, LinkError> {
         CURRENT_LABEL.with(|current_label| {
+            // check when facet is specified.
+            if facet.is_some() && !current_label.borrow().secrecy.implies(&facet.as_ref().unwrap().secrecy) {
+                return Err(LinkError::LabelError(LabelError::CannotRead));
+            }
+            if facet.is_some() && !current_label.borrow().can_flow_to(&facet.as_ref().unwrap()) {
+                return Err(LinkError::LabelError(LabelError::CannotWrite));
+            }
             let mut raw_fdir: Option<Vec<u8>> = self.storage.get(&fdir.object_id.to_be_bytes());
             loop{
                 let mut fdir_contents: FacetedDirectoryInner = raw_fdir.as_ref().and_then(|fdir_contents| serde_json::from_slice(fdir_contents.as_slice()).ok()).unwrap_or_default();
                 match fdir_contents.open_facet(facet.unwrap_or(&*current_label.borrow())) {
                     Ok(dir) => return Ok(self.link(&dir, name.clone(), direntry.clone())?),
                     Err(utils::Error::UnallocatedFacet) => {
+                        println!("allocating facet: {:?}", &*current_label.borrow());
                         let dir = self.create_directory(current_label.borrow().clone());
                         let _ = self.link(&dir, name.clone(), direntry.clone());
                         fdir_contents.append(dir);
@@ -534,63 +547,59 @@ pub mod utils {
     pub fn read_path<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<DirEntry, Error> {
         use syscalls::path_component::Component as PC;
         if let Some((last, path)) = path.split_last() {
-            CURRENT_LABEL.with(|current_label| {
-                let direntry = path.iter().try_fold(fs.root().into(), |de, comp| -> Result<DirEntry, Error> {
-                    match de {
-                        super::DirEntry::Directory(dir) => {
-                            // implicitly raising the secrecy
-                            let clone = current_label.borrow().clone();
-                            *current_label.borrow_mut() = clone.lub(Buckle::new(dir.label.secrecy.clone(), true));
-                            match comp.component.as_ref() {
-                                Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
-                                _ => Err(Error::BadPath),
-                            }
-                        },
-                        super::DirEntry::FacetedDirectory(fdir) => {
-                            match comp.component.as_ref() {
-                                Some(PC::Facet(f)) => {
-                                    let facet = crate::vm::pblabel_to_buckle(f);
-                                    // implicitly raising the secrecy
-                                    let clone = current_label.borrow().clone();
-                                    *current_label.borrow_mut() = clone.lub(Buckle::new(facet.secrecy.clone(), true));
-                                    fs.open_facet(&fdir, &facet).map(|d| DirEntry::Directory(d))
-                                },
-                                _ => Err(Error::BadPath),
-                            }
-                        },
-                        super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
-                    }
-                })?;
-                // corner case: the last component is an unallocated facet.
-                match direntry {
+            let direntry = path.iter().try_fold(fs.root().into(), |de, comp| -> Result<DirEntry, Error> {
+                match de {
                     super::DirEntry::Directory(dir) => {
                         // implicitly raising the secrecy
-                        let clone = current_label.borrow().clone();
-                        *current_label.borrow_mut() = clone.lub(Buckle::new(dir.label.secrecy.clone(), true));
-                        match last.component.as_ref() {
+                println!("{:?}", comp);
+                        taint_with_secrecy(dir.label.secrecy.clone());
+                        match comp.component.as_ref() {
                             Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
                             _ => Err(Error::BadPath),
                         }
                     },
                     super::DirEntry::FacetedDirectory(fdir) => {
-                        match last.component.as_ref() {
+                println!("{:?}", comp);
+                        match comp.component.as_ref() {
                             Some(PC::Facet(f)) => {
                                 let facet = crate::vm::pblabel_to_buckle(f);
                                 // implicitly raising the secrecy
-                                let clone = current_label.borrow().clone();
-                                *current_label.borrow_mut() = clone.lub(Buckle::new(facet.secrecy.clone(), true));
-                                match fs.open_facet(&fdir, &facet) {
-                                    Ok(d) => Ok(DirEntry::Directory(d)),
-                                    Err(Error::UnallocatedFacet) => Err(Error::FacetedDir(fdir, facet)),
-                                    Err(e) => Err(e),
-                                }
+                                taint_with_secrecy(facet.secrecy.clone());
+                                fs.open_facet(&fdir, &facet).map(|d| DirEntry::Directory(d))
                             },
                             _ => Err(Error::BadPath),
                         }
                     },
                     super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
                 }
-            })
+            })?;
+            // corner case: the last component is an unallocated facet.
+            match direntry {
+                super::DirEntry::Directory(dir) => {
+                    // implicitly raising the secrecy
+                    taint_with_secrecy(dir.label.secrecy.clone());
+                    match last.component.as_ref() {
+                        Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
+                        _ => Err(Error::BadPath),
+                    }
+                },
+                super::DirEntry::FacetedDirectory(fdir) => {
+                    match last.component.as_ref() {
+                        Some(PC::Facet(f)) => {
+                            let facet = crate::vm::pblabel_to_buckle(f);
+                            // implicitly raising the secrecy
+                            taint_with_secrecy(facet.secrecy.clone());
+                            match fs.open_facet(&fdir, &facet) {
+                                Ok(d) => Ok(DirEntry::Directory(d)),
+                                Err(Error::UnallocatedFacet) => Err(Error::FacetedDir(fdir, facet)),
+                                Err(e) => Err(e),
+                            }
+                        },
+                        _ => Err(Error::BadPath),
+                    }
+                },
+                super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
+            }
         } else {
             // corner case: empty vector is the root's path
             Ok(fs.root().into())
@@ -599,18 +608,45 @@ pub mod utils {
 
     pub fn create_gate<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, policy: Buckle, image: String) -> Result<(), Error> {
         let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::GateError(e))?;
-        CURRENT_LABEL.with(|current_label| {
-            PRIVILEGE.with(|opriv| {
-                let clone = current_label.borrow().clone();
-                *current_label.borrow_mut() = clone.endorse(&*opriv.borrow())});
-        });
+        endorse_with_owned();
         match read_path(&fs, base_dir) {
             Ok(DirEntry::Directory(dir)) =>
                 fs.link(&dir, name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e)),
             Ok(DirEntry::FacetedDirectory(fdir)) =>
                 fs.faceted_link(&fdir, None, name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e)),
-            _ => Err(Error::BadPath),
+            Err(Error::FacetedDir(fdir, facet)) => {
+        CURRENT_LABEL.with(|current_label| {
+            println!("{:?}", &*current_label.borrow());
+        });
+                fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e))
+            }
+            Ok(_) => Err(Error::BadPath),
+            Err(e) => { println!("error: {:?}", e); Err(Error::BadPath) }
         }
+    }
+
+    pub fn taint_with_secrecy(secrecy: Component) {
+        CURRENT_LABEL.with(|current_label| {
+            println!("taint_with_secrecy: {:?}.", secrecy);
+            let tainted = current_label.borrow().clone().lub(Buckle::new(secrecy, false));
+            println!("taint_with_secrecy: after: {:?}.", tainted);
+            *current_label.borrow_mut() = tainted;
+        })
+    }
+
+    pub fn endorse_with_owned() {
+        PRIVILEGE.with(|opriv| {
+            endorse_with(&*opriv.borrow());
+        });
+    }
+
+    pub fn endorse_with(privilege: &Component) {
+        CURRENT_LABEL.with(|current_label| {
+            println!("endorse_with: {:?}.", &privilege);
+            let endorsed = current_label.borrow().clone().endorse(privilege);
+            println!("endorse_with: after: {:?}.", &endorsed);
+            *current_label.borrow_mut() = endorsed;
+        })
     }
 
     pub fn get_current_label() -> Buckle {

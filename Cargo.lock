@@ -943,7 +943,7 @@ dependencies = [
 [[package]]
 name = "labeled"
 version = "0.1.0"
-source = "git+https://github.com/alevy/labeled#1113443ba9f4018d4f5e0ab3a0c09f5d665b7812"
+source = "git+https://github.com/alevy/labeled#18d9283c2ae65885a4b8ba56d852f6a4da3f91e2"
 dependencies = [
  "nom",
  "serde",

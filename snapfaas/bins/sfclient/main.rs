@@ -1,7 +1,7 @@
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
 use clap::{App, Arg, SubCommand};
-use labeled::buckle::{self, Clause};
+use labeled::buckle::{self, Clause, Buckle};
 use snapfaas::request::LabeledInvoke;
 use snapfaas::{fs, request, syscalls, vm};
 use std::net::TcpStream;
@@ -46,13 +46,21 @@ fn main() {
            SubCommand::with_name("newgate")
            .about("Act as the principal PRINCIPAL and create a gate at GATE from the function name.")
             .arg(
-                Arg::with_name("path")
-                    .value_name("GATE")
-                    .long("gate")
+                Arg::with_name("base-dir")
+                    .value_name("BASE DIR")
+                    .long("base-dir")
                     .takes_value(true)
                     .required(true)
                     .value_delimiter(":")
-                    .help("Colon separated path of the gate to be created. Sfclient tries to parse each component first as a Buckle label. If failure, sfclient uses it as it is."),
+                    .help("Colon separated path of the directory to create the gate in. Sfclient tries to parse each component first as a Buckle label. If failure, sfclient uses it as it is."),
+            )
+            .arg(
+                Arg::with_name("gate-name")
+                    .value_name("GATE NAME")
+                    .long("gate-name")
+                    .takes_value(true)
+                    .required(true)
+                    .help("Name of the gate to be created"),
             )
             .arg(
                 Arg::with_name("policy")
@@ -71,6 +79,16 @@ fn main() {
                     .help("Function name string."),
             )
        )
+       .subcommand(
+           SubCommand::with_name("ls")
+           .about("list a directory")
+           .arg(
+               Arg::with_name("path")
+               .index(1)
+               .value_delimiter(":")
+               .help("A directory/faceted directory path."),
+            )
+       )
        .get_matches();
 
 
@@ -78,6 +96,7 @@ fn main() {
     let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
     fs::utils::clear_label();
     fs::utils::set_my_privilge([Clause::new_from_vec(vec![principal])].into());
+    fs::utils::taint_with_label(Buckle::new(fs::utils::my_privilege(), true));
     match cmd_arguments.subcommand() {
         ("invoke", Some(sub_m)) => {
             let addr = sub_m.value_of("server address").unwrap();
@@ -96,7 +115,7 @@ fn main() {
                 _ => None,
             };
             if gate.is_none() {
-                eprintln!("Cannot invoke the gate.");
+                eprintln!("Gate does not exist.");
                 return;
             }
             for line in stdin().lines().map(|l| l.unwrap()) {
@@ -115,32 +134,62 @@ fn main() {
         },
         ("newgate", Some(sub_m)) => {
             let function = sub_m.value_of("function").unwrap().to_string();
+            let name = sub_m.value_of("gate-name").unwrap().to_string();
             let policy = buckle::Buckle::parse(sub_m.value_of("policy").unwrap());
             if policy.is_err() {
                 eprintln!("Bad gate policy.");
                 return;
             }
             let policy = policy.unwrap();
-            let mut path = sub_m.values_of("path").unwrap().collect::<Vec<&str>>();
-            if let Some(name) = path.pop() {
-                let base_dir = path.iter().map(|s| {
-                    // try parse it as a facet, if failure, as a regular name
-                    if let Ok(l) = buckle::Buckle::parse(s) {
-                        let f = vm::buckle_to_pblabel(&l);
-                        syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Facet(f)) }
-                    } else {
-                        syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Dscrp(s.to_string())) }
-                    }
-                }).collect();
-
-                // TODO: use global function name for now
-                if let Err(e) = fs::utils::create_gate(&fs, &base_dir, name.to_string(), policy, function) {
-                    eprintln!("Cannot create the gate at the path {:?}", e);
+            let base_dir = sub_m.values_of("base-dir").unwrap().collect::<Vec<&str>>();
+            let base_dir = base_dir.iter().map(|s| {
+                // try parse it as a facet, if failure, as a regular name
+                if let Ok(l) = buckle::Buckle::parse(s) {
+                    let f = vm::buckle_to_pblabel(&l);
+                    syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Facet(f)) }
+                } else {
+                    syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Dscrp(s.to_string())) }
                 }
-            } else {
-                eprintln!("Bad path");
+            }).collect();
+
+            // TODO: use global function name for now
+            if let Err(e) = fs::utils::create_gate(&fs, &base_dir, name.to_string(), policy, function) {
+                eprintln!("Cannot create the gate: {:?}", e);
             }
         },
+        ("ls", Some(sub_m)) => {
+            let mut path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
+            let _ = path.remove(0);
+            let path = path.iter().map(|s| {
+                // try parse it as a facet, if failure, as a regular name
+                if let Ok(l) = buckle::Buckle::parse(s) {
+                    let f = vm::buckle_to_pblabel(&l);
+                    syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Facet(f)) }
+                } else {
+                    syscalls::PathComponent{ component: Some(syscalls::path_component::Component::Dscrp(s.to_string())) }
+                }
+            }).collect();
+            let entries = match fs::utils::read_path(&fs, &path) {
+                Ok(fs::DirEntry::Directory(dir)) => fs.list(dir).map(|m| m.keys().cloned().collect::<Vec<String>>()).ok(),
+                Ok(fs::DirEntry::FacetedDirectory(fdir)) => {
+                    Some(fs.faceted_list(fdir).iter()
+                    .fold(Vec::new(), |mut v, entries| {
+                        for k in entries.1.keys() {
+                            v.push([entries.0.clone(), k.clone()].join("+"));
+                        }
+                        v
+                    }))
+                },
+                _ => None,
+            };
+            if let Some(entries) = entries {
+                for entry in entries {
+                    println!("{}", entry);
+                }
+            } else {
+                eprintln!("Failed to list.");
+            }
+        }
         (&_, _) => {
             eprintln!("{}", cmd_arguments.usage());
         }
