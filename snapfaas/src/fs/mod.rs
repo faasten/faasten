@@ -533,49 +533,59 @@ pub mod utils {
     pub fn read_path<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<DirEntry, Error> {
         use syscalls::path_component::Component as PC;
         if let Some((last, path)) = path.split_last() {
-            let direntry = path.iter().try_fold(fs.root().into(), |de, comp| -> Result<DirEntry, Error> {
-                match de {
+            CURRENT_LABEL.with(|current_label| {
+                let direntry = path.iter().try_fold(fs.root().into(), |de, comp| -> Result<DirEntry, Error> {
+                    match de {
+                        super::DirEntry::Directory(dir) => {
+                            // implicitly raising the secrecy
+                            *current_label.borrow_mut() = current_label.borrow().clone().lub(Buckle::new(dir.label.secrecy.clone(), true));
+                            match comp.component.as_ref() {
+                                Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
+                                _ => Err(Error::BadPath),
+                            }
+                        },
+                        super::DirEntry::FacetedDirectory(fdir) => {
+                            match comp.component.as_ref() {
+                                Some(PC::Facet(f)) => {
+                                    let facet = crate::vm::pblabel_to_buckle(f);
+                                    // implicitly raising the secrecy
+                                    *current_label.borrow_mut() = current_label.borrow().clone().lub(Buckle::new(facet.secrecy.clone(), true));
+                                    fs.open_facet(&fdir, &facet).map(|d| DirEntry::Directory(d))
+                                },
+                                _ => Err(Error::BadPath),
+                            }
+                        },
+                        super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
+                    }
+                })?;
+                // corner case: the last component is an unallocated facet.
+                match direntry {
                     super::DirEntry::Directory(dir) => {
-                        match comp.component.as_ref() {
+                        // implicitly raising the secrecy
+                        *current_label.borrow_mut() = current_label.borrow().clone().lub(Buckle::new(dir.label.secrecy.clone(), true));
+                        match last.component.as_ref() {
                             Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
                             _ => Err(Error::BadPath),
                         }
                     },
                     super::DirEntry::FacetedDirectory(fdir) => {
-                        match comp.component.as_ref() {
+                        match last.component.as_ref() {
                             Some(PC::Facet(f)) => {
                                 let facet = crate::vm::pblabel_to_buckle(f);
-                                fs.open_facet(&fdir, &facet).map(|d| DirEntry::Directory(d))
+                                // implicitly raising the secrecy
+                                *current_label.borrow_mut() = current_label.borrow().clone().lub(Buckle::new(facet.secrecy.clone(), true));
+                                match fs.open_facet(&fdir, &facet) {
+                                    Ok(d) => Ok(DirEntry::Directory(d)),
+                                    Err(Error::UnallocatedFacet) => Err(Error::FacetedDir(fdir, facet)),
+                                    Err(e) => Err(e),
+                                }
                             },
                             _ => Err(Error::BadPath),
                         }
                     },
                     super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
                 }
-            })?;
-            // corner case: the last component is an unallocated facet.
-            match direntry {
-                super::DirEntry::Directory(dir) => {
-                    match last.component.as_ref() {
-                        Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
-                        _ => Err(Error::BadPath),
-                    }
-                },
-                super::DirEntry::FacetedDirectory(fdir) => {
-                    match last.component.as_ref() {
-                        Some(PC::Facet(f)) => {
-                            let facet = crate::vm::pblabel_to_buckle(f);
-                            match fs.open_facet(&fdir, &facet) {
-                                Ok(d) => Ok(DirEntry::Directory(d)),
-                                Err(Error::UnallocatedFacet) => Err(Error::FacetedDir(fdir, facet)),
-                                Err(e) => Err(e),
-                            }
-                        },
-                        _ => Err(Error::BadPath),
-                    }
-                },
-                super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
-            }
+            })
         } else {
             // corner case: empty vector is the root's path
             Ok(fs.root().into())
