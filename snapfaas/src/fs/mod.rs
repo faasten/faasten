@@ -9,10 +9,35 @@ use labeled::{buckle::{Clause, Buckle, Component, Principal}, Label};
 
 pub use errors::*;
 
+use crate::syscalls;
+
 thread_local!(static CURRENT_LABEL: RefCell<Buckle> = RefCell::new(Buckle::public()));
 thread_local!(static PRIVILEGE: RefCell<Component> = RefCell::new(Component::dc_true()));
+thread_local!(static FD_TABLE: RefCell<HashMap::<i32, DirEntry>> = RefCell::new(HashMap::new()));
+thread_local!(static NEXT_FD: RefCell<i32> = RefCell::new(1i32));
 
 type UID = u64;
+
+pub struct OpaqueHandle(i32);
+
+impl Into<OpaqueHandle> for syscalls::OpaqueHandle {
+    fn into(self) -> OpaqueHandle {
+        OpaqueHandle(self.inner)
+    }
+}
+
+impl OpaqueHandle {
+    pub fn new(hard_link: DirEntry) -> Self {
+        FD_TABLE.with(|tab| {
+            NEXT_FD.with(|fd| {
+                let newfd = *fd.borrow();
+                *fd.borrow_mut() = newfd + 1;
+                tab.borrow_mut().insert(newfd, hard_link);
+                OpaqueHandle(newfd)
+            })
+        })
+    }
+}
 
 pub trait BackingStore {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>>;
@@ -95,16 +120,15 @@ struct FacetedDirectoryInner {
 }
 
 impl FacetedDirectoryInner {
-    pub fn open_facet(&self, facet: &Buckle) -> Result<Directory, utils::Error> {
-        use utils::Error;
+    pub fn open_facet(&self, facet: &Buckle) -> Result<Directory, FacetError> {
         let jsonfacet = serde_json::to_string(facet).unwrap();
         CURRENT_LABEL.with(|current_label| {
             if facet.can_flow_to(&*current_label.borrow()) {
                 Ok(self.allocated.get(&jsonfacet).map(|idx| -> Directory {
                     self.facets.get(idx.clone()).unwrap().clone()
-                }).ok_or(Error::UnallocatedFacet))
+                }).ok_or(FacetError::Unallocated))
             } else {
-                Err(Error::LabelError(LabelError::CannotRead))
+                Err(FacetError::LabelError(LabelError::CannotRead))
             }
         })?
     }
@@ -208,6 +232,13 @@ mod errors {
     pub enum GateError {
         CannotDelegate,
         CannotInvoke,
+    }
+
+    #[derive(Debug)]
+    pub enum FacetError {
+        Unallocated,
+        LabelError(LabelError),
+        Corrupted,
     }
 }
 
@@ -355,14 +386,13 @@ impl<S: BackingStore> FS<S> {
         }
     }
 
-    fn open_facet(&self, fdir: &FacetedDirectory, facet: &Buckle) -> Result<Directory, utils::Error> {
-        use utils::Error::BadPath;
+    fn open_facet(&self, fdir: &FacetedDirectory, facet: &Buckle) -> Result<Directory, FacetError> {
         match self.storage.get(&fdir.object_id.to_be_bytes()) {
             Some(bs) => {
-                let inner: FacetedDirectoryInner = serde_json::from_slice(bs.as_slice()).map_err(|_| BadPath)?;
+                let inner: FacetedDirectoryInner = serde_json::from_slice(bs.as_slice()).map_err(|_| FacetError::Corrupted)?;
                 inner.open_facet(facet)
             }
-            None => Err(BadPath),
+            None => Err(FacetError::Corrupted),
         }
     }
 
@@ -424,7 +454,7 @@ impl<S: BackingStore> FS<S> {
                 let mut fdir_contents: FacetedDirectoryInner = raw_fdir.as_ref().and_then(|fdir_contents| serde_json::from_slice(fdir_contents.as_slice()).ok()).unwrap_or_default();
                 match fdir_contents.open_facet(facet.unwrap_or(&*current_label.borrow())) {
                     Ok(dir) => return Ok(self.link(&dir, name.clone(), direntry.clone())?),
-                    Err(utils::Error::UnallocatedFacet) => {
+                    Err(FacetError::Unallocated) => {
                         println!("allocating facet: {:?}", &*current_label.borrow());
                         let dir = self.create_directory(current_label.borrow().clone());
                         let _ = self.link(&dir, name.clone(), direntry.clone());
@@ -447,7 +477,7 @@ impl<S: BackingStore> FS<S> {
             let fdir_contents: FacetedDirectoryInner = raw_fdir.as_ref().and_then(|fdir_contents| serde_json::from_slice(fdir_contents.as_slice()).ok()).unwrap_or_default();
             match fdir_contents.open_facet(facet) {
                 Ok(dir) => return Ok(self.unlink(&dir, name.clone())?),
-                Err(utils::Error::UnallocatedFacet) => return Err(UnlinkError::DoesNotExists),
+                Err(FacetError::Unallocated) => return Err(UnlinkError::DoesNotExists),
                 Err(_) => panic!("unexpected error."),
             }
         })
@@ -511,6 +541,73 @@ impl From<Gate> for DirEntry {
     }
 }
 
+pub mod label {
+}
+
+pub mod handle {
+    use super::*;
+
+    pub enum Error {
+        InvalidHandle,
+        LabelError(LabelError), 
+        FacetError(FacetError),
+        DoesNotExists,
+        NotDirectory,
+        NotFacetedDirectory,
+    }
+
+    impl From<LabelError> for Error {
+        fn from(e: LabelError) -> Self {
+            Error::LabelError(e)
+        }
+    }
+
+    impl From<FacetError> for Error {
+        fn from(e: FacetError) -> Self {
+            Error::FacetError(e)
+        }
+    }
+
+    pub fn open_at<S: Clone + BackingStore>(fs: &FS<S>, handle: OpaqueHandle, name: &str) -> Result<OpaqueHandle, Error> {
+        FD_TABLE.with(|tab| {
+            if let Some(de) = tab.borrow().get(&handle.0) {
+                match de {
+                    DirEntry::Directory(dir) => {
+                        let hm = fs.list(dir.clone()).map_err(|e| Error::from(e))?;
+                        let hard_link = hm.get(name).ok_or(Error::DoesNotExists)?;
+                        Ok(OpaqueHandle::new(hard_link.clone()))
+                    }
+                    _ => {
+                        Err(Error::NotDirectory)
+                    }
+                }
+            } else {
+                Err(Error::InvalidHandle)
+            }
+        })
+    }
+
+    pub fn open_at_facet<S: Clone + BackingStore>(fs: &FS<S>, handle: OpaqueHandle, name: &str, facet: &Buckle) -> Result<OpaqueHandle, Error> {
+        FD_TABLE.with(|tab| {
+            if let Some(de) = tab.borrow().get(&handle.0) {
+                match de {
+                    DirEntry::FacetedDirectory(fdir) => {
+                        let dir = fs.open_facet(fdir, facet).map_err(|e| Error::from(e))?;
+                        let hmap = fs.list(dir).map_err(|e| Error::from(e))?;
+                        let hard_link = hmap.get(name).ok_or(Error::DoesNotExists)?;
+                        Ok(OpaqueHandle::new(hard_link.clone()))
+                    }
+                    _ => {
+                        Err(Error::NotFacetedDirectory)
+                    }
+                }
+            } else {
+                Err(Error::InvalidHandle)
+            }
+        })
+    }
+}
+
 pub mod utils {
     use crate::syscalls;
 
@@ -524,6 +621,13 @@ pub mod utils {
         FacetedDir(FacetedDirectory, Buckle),
         GateError(GateError),
         LinkError(LinkError),
+        FacetError(FacetError),
+    }
+
+    impl From<FacetError> for Error {
+        fn from(err: FacetError) -> Self {
+            Error::FacetError(err)
+        }
     }
 
     impl From<LabelError> for Error {
@@ -550,22 +654,20 @@ pub mod utils {
             let direntry = path.iter().try_fold(fs.root().into(), |de, comp| -> Result<DirEntry, Error> {
                 match de {
                     super::DirEntry::Directory(dir) => {
-                        // implicitly raising the secrecy
-                println!("{:?}", comp);
-                        taint_with_secrecy(dir.label.secrecy.clone());
+                        // implicitly raising the label
+                        taint_with_label(Buckle::new(dir.label.secrecy.clone(), true));
                         match comp.component.as_ref() {
                             Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
                             _ => Err(Error::BadPath),
                         }
                     },
                     super::DirEntry::FacetedDirectory(fdir) => {
-                println!("{:?}", comp);
                         match comp.component.as_ref() {
                             Some(PC::Facet(f)) => {
                                 let facet = crate::vm::pblabel_to_buckle(f);
-                                // implicitly raising the secrecy
-                                taint_with_secrecy(facet.secrecy.clone());
-                                fs.open_facet(&fdir, &facet).map(|d| DirEntry::Directory(d))
+                                // implicitly raising the label
+                                taint_with_label(Buckle::new(facet.secrecy.clone(), true));
+                                fs.open_facet(&fdir, &facet).map(|d| DirEntry::Directory(d)).map_err(|e| Error::from(e))
                             },
                             _ => Err(Error::BadPath),
                         }
@@ -576,8 +678,8 @@ pub mod utils {
             // corner case: the last component is an unallocated facet.
             match direntry {
                 super::DirEntry::Directory(dir) => {
-                    // implicitly raising the secrecy
-                    taint_with_secrecy(dir.label.secrecy.clone());
+                    // implicitly raising the label
+                    taint_with_label(Buckle::new(dir.label.secrecy.clone(), true));
                     match last.component.as_ref() {
                         Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
                         _ => Err(Error::BadPath),
@@ -588,11 +690,11 @@ pub mod utils {
                         Some(PC::Facet(f)) => {
                             let facet = crate::vm::pblabel_to_buckle(f);
                             // implicitly raising the secrecy
-                            taint_with_secrecy(facet.secrecy.clone());
+                            taint_with_label(Buckle::new(facet.secrecy.clone(), true));
                             match fs.open_facet(&fdir, &facet) {
                                 Ok(d) => Ok(DirEntry::Directory(d)),
-                                Err(Error::UnallocatedFacet) => Err(Error::FacetedDir(fdir, facet)),
-                                Err(e) => Err(e),
+                                Err(FacetError::Unallocated) => Err(Error::FacetedDir(fdir, facet)),
+                                Err(e) => Err(Error::from(e)),
                             }
                         },
                         _ => Err(Error::BadPath),
@@ -607,18 +709,20 @@ pub mod utils {
     }
 
     pub fn create_gate<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, policy: Buckle, image: String) -> Result<(), Error> {
-        endorse_with_owned();
         match read_path(&fs, base_dir) {
             Ok(DirEntry::Directory(dir)) => {
-            let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::from(e))?;
+                endorse_with_owned();
+                let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::from(e))?;
                 fs.link(&dir, name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e))
             },
             Ok(DirEntry::FacetedDirectory(fdir)) => {
-            let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::from(e))?;
+                endorse_with_owned();
+                let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::from(e))?;
                 fs.faceted_link(&fdir, None, name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e))
             },
             Err(Error::FacetedDir(fdir, facet)) => {
-            let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::GateError(e))?;
+                endorse_with_owned();
+                let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::GateError(e))?;
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e))
             }
             Ok(_) => Err(Error::BadPath),
@@ -627,20 +731,22 @@ pub mod utils {
     }
 
     pub fn create_directory<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, label: Buckle) -> Result<(), Error> {
-        endorse_with_owned();
         match read_path(&fs, base_dir) {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
+                    endorse_with_owned();
                     let newdir = fs.create_directory(label);
                     fs.link(&dir, name, DirEntry::Directory(newdir)).map(|_| ()).map_err(|e| Error::from(e))
                 },
                 DirEntry::FacetedDirectory(fdir) => {
+                    endorse_with_owned();
                     let newdir = fs.create_directory(label);
                     fs.faceted_link(&fdir, None, name, DirEntry::Directory(newdir)).map(|_| ()).map_err(|e| Error::from(e))
                 },
                 _ => Err(Error::BadPath),
             },
             Err(Error::FacetedDir(fdir, facet)) => {
+                endorse_with_owned();
                 let newdir = fs.create_directory(label);
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Directory(newdir)).map(|_| ()).map_err(|e| Error::from(e))
             }
@@ -649,20 +755,22 @@ pub mod utils {
     }
 
     pub fn create_file<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, label: Buckle) -> Result<(), Error> {
-        endorse_with_owned();
         match read_path(&fs, base_dir) {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
+                    endorse_with_owned();
                     let newfile = fs.create_file(label);
                     fs.link(&dir, name, DirEntry::File(newfile)).map(|_| ()).map_err(|e| Error::from(e))
                 },
                 DirEntry::FacetedDirectory(fdir) => {
+                    endorse_with_owned();
                     let newfile = fs.create_file(label);
                     fs.faceted_link(&fdir, None, name, DirEntry::File(newfile)).map(|_| ()).map_err(|e| Error::from(e))
                 },
                 _ => Err(Error::BadPath),
             },
             Err(Error::FacetedDir(fdir, facet)) => {
+                endorse_with_owned();
                 let newfile = fs.create_file(label);
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::File(newfile)).map(|_| ()).map_err(|e| Error::from(e))
             }
@@ -671,20 +779,22 @@ pub mod utils {
     }
 
     pub fn create_faceted<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String) -> Result<(), Error> {
-        endorse_with_owned();
         match read_path(&fs, base_dir) {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
+                    endorse_with_owned();
                     let newfdir = fs.create_faceted_directory();
                     fs.link(&dir, name, DirEntry::FacetedDirectory(newfdir)).map(|_| ()).map_err(|e| Error::from(e))
                 },
                 DirEntry::FacetedDirectory(fdir) => {
+                    endorse_with_owned();
                     let newfdir = fs.create_faceted_directory();
                     fs.faceted_link(&fdir, None, name, DirEntry::FacetedDirectory(newfdir)).map(|_| ()).map_err(|e| Error::from(e))
                 },
                 _ => Err(Error::BadPath),
             },
             Err(Error::FacetedDir(fdir, facet)) => {
+                endorse_with_owned();
                 let newfdir = fs.create_faceted_directory();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::FacetedDirectory(newfdir)).map(|_| ()).map_err(|e| Error::from(e))
             }
@@ -692,12 +802,9 @@ pub mod utils {
         }
     }
 
-    pub fn taint_with_secrecy(secrecy: Component) {
-        CURRENT_LABEL.with(|current_label| {
-            println!("taint_with_secrecy: {:?}.", secrecy);
-            let tainted = current_label.borrow().clone().lub(Buckle::new(secrecy, false));
-            println!("taint_with_secrecy: after: {:?}.", tainted);
-            *current_label.borrow_mut() = tainted;
+    pub fn open<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<OpaqueHandle, Error> {
+        read_path(fs, path).map(|de| {
+            OpaqueHandle::new(de)
         })
     }
 
@@ -722,16 +829,27 @@ pub mod utils {
 
     pub fn taint_with_label(label: Buckle) -> Buckle {
         CURRENT_LABEL.with(|l| {
-            let clone = l.borrow().clone();
-            *l.borrow_mut() = clone.lub(label);
+            println!("taint_with_label: {:?}.", label);
+            let tainted = l.borrow().clone().lub(label);
+            println!("taint_with_label: after: {:?}.", tainted);
+            *l.borrow_mut() = tainted;
             l.borrow().clone()
         })
     }
 
-    pub fn clear_label() {
+    pub fn clear_local_state() {
         CURRENT_LABEL.with(|current_label| {
             *current_label.borrow_mut() = Buckle::public();
-        })
+        });
+        FD_TABLE.with(|tab| {
+            *tab.borrow_mut() = HashMap::new();
+        });
+        PRIVILEGE.with(|privilege| {
+            *privilege.borrow_mut() = Component::dc_true();
+        });
+        NEXT_FD.with(|fd| {
+            *fd.borrow_mut() = 1i32;
+        });
     }
 
     pub fn my_privilege() -> Component {

@@ -168,6 +168,9 @@ class Syscall():
         response= self._recv(syscalls_pb2.InvokeResponse())
         return response.success
 
+    ### open/open_at ###
+    #TODO
+
     ### named data object syscalls ###
     def fs_read(self, path):
         """Read the file at the `path`.

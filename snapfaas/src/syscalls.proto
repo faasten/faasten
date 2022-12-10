@@ -2,6 +2,15 @@ syntax = "proto3";
 
 package snapfaas.syscalls;
 
+message OpaqueHandle {
+  int32 inner = 1;
+}
+
+message FSOpenAt {
+  int32 handle = 1;
+  string entryName  = 2;
+}
+
 message Invoke {
   repeated PathComponent gate = 1;
   string payload = 2;
@@ -216,5 +225,7 @@ message Syscall {
     DupGate dupGate = 23;
     TokenList subPrivilege = 24;
     string buckleParse = 25;
+    FSRead fsOpen = 26;    
+    FSOpenAt fsOpenAt = 27;
   }
 }

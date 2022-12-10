@@ -412,6 +412,7 @@ impl Vm {
             };
             match Syscall::decode(buf.as_ref()).map_err(|e| Error::Rpc(e))?.syscall {
                 Some(SC::Response(r)) => {
+                    fs::utils::clear_local_state();
                     debug!("function response: {}", r.payload);
                     return Ok(r.payload);
                 }

@@ -33,7 +33,7 @@ fn handle_request(req: LabeledInvoke, rsp_sender: Sender<Response>, func_req_sen
 
     tsps.arrived = precise_time_ns();
 
-    fs::utils::clear_label();
+    fs::utils::clear_local_state();
     fs::utils::taint_with_label(labeled::buckle::Buckle::new(req.label.secrecy, true));
     fs::utils::set_my_privilge(req.gate.privilege);
     let function_name = req.gate.image;
