@@ -168,7 +168,19 @@ class Syscall():
         response= self._recv(syscalls_pb2.InvokeResponse())
         return response.success
 
-    ### named data object syscalls ###
+    ###  amed data object syscalls ###
+    def fs_list(self, path):
+        req = syscalls_pb2.Syscall(fsList = syscalls_pb2.FSList(path=convert_path(path)))
+        self._send(req)
+        response = self._recv(syscalls_pb2.FSListResponse())
+        return response.value
+
+    def fs_faceted_list(self, path):
+        req = syscalls_pb2.Syscall(fsList = syscalls_pb2.FSFacetedList(path=convert_path(path)))
+        self._send(req)
+        response = self._recv(syscalls_pb2.FSFacetedListResponse())
+        return response.value
+
     def fs_read(self, path):
         """Read the file at the `path`.
 
@@ -260,7 +272,7 @@ class Syscall():
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
-     
+
     def fs_delete(self, path):
         base, name, ok = split_path(path)
         if not ok:
