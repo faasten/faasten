@@ -334,7 +334,6 @@ impl<S: BackingStore> FS<S> {
                     None => Default::default()
                 })
             } else {
-                println!("dir label: {:?}. current_label: {:?}", dir.label, &*current_label.borrow());
                 Err(LabelError::CannotRead)
             }
         })
@@ -425,7 +424,6 @@ impl<S: BackingStore> FS<S> {
                 match fdir_contents.open_facet(facet.unwrap_or(&*current_label.borrow())) {
                     Ok(dir) => return Ok(self.link(&dir, name.clone(), direntry.clone())?),
                     Err(utils::Error::UnallocatedFacet) => {
-                        println!("allocating facet: {:?}", &*current_label.borrow());
                         let dir = self.create_directory(current_label.borrow().clone());
                         let _ = self.link(&dir, name.clone(), direntry.clone());
                         fdir_contents.append(dir);
@@ -551,7 +549,6 @@ pub mod utils {
                 match de {
                     super::DirEntry::Directory(dir) => {
                         // implicitly raising the secrecy
-                println!("{:?}", comp);
                         taint_with_secrecy(dir.label.secrecy.clone());
                         match comp.component.as_ref() {
                             Some(PC::Dscrp(s)) => fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath),
@@ -559,7 +556,6 @@ pub mod utils {
                         }
                     },
                     super::DirEntry::FacetedDirectory(fdir) => {
-                println!("{:?}", comp);
                         match comp.component.as_ref() {
                             Some(PC::Facet(f)) => {
                                 let facet = crate::vm::pblabel_to_buckle(f);
@@ -694,9 +690,7 @@ pub mod utils {
 
     pub fn taint_with_secrecy(secrecy: Component) {
         CURRENT_LABEL.with(|current_label| {
-            println!("taint_with_secrecy: {:?}.", secrecy);
             let tainted = current_label.borrow().clone().lub(Buckle::new(secrecy, false));
-            println!("taint_with_secrecy: after: {:?}.", tainted);
             *current_label.borrow_mut() = tainted;
         })
     }
@@ -709,9 +703,7 @@ pub mod utils {
 
     pub fn endorse_with(privilege: &Component) {
         CURRENT_LABEL.with(|current_label| {
-            println!("endorse_with: {:?}.", &privilege);
             let endorsed = current_label.borrow().clone().endorse(privilege);
-            println!("endorse_with: after: {:?}.", &endorsed);
             *current_label.borrow_mut() = endorsed;
         })
     }

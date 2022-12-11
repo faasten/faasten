@@ -10,13 +10,14 @@
 //!   3. function store and their files' locations
 
 use clap::{App, Arg};
-use log::warn;
-use snapfaas::configs;
+use log::{warn, info};
+use snapfaas::{configs, fs};
 use snapfaas::resource_manager::ResourceManager;
 use snapfaas::gateway;
 use snapfaas::message::Message;
 use snapfaas::worker::Worker;
 
+use core::panic;
 use std::sync::{mpsc, Arc, Mutex};
 use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
@@ -26,7 +27,6 @@ fn main() {
 
     let matches = App::new("SnapFaaS controller")
         .version("1.0")
-        .author("David H. Liu <hao.liu@princeton.edu>")
         .about("Launch and configure SnapFaaS controller")
         .arg(
             Arg::with_name("config")
@@ -63,20 +63,28 @@ fn main() {
     fs.initialize();
     let sys_principal = Vec::<String>::new();
     snapfaas::fs::utils::set_my_privilge([labeled::buckle::Clause::new_from_vec(vec![sys_principal])].into());
-    if let Ok(snapfaas::fs::DirEntry::Directory(root)) = snapfaas::fs::utils::read_path(&fs, &vec![]) {
-        // set up home directories
-        let fdir = fs.create_faceted_directory();
-        let _ = fs.link(&root, "home".to_string(), snapfaas::fs::DirEntry::FacetedDirectory(fdir));
-        // TODO: for now, set up gates for functions in the configuration directly under the root
-        // with empty privilege and no invoking restriction.
-        for image in config.functions.keys() {
-            let gate = fs.create_gate(true.into(), true.into(), image.clone()).unwrap();
-            let _ = fs.link(&root, image.clone(), snapfaas::fs::DirEntry::Gate(gate));
+    snapfaas::fs::utils::endorse_with_owned();
+    // set up home directories
+    match snapfaas::fs::utils::create_faceted(&fs, &vec![], "home".to_string()) {
+        Ok(_) => info!("Created \":home\"."),
+        Err(snapfaas::fs::utils::Error::LinkError(e)) => match e {
+            snapfaas::fs::LinkError::Exists => info!("\":home\" already exists"),
+            e => panic!("Cannot create \":home\". {:?}", e),
         }
-    } else {
-        panic!("Failed to read the root");
+        e => panic!("Cannot create \":home\". {:?}", e),
     }
-
+    // TODO: for now, set up gates for functions in the configuration directly under the root
+    // with empty privilege and no invoking restriction.
+    for image in config.functions.keys() {
+        match fs::utils::create_gate(&fs, &vec![], image.to_string(), labeled::buckle::Buckle::public(), image.to_string()) {
+            Ok(_) => info!("Created gate \":{}\".", image),
+            Err(snapfaas::fs::utils::Error::LinkError(e)) => match e {
+                snapfaas::fs::LinkError::Exists => info!("Gate \":{}\" already exists.", image),
+                e => panic!("Cannot create \":{}\". {:?}", image, e),
+            }
+            e => panic!("Cannot create \":{}\". {:?}", image, e),
+        }
+    }
     // create the resource manager
     let (mut manager, manager_sender) = ResourceManager::new(config);
 
