@@ -170,7 +170,6 @@ fn main() {
     let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
     fs::utils::clear_label();
     fs::utils::set_my_privilge([Clause::new_from_vec(vec![principal])].into());
-    fs::utils::taint_with_label(Buckle::new(fs::utils::my_privilege(), true));
     match cmd_arguments.subcommand() {
         ("invoke", Some(sub_m)) => {
             let addr = sub_m.value_of("server address").unwrap();
@@ -216,6 +215,7 @@ fn main() {
             }
         },
         ("ls", Some(sub_m)) => {
+            fs::utils::taint_with_label(Buckle::new(fs::utils::my_privilege(), true));
             let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
             let path = parse_path_vec(path);
             let entries = match fs::utils::read_path(&fs, &path) {
@@ -271,7 +271,7 @@ fn main() {
                 let label = label.unwrap();
                 let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_directory(&fs, &base_dir, name, label) {
-                    eprintln!("Cannot create the directory: {:?}", e);
+                    eprintln!("Cannot create the directory. {:?}", e);
                     return;
                 }
                 println!("+++create dir takes: {:?}", t1.elapsed());
@@ -279,7 +279,7 @@ fn main() {
             } else if objtype == "faceted" {
                 let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_faceted(&fs, &base_dir, name) {
-                    eprintln!("Cannot create the directory: {:?}", e);
+                    eprintln!("Cannot create the faceted. {:?}", e);
                 }
                 println!("+++create faceted takes: {:?}", t1.elapsed());
                 println!("+++STAT: {:?}", fs::metrics::get_stat());
@@ -291,7 +291,7 @@ fn main() {
                 let label = label.unwrap();
                 let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_file(&fs, &base_dir, name, label) {
-                    eprintln!("Cannot create the directory takes: {:?} ns", e);
+                    eprintln!("Cannot create the file. {:?}", e);
                 }
                 println!("+++create file takes: {:?}", t1.elapsed());
                 println!("+++STAT: {:?}", fs::metrics::get_stat());
