@@ -169,7 +169,6 @@ class Syscall():
         return response.success
 
     ### open/open_at ###
-    #TODO
 
     ### named data object syscalls ###
     def fs_read(self, path):

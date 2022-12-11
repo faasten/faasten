@@ -142,7 +142,7 @@ fn main() {
 
     let principal: Vec<&str> = cmd_arguments.value_of("principal").unwrap().split(',').collect();
     let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
-    fs::utils::clear_label();
+    fs::utils::clear_local_state();
     fs::utils::set_my_privilge([Clause::new_from_vec(vec![principal])].into());
     fs::utils::taint_with_label(Buckle::new(fs::utils::my_privilege(), true));
     match cmd_arguments.subcommand() {

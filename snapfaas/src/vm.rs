@@ -416,6 +416,29 @@ impl Vm {
                     debug!("function response: {}", r.payload);
                     return Ok(r.payload);
                 }
+                Some(SC::FsOpenAtFacet(req)) => {
+                    let value = Buckle::parse(&req.facet).ok().and_then(|facet|
+                        fs::handle::open_at_facet(&self.fs, req.handle.unwrap().into(), &req.entry_name, &facet).ok().map(|h| h.into())
+                    );
+                    let result = syscalls::OpenResponse {
+                        handle: value,
+                    }.encode_to_vec();
+                    self.send_into_vm(result)?;
+                }
+                Some(SC::FsOpenAt(req)) => {
+                    let value = fs::handle::open_at(&self.fs, req.handle.unwrap().into(), &req.entry_name).ok().map(|h| h.into());
+                    let result = syscalls::OpenResponse {
+                        handle: value,
+                    }.encode_to_vec();
+                    self.send_into_vm(result)?;
+                }
+                Some(SC::FsOpen(req)) => {
+                    let value = fs::utils::open(&self.fs, &req.path).ok().map(|h| h.into());
+                    let result = syscalls::OpenResponse {
+                        handle: value,
+                    }.encode_to_vec();
+                    self.send_into_vm(result)?;
+                }
                 Some(SC::BuckleParse(s)) => {
                     let result = syscalls::DeclassifyResponse {
                         label: Buckle::parse(&s).ok().map(|l| buckle_to_pblabel(&l)),

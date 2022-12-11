@@ -13,16 +13,43 @@ use crate::syscalls;
 
 thread_local!(static CURRENT_LABEL: RefCell<Buckle> = RefCell::new(Buckle::public()));
 thread_local!(static PRIVILEGE: RefCell<Component> = RefCell::new(Component::dc_true()));
-thread_local!(static FD_TABLE: RefCell<HashMap::<i32, DirEntry>> = RefCell::new(HashMap::new()));
-thread_local!(static NEXT_FD: RefCell<i32> = RefCell::new(1i32));
+thread_local!(static FD_TABLE: RefCell<HashMap::<u64, DirEntry>> = RefCell::new(HashMap::new()));
+thread_local!(static NEXT_FD: RefCell<u64> = RefCell::new(1u64));
 
 type UID = u64;
 
-pub struct OpaqueHandle(i32);
+use syscalls::opaque_handle::Handle as SCHandle;
+pub enum OpaqueHandle {
+    File(u64),
+    Dir(u64),
+    Faceted(u64),
+    Gate(u64),
+    Invalid,
+}
 
 impl Into<OpaqueHandle> for syscalls::OpaqueHandle {
     fn into(self) -> OpaqueHandle {
-        OpaqueHandle(self.inner)
+        match self.handle {
+            Some(SCHandle::File(n)) => OpaqueHandle::File(n),
+            Some(SCHandle::Dir(n)) => OpaqueHandle::Dir(n),
+            Some(SCHandle::Faceted(n)) => OpaqueHandle::Faceted(n),
+            Some(SCHandle::Gate(n)) => OpaqueHandle::Gate(n),
+            None => OpaqueHandle::Invalid,
+        }
+    }
+}
+
+impl From<OpaqueHandle> for syscalls::OpaqueHandle {
+    fn from(h: OpaqueHandle) -> Self {
+        syscalls::OpaqueHandle {
+            handle: match h {
+                OpaqueHandle::File(n) => Some(SCHandle::File(n)),
+                OpaqueHandle::Dir(n) => Some(SCHandle::Dir(n)),
+                OpaqueHandle::Faceted(n) => Some(SCHandle::Faceted(n)),
+                OpaqueHandle::Gate(n) => Some(SCHandle::Gate(n)),
+                OpaqueHandle::Invalid => None,
+            }
+        }
     }
 }
 
@@ -32,8 +59,13 @@ impl OpaqueHandle {
             NEXT_FD.with(|fd| {
                 let newfd = *fd.borrow();
                 *fd.borrow_mut() = newfd + 1;
-                tab.borrow_mut().insert(newfd, hard_link);
-                OpaqueHandle(newfd)
+                tab.borrow_mut().insert(newfd, hard_link.clone());
+                match hard_link {
+                    DirEntry::Directory(_) => OpaqueHandle::Dir(newfd),
+                    DirEntry::File(_) => OpaqueHandle::File(newfd),
+                    DirEntry::FacetedDirectory(_) => OpaqueHandle::Faceted(newfd),
+                    DirEntry::Gate(_) => OpaqueHandle::Gate(newfd),
+                }
             })
         })
     }
@@ -549,11 +581,13 @@ pub mod handle {
 
     pub enum Error {
         InvalidHandle,
-        LabelError(LabelError), 
+        LabelError(LabelError),
         FacetError(FacetError),
         DoesNotExists,
         NotDirectory,
         NotFacetedDirectory,
+        NotDirHandle,
+        NotFacetedHandle,
     }
 
     impl From<LabelError> for Error {
@@ -569,42 +603,50 @@ pub mod handle {
     }
 
     pub fn open_at<S: Clone + BackingStore>(fs: &FS<S>, handle: OpaqueHandle, name: &str) -> Result<OpaqueHandle, Error> {
-        FD_TABLE.with(|tab| {
-            if let Some(de) = tab.borrow().get(&handle.0) {
-                match de {
-                    DirEntry::Directory(dir) => {
-                        let hm = fs.list(dir.clone()).map_err(|e| Error::from(e))?;
-                        let hard_link = hm.get(name).ok_or(Error::DoesNotExists)?;
-                        Ok(OpaqueHandle::new(hard_link.clone()))
+        match handle {
+            OpaqueHandle::Dir(n) =>
+                FD_TABLE.with(|tab| {
+                    if let Some(de) = tab.borrow().get(&n) {
+                        match de {
+                            DirEntry::Directory(dir) => {
+                                let hm = fs.list(dir.clone()).map_err(|e| Error::from(e))?;
+                                let hard_link = hm.get(name).ok_or(Error::DoesNotExists)?;
+                                Ok(OpaqueHandle::new(hard_link.clone()))
+                            }
+                            _ => {
+                                Err(Error::NotDirectory)
+                            }
+                        }
+                    } else {
+                        Err(Error::InvalidHandle)
                     }
-                    _ => {
-                        Err(Error::NotDirectory)
-                    }
-                }
-            } else {
-                Err(Error::InvalidHandle)
-            }
-        })
+                }),
+            _ => Err(Error::NotDirHandle),
+        }
     }
 
     pub fn open_at_facet<S: Clone + BackingStore>(fs: &FS<S>, handle: OpaqueHandle, name: &str, facet: &Buckle) -> Result<OpaqueHandle, Error> {
-        FD_TABLE.with(|tab| {
-            if let Some(de) = tab.borrow().get(&handle.0) {
-                match de {
-                    DirEntry::FacetedDirectory(fdir) => {
-                        let dir = fs.open_facet(fdir, facet).map_err(|e| Error::from(e))?;
-                        let hmap = fs.list(dir).map_err(|e| Error::from(e))?;
-                        let hard_link = hmap.get(name).ok_or(Error::DoesNotExists)?;
-                        Ok(OpaqueHandle::new(hard_link.clone()))
+        match handle {
+            OpaqueHandle::Faceted(n) =>
+                FD_TABLE.with(|tab| {
+                    if let Some(de) = tab.borrow().get(&n) {
+                        match de {
+                            DirEntry::FacetedDirectory(fdir) => {
+                                let dir = fs.open_facet(fdir, facet).map_err(|e| Error::from(e))?;
+                                let hmap = fs.list(dir).map_err(|e| Error::from(e))?;
+                                let hard_link = hmap.get(name).ok_or(Error::DoesNotExists)?;
+                                Ok(OpaqueHandle::new(hard_link.clone()))
+                            }
+                            _ => {
+                                Err(Error::NotFacetedDirectory)
+                            }
+                        }
+                    } else {
+                        Err(Error::InvalidHandle)
                     }
-                    _ => {
-                        Err(Error::NotFacetedDirectory)
-                    }
-                }
-            } else {
-                Err(Error::InvalidHandle)
-            }
-        })
+                }),
+            _ => Err(Error::NotFacetedHandle),
+        }
     }
 }
 
@@ -848,7 +890,7 @@ pub mod utils {
             *privilege.borrow_mut() = Component::dc_true();
         });
         NEXT_FD.with(|fd| {
-            *fd.borrow_mut() = 1i32;
+            *fd.borrow_mut() = 1u64;
         });
     }
 
