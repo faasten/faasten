@@ -260,6 +260,17 @@ class Syscall():
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
+     
+    def fs_delete(self, path):
+        base, name, ok = split_path(path)
+        if not ok:
+            return False
+        req = syscalls_pb2.Syscall(fsDelete = syscalls_pb2.FSDelete(
+            baseDir = convert_path(base), name = name))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
     ### end of named data object syscalls ###
 
     ### unnamed data object syscalls #

@@ -415,6 +415,13 @@ impl Vm {
                     debug!("function response: {}", r.payload);
                     return Ok(r.payload);
                 }
+                Some(SC::FsDelete(req)) => {
+                    let result = syscalls::WriteKeyResponse {
+                        success: fs::utils::delete(&self.fs, &req.base_dir, req.name).is_ok(),
+                    }
+                    .encode_to_vec();
+                    self.send_into_vm(result)?;
+                }
                 Some(SC::BuckleParse(s)) => {
                     let result = syscalls::DeclassifyResponse {
                         label: Buckle::parse(&s).ok().map(|l| buckle_to_pblabel(&l)),
