@@ -291,7 +291,7 @@ fn main() {
                 let label = label.unwrap();
                 let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_file(&fs, &base_dir, name, label) {
-                    eprintln!("Cannot create the directory takes: {:?} ns", e);
+                    eprintln!("Cannot create the directory. {:?}", e);
                 }
                 println!("+++create file takes: {:?}", t1.elapsed());
                 println!("+++STAT: {:?}", fs::metrics::get_stat());
