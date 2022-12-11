@@ -218,7 +218,7 @@ fn main() {
             fs::utils::taint_with_label(Buckle::new(fs::utils::my_privilege(), true));
             let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
             let path = parse_path_vec(path);
-            println!("{:?}", path);
+            let now = time::Instant::now();
             let entries = match fs::utils::read_path(&fs, &path) {
                 Ok(fs::DirEntry::Directory(dir)) => {
                     match fs.list(dir).map(|m| m.keys().cloned().collect::<Vec<String>>()) {
@@ -239,6 +239,8 @@ fn main() {
                 Err(fs::utils::Error::FacetedDir(_, _)) => Vec::new(),
                 Err(e) => { eprintln!("Failed to list. {:?}", e); return; },
             };
+            println!("+++list takes: {:?}", now.elapsed());
+            println!("+++STAT: {:?}", fs::metrics::get_stat());
             if fs::utils::get_current_label().can_flow_to(&clearance) {
                 for entry in entries {
                     println!("{}", entry);
