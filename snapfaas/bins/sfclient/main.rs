@@ -5,6 +5,7 @@ use labeled::Label;
 use labeled::buckle::{self, Clause, Buckle};
 use snapfaas::request::LabeledInvoke;
 use snapfaas::{fs, request, syscalls, vm};
+use std::collections::HashMap;
 use std::net::TcpStream;
 use std::io::{stdin, self, Write, Read};
 use std::time;
@@ -268,39 +269,46 @@ fn main() {
             println!("+++STAT: {:?}", fs::metrics::get_stat());
         }
         ("ls", Some(sub_m)) => {
+            let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
+            let path = parse_path_vec(path);
+            let now = time::Instant::now();
+            match fs::utils::list(&fs, &path) {
+                Ok(m) => {
+                    let entries = m.keys().cloned().collect::<Vec<String>>();
+                    if fs::utils::get_current_label().can_flow_to(&clearance) {
+                        for entry in entries {
+                            println!("{}", entry);
+                        }
+                    } else {
+                        eprintln!("Failed to list. Too tainted. {:?}", fs::utils::get_current_label());
+                    }
+                }
+                Err(e) => { eprintln!("Failed to list. {:?}", e); },
+            };
+            println!("+++list takes: {:?}", now.elapsed());
+            println!("+++STAT: {:?}", fs::metrics::get_stat());
+        },
+        ("facetedls", Some(sub_m)) => {
             fs::utils::taint_with_label(Buckle::new(fs::utils::my_privilege(), true));
             let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
             let path = parse_path_vec(path);
             let now = time::Instant::now();
-            let entries = match fs::utils::read_path(&fs, &path) {
-                Ok(fs::DirEntry::Directory(dir)) => {
-                    match fs.list(dir).map(|m| m.keys().cloned().collect::<Vec<String>>()) {
-                        Ok(v) => v,
-                        Err(e) => { eprintln!("Failed to list. {:?}", e); return; },
+            match fs::utils::faceted_list(&fs, &path) {
+                Ok(facets) => {
+                    let entries = facets.iter().map(|(k, m)|
+                        (k.clone(), m.keys().cloned().collect::<Vec<String>>())).collect::<HashMap<String, Vec<String>>>();
+                    if fs::utils::get_current_label().can_flow_to(&clearance) {
+                        for entry in entries {
+                            println!("{:?}", entry);
+                        }
+                    } else {
+                        eprintln!("Failed to list. Too tainted. {:?}", fs::utils::get_current_label());
                     }
                 }
-                Ok(fs::DirEntry::FacetedDirectory(fdir)) => {
-                    fs.faceted_list(fdir).iter()
-                    .fold(Vec::new(), |mut v, entries| {
-                        for k in entries.1.keys() {
-                            v.push([entries.0.clone(), k.clone()].join("+"));
-                        }
-                        v
-                    })
-                },
-                Ok(_) => { eprintln!("Not a directory/faceted directory."); return; },
-                Err(fs::utils::Error::FacetedDir(_, _)) => Vec::new(),
-                Err(e) => { eprintln!("Failed to list. {:?}", e); return; },
+                Err(e) => { eprintln!("Failed to list. {:?}", e); },
             };
             println!("+++list takes: {:?}", now.elapsed());
             println!("+++STAT: {:?}", fs::metrics::get_stat());
-            if fs::utils::get_current_label().can_flow_to(&clearance) {
-                for entry in entries {
-                    println!("{}", entry);
-                }
-            } else {
-                eprintln!("Failed to list. Too tainted. {:?}", fs::utils::get_current_label());
-            }
         },
         ("del", Some(sub_m)) => {
             let base_dir = sub_m.values_of("base-dir").unwrap().collect();

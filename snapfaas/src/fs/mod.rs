@@ -475,7 +475,7 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
-    pub fn faceted_list(&self, fdir: FacetedDirectory) -> HashMap<String, HashMap<String, DirEntry>> {
+    pub fn faceted_list(&self, fdir: &FacetedDirectory) -> HashMap<String, HashMap<String, DirEntry>> {
         STAT.with(|stat| {
             match self.storage.get(&fdir.object_id.to_be_bytes()) {
                 Some(bs) => {
@@ -805,6 +805,22 @@ pub mod utils {
         } else {
             // corner case: empty vector is the root's path
             Ok(fs.root().into())
+        }
+    }
+
+    pub fn list<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<HashMap<String, DirEntry>, Error> {
+        match read_path(fs, path) {
+            Ok(DirEntry::Directory(dir)) => fs.list(dir).map_err(|e| Error::from(e)),
+            Ok(_) => Err(Error::BadPath),
+            Err(e) => Err(Error::from(e)),
+        }
+    }
+
+    pub fn faceted_list<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<HashMap<String, HashMap<String, DirEntry>>, Error> {
+        match read_path(fs, path) {
+            Ok(DirEntry::FacetedDirectory(fdir)) => Ok(fs.faceted_list(&fdir)),
+            Ok(_) => Err(Error::BadPath),
+            Err(e) => Err(Error::from(e)),
         }
     }
 

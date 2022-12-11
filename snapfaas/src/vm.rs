@@ -18,7 +18,7 @@ use crate::message::Message;
 use crate::request::LabeledInvoke;
 use crate::{blobstore, syscalls};
 use crate::labeled_fs::DBENV;
-use crate::fs::{self, DirEntry};
+use crate::fs;
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
@@ -540,33 +540,22 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsList(req)) => {
-                    let value = match fs::utils::read_path(&self.fs, &req.path) {
-                        Ok(entry) => match entry {
-                            DirEntry::Directory(dir) => self.fs.list(dir).ok().map(|m| syscalls::EntryNameArr { names: m.keys().cloned().collect() }),
-                            _ => None,
-                        }
-                        Err(fs::utils::Error::FacetedDir(_, _)) => Some(syscalls::EntryNameArr { names: Vec::new() }),
-                        _ => None,
-                    };
+                    let value = fs::utils::list(&self.fs, &req.path).ok()
+                        .map(|m| syscalls::EntryNameArr { names: m.keys().cloned().collect() });
                     let result = syscalls::FsListResponse {
                         value
                     }.encode_to_vec();
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsFacetedList(req)) => {
-                    let value = fs::utils::read_path(&self.fs, &req.path).ok().and_then(|entry| {
-                        match entry {
-                            fs::DirEntry::FacetedDirectory(fdir) => Some(syscalls::FsFacetedListInner{
-                                facets: self.fs.faceted_list(fdir).iter()
-                                    .fold(HashMap::<String, syscalls::EntryNameArr>::new(),
-                                        |mut m, kv| {
-                                            m.insert(kv.0.clone(), syscalls::EntryNameArr{ names: kv.1.keys().cloned().collect() });
-                                            m
-                                        })
-                            }),
-                            _ => None,
-                        }
-                    });
+                    let value = fs::utils::faceted_list(&self.fs, &req.path).ok()
+                        .map(|facets| {
+                            syscalls::FsFacetedListInner{
+                                facets: facets.iter().map(|(k, m)|
+                                            (k.clone(), syscalls::EntryNameArr{ names: m.keys().cloned().collect() })
+                                        ).collect::<HashMap<String, syscalls::EntryNameArr>>()
+                            }
+                        });
                     let result = syscalls::FsFacetedListResponse {
                         value
                     }
