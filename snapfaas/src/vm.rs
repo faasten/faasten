@@ -532,12 +532,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsRead(req)) => {
-                    let value = fs::utils::read_path(&self.fs, &req.path).ok().and_then(|entry| {
-                        match entry {
-                            fs::DirEntry::File(file) => self.fs.read(&file).ok(),
-                            _ => None,
-                        }
-                    });
+                    let value = fs::utils::read(&self.fs, &req.path).ok();
                     let result = syscalls::ReadKeyResponse {
                         value
                     }.encode_to_vec();
@@ -579,12 +574,7 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsWrite(req)) => {
-                    let value = fs::utils::read_path(&self.fs, &req.path).ok().and_then(|entry| {
-                        match entry {
-                            fs::DirEntry::File(file) => self.fs.write(&file, &req.data).ok(),
-                            _ => None,
-                        }
-                    });
+                    let value = fs::utils::write(&mut self.fs, &req.path, req.data).ok();
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some()
                     }

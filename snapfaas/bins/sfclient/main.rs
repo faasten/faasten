@@ -6,7 +6,7 @@ use labeled::buckle::{self, Clause, Buckle};
 use snapfaas::request::LabeledInvoke;
 use snapfaas::{fs, request, syscalls, vm};
 use std::net::TcpStream;
-use std::io::stdin;
+use std::io::{stdin, self, Write, Read};
 use std::time;
 
 fn parse_path_vec(mut path: Vec<&str>) -> Vec<syscalls::PathComponent> {
@@ -106,6 +106,28 @@ fn main() {
             )
        )
        .subcommand(
+           SubCommand::with_name("write")
+           .about("write a file")
+           .arg(
+               Arg::with_name("path")
+               .index(1)
+               .value_delimiter(":")
+               .required(true)
+               .help("A file path."),
+            )
+       )
+       .subcommand(
+           SubCommand::with_name("read")
+           .about("read a file")
+           .arg(
+               Arg::with_name("path")
+               .index(1)
+               .value_delimiter(":")
+               .required(true)
+               .help("A file path."),
+            )
+       )
+       .subcommand(
            SubCommand::with_name("del")
            .about("delete a path. act as unlink.")
            .arg(
@@ -167,7 +189,7 @@ fn main() {
 
     let principal: Vec<&str> = cmd_arguments.value_of("principal").unwrap().split(',').collect();
     let clearance = Buckle::new([Clause::new_from_vec(vec![principal.clone()])], true);
-    let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
+    let mut fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
     fs::utils::clear_label();
     fs::utils::set_my_privilge([Clause::new_from_vec(vec![principal])].into());
     match cmd_arguments.subcommand() {
@@ -214,6 +236,37 @@ fn main() {
                 eprintln!("Cannot create the gate: {:?}", e);
             }
         },
+        ("read", Some(sub_m)) => {
+            fs::utils::taint_with_label(Buckle::new(fs::utils::my_privilege(), true));
+            let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
+            let path = parse_path_vec(path);
+            let now = time::Instant::now();
+            match fs::utils::read(&fs, &path) {
+                Ok(data) => {
+                    if fs::utils::get_current_label().can_flow_to(&clearance) {
+                        let _ = io::stdout().lock().write_all(&data).unwrap();
+                        let _ = io::stdout().lock().flush();
+                    } else {
+                        eprintln!("Failed to read. Too tainted. {:?}", fs::utils::get_current_label());
+                    }
+                }
+                Err(e) => { eprintln!("Failed to read. {:?}", e); },
+            };
+            println!("+++read takes: {:?}", now.elapsed());
+            println!("+++STAT: {:?}", fs::metrics::get_stat());
+        }
+        ("write", Some(sub_m)) => {
+            let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
+            let path = parse_path_vec(path);
+            let mut buf = Vec::new();
+            io::stdin().read_to_end(&mut buf).unwrap();
+            let now = time::Instant::now();
+            if let Err(e) = fs::utils::write(&mut fs, &path, buf) {
+                eprintln!("Failed to write. {:?}", e);
+            };
+            println!("+++write takes: {:?}", now.elapsed());
+            println!("+++STAT: {:?}", fs::metrics::get_stat());
+        }
         ("ls", Some(sub_m)) => {
             fs::utils::taint_with_label(Buckle::new(fs::utils::my_privilege(), true));
             let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
