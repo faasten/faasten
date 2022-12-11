@@ -4,7 +4,7 @@
 use lmdb::{Transaction, WriteFlags};
 use log::info;
 use serde::{Serialize, Deserialize};
-use std::{collections::HashMap, cell::RefCell, time};
+use std::{collections::HashMap, cell::RefCell, time::{Duration, Instant}};
 use labeled::{buckle::{Clause, Buckle, Component, Principal}, Label};
 use serde_with::serde_as;
 
@@ -18,24 +18,25 @@ type UID = u64;
 
 #[derive(Default, Clone, Debug)]
 pub struct Metrics {
-    get: time::Duration,
+    get: Duration,
     get_key_bytes: usize,
     get_val_bytes: usize,
-    put: time::Duration,
+    put: Duration,
     put_key_bytes: usize,
     put_val_bytes: usize,
-    add: time::Duration,
+    add: Duration,
     add_key_bytes: usize,
     add_val_bytes: usize,
-    cas: time::Duration,
+    cas: Duration,
     cas_key_bytes: usize,
     cas_val_bytes: usize,
-    ser_dir: time::Duration,
-    ser_faceted: time::Duration,
-    ser_label: time::Duration,
-    de_dir: time::Duration,
-    de_faceted: time::Duration,
+    ser_dir: Duration,
+    ser_faceted: Duration,
+    ser_label: Duration,
+    de_dir: Duration,
+    de_faceted: Duration,
     create_retry: i64,
+    label_tracking: Duration,
 }
 
 pub mod metrics {
@@ -56,7 +57,7 @@ pub trait BackingStore {
 impl BackingStore for &lmdb::Environment {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
         STAT.with(|stat| {
-            let now = time::Instant::now();
+            let now = Instant::now();
             let db = self.open_db(None).ok()?;
             let txn = self.begin_ro_txn().ok()?;
             let res = txn.get(db, &key).ok().map(Into::<Vec<u8>>::into);
@@ -70,7 +71,7 @@ impl BackingStore for &lmdb::Environment {
 
     fn put(&self, key: &[u8], value: &[u8]) {
         STAT.with(|stat| {
-            let now = time::Instant::now();
+            let now = Instant::now();
             let db = self.open_db(None).unwrap();
             let mut txn = self.begin_rw_txn().unwrap();
             let _ = txn.put(db, &key, &value, WriteFlags::empty());
@@ -83,7 +84,7 @@ impl BackingStore for &lmdb::Environment {
 
     fn add(&self, key: &[u8], value: &[u8]) -> bool {
         STAT.with(|stat| {
-            let now = time::Instant::now();
+            let now = Instant::now();
             let db = self.open_db(None).unwrap();
             let mut txn = self.begin_rw_txn().unwrap();
             let res = match txn.put(db, &key, &value, WriteFlags::NO_OVERWRITE) {
@@ -100,7 +101,7 @@ impl BackingStore for &lmdb::Environment {
 
     fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8]) -> Result<(), Option<Vec<u8>>> {
         STAT.with(|stat| {
-            let now = time::Instant::now();
+            let now = Instant::now();
             let db = self.open_db(None).unwrap();
             let mut txn = self.begin_rw_txn().unwrap();
             let old = txn.get(db, &key).ok().map(Into::into);
@@ -159,7 +160,7 @@ struct FacetedDirectoryInner {
 impl FacetedDirectoryInner {
     pub fn open_facet(&self, facet: &Buckle) -> Result<Directory, FacetError> {
         STAT.with(|stat| {
-            let now = time::Instant::now();
+            let now = Instant::now();
             let jsonfacet = serde_json::to_string(facet).unwrap();
             stat.borrow_mut().ser_label += now.elapsed();
             CURRENT_LABEL.with(|current_label| {
@@ -176,7 +177,14 @@ impl FacetedDirectoryInner {
 
     pub fn dummy_list_facets(&self) -> Vec<Directory> {
         CURRENT_LABEL.with(|current_label| {
-            self.facets.iter().filter(|d| d.label.secrecy.implies(&current_label.borrow().secrecy)).cloned().collect()
+            STAT.with(|stat| {
+                self.facets.iter().filter(|d| {
+                    let now = Instant::now();
+                    let res = current_label.borrow().secrecy.implies(&d.label.secrecy);
+                    stat.borrow_mut().label_tracking += now.elapsed();
+                    res
+                }).cloned().collect()
+            })
         })
     }
 
@@ -210,7 +218,7 @@ impl FacetedDirectoryInner {
 
     pub fn append(&mut self, dir: Directory) -> Option<Directory> {
         STAT.with(|stat| {
-            let now = time::Instant::now();
+            let now = Instant::now();
             let facet = serde_json::ser::to_string(&dir.label).unwrap();
             stat.borrow_mut().ser_label += now.elapsed();
             match self.allocated.get(&facet) {
@@ -333,7 +341,7 @@ impl<S: BackingStore> FS<S> {
 
     pub fn create_directory(&self, label: Buckle) -> Directory {
         STAT.with(|stat| {
-            let now = time::Instant::now();
+            let now = Instant::now();
             let dir_contents = serde_json::ser::to_vec(&HashMap::<String, DirEntry>::new()).unwrap_or((&b"{}"[..]).into());
             stat.borrow_mut().ser_dir += now.elapsed();
             let mut uid: UID = rand::random();
@@ -365,7 +373,7 @@ impl<S: BackingStore> FS<S> {
     pub fn create_faceted_directory(&self) -> FacetedDirectory {
         STAT.with(|stat| {
             let mut uid: UID = rand::random();
-            let now = time::Instant::now();
+            let now = Instant::now();
             let empty_faceted_dir = serde_json::ser::to_vec(&FacetedDirectoryInner::default()).unwrap();
             stat.borrow_mut().ser_faceted += now.elapsed();
             while !self.storage.add(&uid.to_be_bytes(), &empty_faceted_dir) {
@@ -380,7 +388,9 @@ impl<S: BackingStore> FS<S> {
     pub fn create_gate(&self, dpriv: Component, invoking: Component, image: String) -> Result<Gate, GateError> {
         PRIVILEGE.with(|opriv| {
             STAT.with(|stat| {
+                let now = Instant::now();
                 if opriv.borrow().implies(&dpriv) {
+                    stat.borrow_mut().label_tracking += now.elapsed();
                     let mut uid: UID = rand::random();
                     while !self.storage.add(&uid.to_be_bytes(), &[]) {
                         uid = rand::random();
@@ -403,7 +413,9 @@ impl<S: BackingStore> FS<S> {
         PRIVILEGE.with(|opriv| {
             STAT.with(|stat| {
                 let dpriv = policy.secrecy;
+                let now = Instant::now();
                 if opriv.borrow().implies(&dpriv) {
+                    stat.borrow_mut().label_tracking += now.elapsed();
                     let mut uid: UID = rand::random();
                     while !self.storage.add(&uid.to_be_bytes(), &[]) {
                         uid = rand::random();
@@ -425,15 +437,18 @@ impl<S: BackingStore> FS<S> {
     pub fn invoke_gate(&self, gate: &Gate) -> Result<Gate, GateError> {
         CURRENT_LABEL.with(|current_label| {
             PRIVILEGE.with(|opriv| {
-                // implicit endorsement
-                let clone = current_label.borrow().clone();
-                *current_label.borrow_mut() = clone.endorse(&*opriv.borrow());
-                // check integrity
-                if current_label.borrow().integrity.implies(&gate.invoking) {
-                    Ok(gate.clone())
-                } else {
-                    Err(GateError::CannotInvoke)
-                }
+                STAT.with(|stat| {
+                    // implicit endorsement
+                    utils::endorse_with(&*opriv.borrow());
+                    // check integrity
+                    let now = Instant::now();
+                    if current_label.borrow().integrity.implies(&gate.invoking) {
+                        stat.borrow_mut().label_tracking += now.elapsed();
+                        Ok(gate.clone())
+                    } else {
+                        Err(GateError::CannotInvoke)
+                    }
+                })
             })
         })
     }
@@ -441,10 +456,12 @@ impl<S: BackingStore> FS<S> {
     pub fn list(&self, dir: Directory) -> Result<HashMap<String, DirEntry>, LabelError> {
         CURRENT_LABEL.with(|current_label| {
             STAT.with(|stat| {
+                let now = Instant::now();
                 if dir.label.can_flow_to(&*current_label.borrow()) {
+                    stat.borrow_mut().label_tracking += now.elapsed();
                     Ok(match self.storage.get(&dir.object_id.to_be_bytes()) {
                         Some(bs) => {
-                                let now = time::Instant::now();
+                                let now = Instant::now();
                                 let res = serde_json::from_slice(bs.as_slice()).unwrap_or_default();
                                 stat.borrow_mut().de_dir += now.elapsed();
                                 res
@@ -462,7 +479,7 @@ impl<S: BackingStore> FS<S> {
         STAT.with(|stat| {
             match self.storage.get(&fdir.object_id.to_be_bytes()) {
                 Some(bs) => {
-                        let now = time::Instant::now();
+                        let now = Instant::now();
                         serde_json::from_slice::<FacetedDirectoryInner>(bs.as_slice())
                             .map(|inner| {
                                 stat.borrow_mut().de_faceted += now.elapsed();
@@ -470,7 +487,7 @@ impl<S: BackingStore> FS<S> {
                             }).unwrap_or_default().iter()
                             .fold(HashMap::<String, HashMap<String, DirEntry>>::new(),
                             |mut m, dir| {
-                                let now = time::Instant::now();
+                                let now = Instant::now();
                                 m.insert(serde_json::ser::to_string(dir.label()).unwrap(),self.list(dir.clone()).unwrap());
                                 stat.borrow_mut().ser_label += now.elapsed();
                                 m
@@ -485,7 +502,7 @@ impl<S: BackingStore> FS<S> {
         STAT.with(|stat| {
             match self.storage.get(&fdir.object_id.to_be_bytes()) {
                 Some(bs) => {
-                    let now = time::Instant::now();
+                    let now = Instant::now();
                     let inner: FacetedDirectoryInner = serde_json::from_slice(bs.as_slice()).map_err(|_| FacetError::Corrupted)?;
                     stat.borrow_mut().de_faceted += now.elapsed();
                     inner.open_facet(facet)
@@ -498,24 +515,26 @@ impl<S: BackingStore> FS<S> {
     pub fn link(&self, dir: &Directory, name: String, direntry: DirEntry) -> Result<String, LinkError>{
         CURRENT_LABEL.with(|current_label| {
             STAT.with(|stat| {
+                let now = Instant::now();
                 if !current_label.borrow().secrecy.implies(&dir.label.secrecy) {
                     return Err(LinkError::LabelError(LabelError::CannotRead));
                 }
                 if !current_label.borrow().can_flow_to(&dir.label) {
                     return Err(LinkError::LabelError(LabelError::CannotWrite));
                 }
+                stat.borrow_mut().label_tracking += now.elapsed();
                 let mut raw_dir: Option<Vec<u8>> = self.storage.get(&dir.object_id.to_be_bytes());
                 loop {
                     let mut dir_contents: HashMap<String, DirEntry> = raw_dir.as_ref().and_then(|dir_contents| {
-                            let now = time::Instant::now();
-                            let res = serde_json::from_slice(dir_contents.as_slice()).ok();
-                            stat.borrow_mut().de_dir += now.elapsed();
-                            res
+                        let now = Instant::now();
+                        let res = serde_json::from_slice(dir_contents.as_slice()).ok();
+                        stat.borrow_mut().de_dir += now.elapsed();
+                        res
                     }).unwrap_or_default();
                     if let Some(_) = dir_contents.insert(name.clone(), direntry.clone()) {
                         return Err(LinkError::Exists)
                     }
-                    let now = time::Instant::now();
+                    let now = Instant::now();
                     let json_vec = serde_json::to_vec(&dir_contents).unwrap_or_default();
                     stat.borrow_mut().ser_dir += now.elapsed();
                     match self.storage.cas(&dir.object_id.to_be_bytes(), raw_dir.as_ref().map(|e| e.as_ref()), &json_vec) {
@@ -530,16 +549,18 @@ impl<S: BackingStore> FS<S> {
     pub fn unlink(&self, dir: &Directory, name: String) -> Result<String, UnlinkError> {
         CURRENT_LABEL.with(|current_label| {
             STAT.with(|stat| {
+                let now = Instant::now();
                 if !current_label.borrow().secrecy.implies(&dir.label.secrecy) {
                     return Err(UnlinkError::LabelError(LabelError::CannotRead));
                 }
                 if !current_label.borrow().can_flow_to(&dir.label) {
                     return Err(UnlinkError::LabelError(LabelError::CannotWrite));
                 }
+                stat.borrow_mut().label_tracking += now.elapsed();
                 let mut raw_dir = self.storage.get(&dir.object_id.to_be_bytes());
                 loop {
                     let mut dir_contents: HashMap<String, DirEntry> = raw_dir.as_ref().and_then(|dir_contents| {
-                        let now = time::Instant::now();
+                        let now = Instant::now();
                         let res = serde_json::from_slice(dir_contents.as_slice()).ok();
                         stat.borrow_mut().de_dir += now.elapsed();
                         res
@@ -547,7 +568,7 @@ impl<S: BackingStore> FS<S> {
                     if dir_contents.remove(&name).is_none() {
                         return Err(UnlinkError::DoesNotExists)
                     }
-                    let now = time::Instant::now();
+                    let now = Instant::now();
                     let json_vec = serde_json::to_vec(&dir_contents).unwrap_or_default();
                     stat.borrow_mut().ser_dir += now.elapsed();
                     match self.storage.cas(&dir.object_id.to_be_bytes(), raw_dir.as_ref().map(|e| e.as_ref()), &json_vec) {
@@ -563,16 +584,18 @@ impl<S: BackingStore> FS<S> {
         CURRENT_LABEL.with(|current_label| {
             STAT.with(|stat| {
                 // check when facet is specified.
+                let now = Instant::now();
                 if facet.is_some() && !current_label.borrow().secrecy.implies(&facet.as_ref().unwrap().secrecy) {
                     return Err(LinkError::LabelError(LabelError::CannotRead));
                 }
                 if facet.is_some() && !current_label.borrow().can_flow_to(&facet.as_ref().unwrap()) {
                     return Err(LinkError::LabelError(LabelError::CannotWrite));
                 }
+                stat.borrow_mut().label_tracking += now.elapsed();
                 let mut raw_fdir: Option<Vec<u8>> = self.storage.get(&fdir.object_id.to_be_bytes());
                 loop{
                     let mut fdir_contents: FacetedDirectoryInner = raw_fdir.as_ref().and_then(|fdir_contents| {
-                        let now = time::Instant::now();
+                        let now = Instant::now();
                         let res = serde_json::from_slice(fdir_contents.as_slice()).ok();
                         stat.borrow_mut().de_faceted += now.elapsed();
                         res
@@ -583,7 +606,7 @@ impl<S: BackingStore> FS<S> {
                             let dir = self.create_directory(current_label.borrow().clone());
                             let _ = self.link(&dir, name.clone(), direntry.clone());
                             fdir_contents.append(dir);
-                            let now = time::Instant::now();
+                            let now = Instant::now();
                             let json_vec = serde_json::to_vec(&fdir_contents).unwrap_or_default();
                             stat.borrow_mut().ser_faceted += now.elapsed();
                             match self.storage.cas(&fdir.object_id.to_be_bytes(), raw_fdir.as_ref().map(|e| e.as_ref()), &json_vec) {
@@ -604,7 +627,7 @@ impl<S: BackingStore> FS<S> {
                 let facet = &*current_label.borrow();
                 let raw_fdir = self.storage.get(&fdir.object_id.to_be_bytes());
                 let fdir_contents: FacetedDirectoryInner = raw_fdir.as_ref().and_then(|fdir_contents| {
-                    let now = time::Instant::now();
+                    let now = Instant::now();
                     let res = serde_json::from_slice(fdir_contents.as_slice()).ok();
                     stat.borrow_mut().de_faceted += now.elapsed();
                     res
@@ -883,62 +906,102 @@ pub mod utils {
     }
 
     pub fn taint_with_secrecy(secrecy: Component) {
-        CURRENT_LABEL.with(|current_label| {
-            let tainted = current_label.borrow().clone().lub(Buckle::new(secrecy, false));
-            *current_label.borrow_mut() = tainted;
+        STAT.with(|stat| {
+            let now = Instant::now();
+            CURRENT_LABEL.with(|current_label| {
+                let tainted = current_label.borrow().clone().lub(Buckle::new(secrecy, false));
+                *current_label.borrow_mut() = tainted;
+            });
+            stat.borrow_mut().label_tracking += now.elapsed();
         })
     }
 
     pub fn endorse_with_owned() {
-        PRIVILEGE.with(|opriv| {
-            endorse_with(&*opriv.borrow());
-        });
+        STAT.with(|stat| {
+            let now = Instant::now();
+            PRIVILEGE.with(|opriv| {
+                endorse_with(&*opriv.borrow());
+            });
+            stat.borrow_mut().label_tracking += now.elapsed();
+        })
     }
 
     pub fn endorse_with(privilege: &Component) {
-        CURRENT_LABEL.with(|current_label| {
-            let endorsed = current_label.borrow().clone().endorse(privilege);
-            *current_label.borrow_mut() = endorsed;
+        STAT.with(|stat| {
+            let now = Instant::now();
+            CURRENT_LABEL.with(|current_label| {
+                let endorsed = current_label.borrow().clone().endorse(privilege);
+                *current_label.borrow_mut() = endorsed;
+            });
+            stat.borrow_mut().label_tracking += now.elapsed();
         })
     }
 
     pub fn get_current_label() -> Buckle {
-        CURRENT_LABEL.with(|l| l.borrow().clone())
+        STAT.with(|stat| {
+            let now = Instant::now();
+            let res = CURRENT_LABEL.with(|l| l.borrow().clone());
+            stat.borrow_mut().label_tracking += now.elapsed();
+            res
+        })
     }
 
     pub fn taint_with_label(label: Buckle) -> Buckle {
-        CURRENT_LABEL.with(|l| {
-            let clone = l.borrow().clone();
-            *l.borrow_mut() = clone.lub(label);
-            l.borrow().clone()
+        STAT.with(|stat| {
+            let now = Instant::now();
+            let res = CURRENT_LABEL.with(|l| {
+                let clone = l.borrow().clone();
+                *l.borrow_mut() = clone.lub(label);
+                l.borrow().clone()
+            });
+            stat.borrow_mut().label_tracking += now.elapsed();
+            res
         })
     }
 
     pub fn clear_label() {
-        CURRENT_LABEL.with(|current_label| {
-            *current_label.borrow_mut() = Buckle::public();
+        STAT.with(|stat| {
+            let now = Instant::now();
+            CURRENT_LABEL.with(|current_label| {
+                *current_label.borrow_mut() = Buckle::public();
+            });
+            stat.borrow_mut().label_tracking += now.elapsed();
         })
     }
 
     pub fn my_privilege() -> Component {
-        PRIVILEGE.with(|p| p.borrow().clone())
+        STAT.with(|stat| {
+            let now = Instant::now();
+            let res = PRIVILEGE.with(|p| p.borrow().clone());
+            stat.borrow_mut().label_tracking += now.elapsed();
+            res
+        })
     }
 
     pub fn set_my_privilge(newpriv: Component) {
-        PRIVILEGE.with(|opriv| {
-            *opriv.borrow_mut() = newpriv;
-        });
+        STAT.with(|stat| {
+            let now = Instant::now();
+            PRIVILEGE.with(|opriv| {
+                *opriv.borrow_mut() = newpriv;
+            });
+            stat.borrow_mut().label_tracking += now.elapsed();
+        })
     }
 
     pub fn declassify(target: Component) -> Result<Buckle, Buckle> {
-        CURRENT_LABEL.with(|l| {
-            PRIVILEGE.with(|opriv| {
-                if (target.clone() & opriv.borrow().clone()).implies(&l.borrow().secrecy) {
-                    Ok(Buckle::new(target, l.borrow().integrity.clone()))
-                } else {
-                    Err(l.borrow().clone())
-                }
-            })
+        STAT.with(|stat| {
+            let now = Instant::now();
+            let res = CURRENT_LABEL.with(|l| {
+                PRIVILEGE.with(|opriv| {
+                    if (target.clone() & opriv.borrow().clone()).implies(&l.borrow().secrecy) {
+                        Ok(Buckle::new(target, l.borrow().integrity.clone()))
+                    } else {
+                        Err(l.borrow().clone())
+                    }
+                })
+            });
+            stat.borrow_mut().label_tracking += now.elapsed();
+            res
         })
     }
 }
