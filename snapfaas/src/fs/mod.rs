@@ -15,7 +15,7 @@ thread_local!(static STAT: RefCell<Metrics> = RefCell::new(Metrics::default()));
 
 type UID = u64;
 
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct Metrics {
     get: time::Duration,
     put: time::Duration,
@@ -27,6 +27,14 @@ pub struct Metrics {
     de_file: time::Duration,
     de_dir: time::Duration,
     de_faceted: time::Duration,
+}
+
+pub mod metrics {
+    use super::*;
+
+    pub fn get_stat() -> Metrics {
+        STAT.with(|stat| stat.borrow().clone())
+    }
 }
 
 pub trait BackingStore {

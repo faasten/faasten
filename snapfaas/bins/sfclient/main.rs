@@ -221,32 +221,42 @@ fn main() {
             let base_dir = sub_m.values_of("base-dir").unwrap().collect();
             let name = sub_m.value_of("name").unwrap().to_string();
             let base_dir = parse_path_vec(base_dir);
-            let label = buckle::Buckle::parse(sub_m.value_of("label").unwrap());
-            if label.is_err() {
-                eprintln!("Bad label: {}.", label.unwrap_err());
-                return;
-            }
-            let label = label.unwrap();
+            let label = sub_m.value_of("label").and_then(|s|
+                buckle::Buckle::parse(s).ok()
+            );
 
             if objtype == "dir" {
+                if label.is_none() {
+                    eprintln!("Bad label");
+                    return;
+                }
+                let label = label.unwrap();
                 let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_directory(&fs, &base_dir, name, label) {
                     eprintln!("Cannot create the directory: {:?}", e);
                     return;
                 }
-                println!("+++create dir takes: {:?} ns", t1.elapsed().as_nanos());
+                println!("+++create dir takes: {:?}", t1.elapsed());
+                println!("+++STAT: {:?}", fs::metrics::get_stat());
             } else if objtype == "faceted" {
                 let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_faceted(&fs, &base_dir, name) {
                     eprintln!("Cannot create the directory: {:?}", e);
                 }
-                println!("+++create faceted takes: {:?} ns", t1.elapsed().as_nanos());
+                println!("+++create faceted takes: {:?}", t1.elapsed());
+                println!("+++STAT: {:?}", fs::metrics::get_stat());
             } else if objtype == "file" {
+                if label.is_none() {
+                    eprintln!("Bad label");
+                    return;
+                }
+                let label = label.unwrap();
                 let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_file(&fs, &base_dir, name, label) {
                     eprintln!("Cannot create the directory takes: {:?} ns", e);
                 }
-                println!("+++create file takes: {:?} ns", t1.elapsed().as_nanos());
+                println!("+++create file takes: {:?}", t1.elapsed());
+                println!("+++STAT: {:?}", fs::metrics::get_stat());
             } else {
                 panic!("{} is not a valid type.", objtype);
             }
