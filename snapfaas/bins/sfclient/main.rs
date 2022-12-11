@@ -104,6 +104,27 @@ fn main() {
             )
        )
        .subcommand(
+           SubCommand::with_name("del")
+           .about("delete a path. act as unlink.")
+           .arg(
+               Arg::with_name("base-dir")
+               .value_name("BASE DIR")
+               .long("base-dir")
+               .value_delimiter(":")
+               .takes_value(true)
+               .required(true)
+               .help("Path of the base directory"),
+            )
+           .arg(
+               Arg::with_name("name")
+               .value_name("NAME")
+               .long("name")
+               .takes_value(true)
+               .required(true)
+               .help("Path of the base directory"),
+            )
+       )
+       .subcommand(
            SubCommand::with_name("create")
            .about("create a directory")
            .arg(
@@ -213,6 +234,14 @@ fn main() {
                 }
             } else {
                 eprintln!("Failed to list.");
+            }
+        },
+        ("del", Some(sub_m)) => {
+            let base_dir = sub_m.values_of("base-dir").unwrap().collect();
+            let name = sub_m.value_of("name").unwrap().to_string();
+            let base_dir = parse_path_vec(base_dir);
+            if let Err(e) = fs::utils::delete(&fs, &base_dir, name) {
+                eprintln!("Failed to delete. {:?}", e);
             }
         },
         ("create", Some(sub_m)) => {
