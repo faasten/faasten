@@ -218,6 +218,7 @@ fn main() {
             fs::utils::taint_with_label(Buckle::new(fs::utils::my_privilege(), true));
             let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
             let path = parse_path_vec(path);
+            println!("{:?}", path);
             let entries = match fs::utils::read_path(&fs, &path) {
                 Ok(fs::DirEntry::Directory(dir)) => {
                     match fs.list(dir).map(|m| m.keys().cloned().collect::<Vec<String>>()) {
@@ -243,7 +244,7 @@ fn main() {
                     println!("{}", entry);
                 }
             } else {
-                eprintln!("Failed to list. CannotRead.");
+                eprintln!("Failed to list. Too tainted. {:?}", fs::utils::get_current_label());
             }
         },
         ("del", Some(sub_m)) => {
