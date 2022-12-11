@@ -561,6 +561,7 @@ pub mod utils {
         FacetedDir(FacetedDirectory, Buckle),
         GateError(GateError),
         LinkError(LinkError),
+        UnlinkError(UnlinkError),
     }
 
     impl From<LabelError> for Error {
@@ -578,6 +579,12 @@ pub mod utils {
     impl From<LinkError> for Error {
         fn from(err: LinkError) -> Self {
             Error::LinkError(err)
+        }
+    }
+
+    impl From<UnlinkError> for Error {
+        fn from(err: UnlinkError) -> Self {
+            Error::UnlinkError(err)
         }
     }
 
@@ -638,6 +645,20 @@ pub mod utils {
         } else {
             // corner case: empty vector is the root's path
             Ok(fs.root().into())
+        }
+    }
+
+    pub fn delete<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String) -> Result<(), Error> {
+        endorse_with_owned();
+        match read_path(&fs, base_dir) {
+            Ok(DirEntry::Directory(dir)) => {
+                fs.unlink(&dir, name).map(|_| ()).map_err(|e| Error::from(e))
+            }
+            Ok(DirEntry::FacetedDirectory(fdir)) => {
+                fs.faceted_unlink(&fdir, name).map(|_| ()).map_err(|e| Error::from(e))
+            }
+            Ok(_) => Err(Error::BadPath),
+            Err(e) => Err(e),
         }
     }
 

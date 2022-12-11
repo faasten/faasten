@@ -101,6 +101,11 @@ message PathComponent {
   }
 }
 
+message FSDelete {
+  repeated PathComponent baseDir = 1;
+  string name = 2;
+}
+
 message FSRead {
   repeated PathComponent path = 1;
 }
@@ -216,5 +221,6 @@ message Syscall {
     DupGate dupGate = 23;
     TokenList subPrivilege = 24;
     string buckleParse = 25;
+    FSDelete fsDelete = 26;
   }
 }
