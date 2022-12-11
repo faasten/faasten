@@ -85,13 +85,13 @@ class Syscall():
     def get_current_label(self):
         req = syscalls_pb2.Syscall(getCurrentLabel = syscalls_pb2.GetCurrentLabel())
         self._send(req)
-        response = self._recv(syscalls_pb2.DcLabel())
+        response = self._recv(syscalls_pb2.Buckle())
         return response
 
     def taint_with_label(self, label):
         req = syscalls_pb2.Syscall(taintWithLabel = label)
         self._send(req)
-        response = self._recv(syscalls_pb2.DcLabel())
+        response = self._recv(syscalls_pb2.Buckle())
         return response
 
     def declassify(self, secrecy: syscalls_pb2.Component):
@@ -103,7 +103,7 @@ class Syscall():
         return response.label
 
     def buckle_parse(self, s):
-        """ Return a syscalls_pb2.DcLabel if string s is valid. Otherwise, None.
+        """ Return a syscalls_pb2.Buckle if string s is valid. Otherwise, None.
 
         A valid string s has the following format:
         The string separates secrecy and integrity with a comma, clauses
@@ -121,7 +121,7 @@ class Syscall():
     def sub_privilege(self, suffix):
         req = syscalls_pb2.Syscall(subPrivilege = syscalls_pb2.TokenList(tokens = suffix))
         self._send(req)
-        response = self._recv(syscalls_pb2.DcLabel())
+        response = self._recv(syscalls_pb2.Buckle())
         return response.secrecy
 
     def dup_gate(self, orig, path, policy):
@@ -130,7 +130,7 @@ class Syscall():
             return False
         request = syscalls_pb2.Syscall(dupGate = syscalls_pb2.DupGate(orig = convert_path(orig), baseDir = convert_path(base), name = name, policy = policy))
         self._send(req)
-        response = self._recv(syscalls_pb2.DcLabel())
+        response = self._recv(syscalls_pb2.Buckle())
         return response.success
 
     ### github APIs ###
@@ -173,7 +173,7 @@ class Syscall():
         """Read the file at the `path`.
 
         Args:
-            path ([str|syscalls_pb2.DcLabel]): list of either str or syscalls_pb2.DcLabel instances.
+            path ([str|syscalls_pb2.Buckle]): list of either str or syscalls_pb2.Buckle instances.
 
         Returns:
             bytes: if success
@@ -189,7 +189,7 @@ class Syscall():
         The host-side handler always endorse before writing.
 
         Args:
-            path ([str|syscalls_pb2.DcLabel]): list of either str or syscalls_pb2.DcLabel instances.
+            path ([str|syscalls_pb2.Buckle]): list of either str or syscalls_pb2.Buckle instances.
             data (bytes): data to write
 
         Returns:
@@ -200,13 +200,13 @@ class Syscall():
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_createdir(self, path, label: syscalls_pb2.DcLabel=None):
+    def fs_createdir(self, path, label: syscalls_pb2.Buckle=None):
         """Create a directory at the `path` with the `label`.
         The host-side handler always endorse before creating the directory.
 
         Args:
-            path ([str|syscalls_pb2.DcLabel]): list of either str or syscalls_pb2.DcLabel instances.
-            label (syscalls_pb2.DcLabel, optional): Defaults to None.
+            path ([str|syscalls_pb2.Buckle]): list of either str or syscalls_pb2.Buckle instances.
+            label (syscalls_pb2.Buckle, optional): Defaults to None.
                 The default None instructs the host-side handler to use the function's current label.
 
         Returns:
@@ -221,13 +221,13 @@ class Syscall():
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_createfile(self, path, label: syscalls_pb2.DcLabel=None):
+    def fs_createfile(self, path, label: syscalls_pb2.Buckle=None):
         """Create a file at the `path` with the `label`.
         The host-side handler always endorse before creating the file.
 
         Args:
-            path ([str|syscalls_pb2.DcLabel]): list of either str or syscalls_pb2.DcLabel instances.
-            label (syscalls_pb2.DcLabel, optional): Defaults to None.
+            path ([str|syscalls_pb2.Buckle]): list of either str or syscalls_pb2.Buckle instances.
+            label (syscalls_pb2.Buckle, optional): Defaults to None.
                 The default None instructs the host-side handler to use the function's current label.
 
         Returns:
@@ -247,7 +247,7 @@ class Syscall():
         The host-side handler always endorse before creating the file.
 
         Args:
-            path ([str|syscalls_pb2.DcLabel]): list of either str or syscalls_pb2.DcLabel instances.
+            path ([str|syscalls_pb2.Buckle]): list of either str or syscalls_pb2.Buckle instances.
 
         Returns:
             bool: True for success, False otherwise
