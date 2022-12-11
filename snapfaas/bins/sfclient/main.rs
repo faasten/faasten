@@ -6,6 +6,7 @@ use snapfaas::request::LabeledInvoke;
 use snapfaas::{fs, request, syscalls, vm};
 use std::net::TcpStream;
 use std::io::stdin;
+use std::time;
 
 fn parse_path_vec(mut path: Vec<&str>) -> Vec<syscalls::PathComponent> {
     path.remove(0);
@@ -228,17 +229,24 @@ fn main() {
             let label = label.unwrap();
 
             if objtype == "dir" {
+                let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_directory(&fs, &base_dir, name, label) {
                     eprintln!("Cannot create the directory: {:?}", e);
+                    return;
                 }
+                println!("+++create dir takes: {:?} ns", t1.elapsed().as_nanos());
             } else if objtype == "faceted" {
+                let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_faceted(&fs, &base_dir, name) {
                     eprintln!("Cannot create the directory: {:?}", e);
                 }
+                println!("+++create faceted takes: {:?} ns", t1.elapsed().as_nanos());
             } else if objtype == "file" {
+                let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_file(&fs, &base_dir, name, label) {
-                    eprintln!("Cannot create the directory: {:?}", e);
+                    eprintln!("Cannot create the directory takes: {:?} ns", e);
                 }
+                println!("+++create file takes: {:?} ns", t1.elapsed().as_nanos());
             } else {
                 panic!("{} is not a valid type.", objtype);
             }

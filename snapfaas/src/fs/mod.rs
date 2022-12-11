@@ -4,15 +4,30 @@
 use lmdb::{Transaction, WriteFlags};
 use log::info;
 use serde::{Serialize, Deserialize};
-use std::{collections::HashMap, cell::RefCell};
+use std::{collections::HashMap, cell::RefCell, time};
 use labeled::{buckle::{Clause, Buckle, Component, Principal}, Label};
 
 pub use errors::*;
 
 thread_local!(static CURRENT_LABEL: RefCell<Buckle> = RefCell::new(Buckle::public()));
 thread_local!(static PRIVILEGE: RefCell<Component> = RefCell::new(Component::dc_true()));
+thread_local!(static STAT: RefCell<Metrics> = RefCell::new(Metrics::default()));
 
 type UID = u64;
+
+#[derive(Default)]
+pub struct Metrics {
+    get: time::Duration,
+    put: time::Duration,
+    add: time::Duration,
+    cas: time::Duration,
+    ser_file: time::Duration,
+    ser_dir: time::Duration,
+    ser_faceted: time::Duration,
+    de_file: time::Duration,
+    de_dir: time::Duration,
+    de_faceted: time::Duration,
+}
 
 pub trait BackingStore {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>>;
@@ -23,43 +38,59 @@ pub trait BackingStore {
 
 impl BackingStore for &lmdb::Environment {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        let db = self.open_db(None).ok()?;
-        let txn = self.begin_ro_txn().ok()?;
-        let res = txn.get(db, &key).ok().map(Into::into);
-        txn.commit().ok()?;
-        res
+        STAT.with(|stat| {
+            let now = time::Instant::now();
+            let db = self.open_db(None).ok()?;
+            let txn = self.begin_ro_txn().ok()?;
+            let res = txn.get(db, &key).ok().map(Into::into);
+            txn.commit().ok()?;
+            stat.borrow_mut().get += now.elapsed();
+            res
+        })
     }
 
     fn put(&self, key: &[u8], value: &[u8]) {
-        let db = self.open_db(None).unwrap();
-        let mut txn = self.begin_rw_txn().unwrap();
-        let _ = txn.put(db, &key, &value, WriteFlags::empty());
-        txn.commit().unwrap();
+        STAT.with(|stat| {
+            let now = time::Instant::now();
+            let db = self.open_db(None).unwrap();
+            let mut txn = self.begin_rw_txn().unwrap();
+            let _ = txn.put(db, &key, &value, WriteFlags::empty());
+            txn.commit().unwrap();
+            stat.borrow_mut().put += now.elapsed();
+        })
     }
 
     fn add(&self, key: &[u8], value: &[u8]) -> bool {
-        let db = self.open_db(None).unwrap();
-        let mut txn = self.begin_rw_txn().unwrap();
-        let res = match txn.put(db, &key, &value, WriteFlags::NO_OVERWRITE) {
-            Ok(_) => true,
-            Err(_) => false,
-        };
-        txn.commit().unwrap();
-        res
+        STAT.with(|stat| {
+            let now = time::Instant::now();
+            let db = self.open_db(None).unwrap();
+            let mut txn = self.begin_rw_txn().unwrap();
+            let res = match txn.put(db, &key, &value, WriteFlags::NO_OVERWRITE) {
+                Ok(_) => true,
+                Err(_) => false,
+            };
+            txn.commit().unwrap();
+            stat.borrow_mut().add += now.elapsed();
+            res
+        })
     }
 
     fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8]) -> Result<(), Option<Vec<u8>>> {
-        let db = self.open_db(None).unwrap();
-        let mut txn = self.begin_rw_txn().unwrap();
-        let old = txn.get(db, &key).ok().map(Into::into);
-        let res = if expected.map(|e| Vec::from(e)) == old {
-            let _ = txn.put(db, &key, &value, WriteFlags::empty());
-            Ok(())
-        } else {
-            Err(old)
-        };
-        txn.commit().unwrap();
-        res
+        STAT.with(|stat| {
+            let now = time::Instant::now();
+            let db = self.open_db(None).unwrap();
+            let mut txn = self.begin_rw_txn().unwrap();
+            let old = txn.get(db, &key).ok().map(Into::into);
+            let res = if expected.map(|e| Vec::from(e)) == old {
+                let _ = txn.put(db, &key, &value, WriteFlags::empty());
+                Ok(())
+            } else {
+                Err(old)
+            };
+            txn.commit().unwrap();
+            stat.borrow_mut().cas += now.elapsed();
+            res
+        })
     }
 }
 
