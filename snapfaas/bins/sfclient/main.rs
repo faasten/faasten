@@ -1,6 +1,7 @@
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
 use clap::{App, Arg, SubCommand};
+use labeled::Label;
 use labeled::buckle::{self, Clause, Buckle};
 use snapfaas::request::LabeledInvoke;
 use snapfaas::{fs, request, syscalls, vm};
@@ -165,6 +166,7 @@ fn main() {
 
 
     let principal: Vec<&str> = cmd_arguments.value_of("principal").unwrap().split(',').collect();
+    let clearance = Buckle::new([Clause::new_from_vec(vec![principal.clone()])], true);
     let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
     fs::utils::clear_label();
     fs::utils::set_my_privilge([Clause::new_from_vec(vec![principal])].into());
@@ -217,24 +219,31 @@ fn main() {
             let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
             let path = parse_path_vec(path);
             let entries = match fs::utils::read_path(&fs, &path) {
-                Ok(fs::DirEntry::Directory(dir)) => fs.list(dir).map(|m| m.keys().cloned().collect::<Vec<String>>()).ok(),
+                Ok(fs::DirEntry::Directory(dir)) => {
+                    match fs.list(dir).map(|m| m.keys().cloned().collect::<Vec<String>>()) {
+                        Ok(v) => v,
+                        Err(e) => { eprintln!("Failed to list. {:?}", e); return; },
+                    }
+                }
                 Ok(fs::DirEntry::FacetedDirectory(fdir)) => {
-                    Some(fs.faceted_list(fdir).iter()
+                    fs.faceted_list(fdir).iter()
                     .fold(Vec::new(), |mut v, entries| {
                         for k in entries.1.keys() {
                             v.push([entries.0.clone(), k.clone()].join("+"));
                         }
                         v
-                    }))
+                    })
                 },
-                _ => None,
+                Ok(_) => { eprintln!("Not a directory/faceted directory."); return; },
+                Err(fs::utils::Error::FacetedDir(_, _)) => Vec::new(),
+                Err(e) => { eprintln!("Failed to list. {:?}", e); return; },
             };
-            if let Some(entries) = entries {
+            if fs::utils::get_current_label().can_flow_to(&clearance) {
                 for entry in entries {
                     println!("{}", entry);
                 }
             } else {
-                eprintln!("Failed to list.");
+                eprintln!("Failed to list. CannotRead.");
             }
         },
         ("del", Some(sub_m)) => {
