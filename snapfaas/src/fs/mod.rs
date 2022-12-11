@@ -16,7 +16,7 @@ thread_local!(static STAT: RefCell<Metrics> = RefCell::new(Metrics::default()));
 
 type UID = u64;
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, Serialize)]
 pub struct Metrics {
     get: Duration,
     get_key_bytes: usize,
@@ -133,7 +133,7 @@ pub struct Directory {
     object_id: UID
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct File {
     label: Buckle,
     object_id: UID,
@@ -272,7 +272,7 @@ pub struct Gate {
     object_id: UID,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DirEntry {
     Directory(Directory),
     File(File),
@@ -462,11 +462,11 @@ impl<S: BackingStore> FS<S> {
                     Ok(match self.storage.get(&dir.object_id.to_be_bytes()) {
                         Some(bs) => {
                                 let now = Instant::now();
-                                let res = serde_json::from_slice(bs.as_slice()).unwrap_or_default();
+                                let res = serde_json::from_slice(bs.as_slice()).unwrap();
                                 stat.borrow_mut().de_dir += now.elapsed();
                                 res
                         }
-                        None => Default::default()
+                        None => Default::default(),
                     })
                 } else {
                     Err(LabelError::CannotRead)
@@ -656,8 +656,6 @@ impl<S: BackingStore> FS<S> {
             if current_label.borrow().can_flow_to(&file.label) {
                 Ok(self.storage.put(&file.object_id.to_be_bytes(), data))
             } else {
-                println!("label: {:?}", current_label.borrow());
-                println!("file_label: {:?}", file.label);
                 Err(LabelError::CannotWrite)
             }
         })

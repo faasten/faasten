@@ -3,15 +3,18 @@ extern crate clap;
 use clap::{App, Arg, SubCommand};
 use labeled::Label;
 use labeled::buckle::{self, Clause, Buckle};
+use serde_json::json;
 use snapfaas::request::LabeledInvoke;
 use snapfaas::{fs, request, syscalls, vm};
 use std::collections::HashMap;
 use std::net::TcpStream;
 use std::io::{stdin, self, Write, Read};
-use std::time;
+use std::time::{self, Duration};
 
 fn parse_path_vec(mut path: Vec<&str>) -> Vec<syscalls::PathComponent> {
-    path.remove(0);
+    if path[0] == "" {
+        path.remove(0);
+    }
     path.iter().map(|s| {
         // try parse it as a facet, if failure, as a regular name
         if let Ok(l) = buckle::Buckle::parse(s) {
@@ -35,6 +38,14 @@ fn main() {
                 .takes_value(true)
                 .required(true)
                 .help("Comma-separated principal string"),
+        )
+        .arg(
+            Arg::with_name("stat")
+                .value_name("STAT LOG")
+                .long("stat")
+                .takes_value(true)
+                .required(false)
+                .help("file path to write stat"),
         )
        .subcommand(
            SubCommand::with_name("invoke")
@@ -103,7 +114,18 @@ fn main() {
                .index(1)
                .value_delimiter(":")
                .required(true)
-               .help("A directory/faceted directory path."),
+               .help("A directory path."),
+            )
+       )
+       .subcommand(
+           SubCommand::with_name("facetedls")
+           .about("list a faceted directory")
+           .arg(
+               Arg::with_name("path")
+               .index(1)
+               .value_delimiter(":")
+               .required(true)
+               .help("A faceted directory path."),
             )
        )
        .subcommand(
@@ -193,6 +215,8 @@ fn main() {
     let mut fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
     fs::utils::clear_label();
     fs::utils::set_my_privilge([Clause::new_from_vec(vec![principal])].into());
+    let mut elapsed = Duration::new(0, 0);
+    let mut stat = fs::Metrics::default();
     match cmd_arguments.subcommand() {
         ("invoke", Some(sub_m)) => {
             let addr = sub_m.value_of("server address").unwrap();
@@ -244,6 +268,8 @@ fn main() {
             let now = time::Instant::now();
             match fs::utils::read(&fs, &path) {
                 Ok(data) => {
+                    elapsed = now.elapsed();
+                    stat = fs::metrics::get_stat();
                     if fs::utils::get_current_label().can_flow_to(&clearance) {
                         let _ = io::stdout().lock().write_all(&data).unwrap();
                         let _ = io::stdout().lock().flush();
@@ -253,8 +279,6 @@ fn main() {
                 }
                 Err(e) => { eprintln!("Failed to read. {:?}", e); },
             };
-            println!("+++read takes: {:?}", now.elapsed());
-            println!("+++STAT: {:?}", fs::metrics::get_stat());
         }
         ("write", Some(sub_m)) => {
             let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
@@ -265,8 +289,8 @@ fn main() {
             if let Err(e) = fs::utils::write(&mut fs, &path, buf) {
                 eprintln!("Failed to write. {:?}", e);
             };
-            println!("+++write takes: {:?}", now.elapsed());
-            println!("+++STAT: {:?}", fs::metrics::get_stat());
+            elapsed = now.elapsed();
+            stat = fs::metrics::get_stat();
         }
         ("ls", Some(sub_m)) => {
             let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
@@ -285,8 +309,8 @@ fn main() {
                 }
                 Err(e) => { eprintln!("Failed to list. {:?}", e); },
             };
-            println!("+++list takes: {:?}", now.elapsed());
-            println!("+++STAT: {:?}", fs::metrics::get_stat());
+            elapsed = now.elapsed();
+            stat = fs::metrics::get_stat();
         },
         ("facetedls", Some(sub_m)) => {
             fs::utils::taint_with_label(Buckle::new(fs::utils::my_privilege(), true));
@@ -307,16 +331,19 @@ fn main() {
                 }
                 Err(e) => { eprintln!("Failed to list. {:?}", e); },
             };
-            println!("+++list takes: {:?}", now.elapsed());
-            println!("+++STAT: {:?}", fs::metrics::get_stat());
+            elapsed = now.elapsed();
+            stat = fs::metrics::get_stat();
         },
         ("del", Some(sub_m)) => {
             let base_dir = sub_m.values_of("base-dir").unwrap().collect();
             let name = sub_m.value_of("name").unwrap().to_string();
             let base_dir = parse_path_vec(base_dir);
+            let now = time::Instant::now();
             if let Err(e) = fs::utils::delete(&fs, &base_dir, name) {
                 eprintln!("Failed to delete. {:?}", e);
             }
+            elapsed = now.elapsed();
+            stat = fs::metrics::get_stat();
         },
         ("create", Some(sub_m)) => {
             let objtype = sub_m.value_of("type").unwrap();
@@ -327,38 +354,36 @@ fn main() {
                 buckle::Buckle::parse(s).ok()
             );
 
+            let now = time::Instant::now();
             if objtype == "dir" {
                 if label.is_none() {
                     eprintln!("Bad label");
                     return;
                 }
                 let label = label.unwrap();
-                let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_directory(&fs, &base_dir, name, label) {
                     eprintln!("Cannot create the directory. {:?}", e);
                     return;
                 }
-                println!("+++create dir takes: {:?}", t1.elapsed());
-                println!("+++STAT: {:?}", fs::metrics::get_stat());
+                elapsed = now.elapsed();
+                stat = fs::metrics::get_stat();
             } else if objtype == "faceted" {
-                let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_faceted(&fs, &base_dir, name) {
                     eprintln!("Cannot create the faceted. {:?}", e);
                 }
-                println!("+++create faceted takes: {:?}", t1.elapsed());
-                println!("+++STAT: {:?}", fs::metrics::get_stat());
+                elapsed = now.elapsed();
+                stat = fs::metrics::get_stat();
             } else if objtype == "file" {
                 if label.is_none() {
                     eprintln!("Bad label");
                     return;
                 }
                 let label = label.unwrap();
-                let t1 = time::Instant::now();
                 if let Err(e) = fs::utils::create_file(&fs, &base_dir, name, label) {
                     eprintln!("Cannot create the file. {:?}", e);
                 }
-                println!("+++create file takes: {:?}", t1.elapsed());
-                println!("+++STAT: {:?}", fs::metrics::get_stat());
+                elapsed = now.elapsed();
+                stat = fs::metrics::get_stat();
             } else {
                 panic!("{} is not a valid type.", objtype);
             }
@@ -366,5 +391,15 @@ fn main() {
         (&_, _) => {
             eprintln!("{}", cmd_arguments.usage());
         }
+    }
+    let val = json!({
+        "elapsed": elapsed,
+        "stat": stat,
+    });
+    if let Some(fname) = cmd_arguments.value_of("stat") { 
+        let file = std::fs::File::create(fname).unwrap();
+        serde_json::to_writer(file, &val).unwrap();
+    } else {
+        serde_json::to_writer_pretty(io::stdout(), &val).unwrap();
     }
 }
