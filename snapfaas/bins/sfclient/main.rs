@@ -249,13 +249,18 @@ fn main() {
             let base_dir = sub_m.values_of("base-dir").unwrap().collect();
             let name = sub_m.value_of("name").unwrap().to_string();
             let base_dir = parse_path_vec(base_dir);
-            let label = buckle::Buckle::parse(sub_m.value_of("label").unwrap());
-            if label.is_err() {
-                eprintln!("Bad label: {}.", label.unwrap_err());
-                return;
-            }
-            let label = label.unwrap();
-
+            let label = {
+                if objtype == "dir" || objtype == "file" {
+                    let label = buckle::Buckle::parse(sub_m.value_of("label").unwrap());
+                    if label.is_err() {
+                        eprintln!("Bad label: {}.", label.unwrap_err());
+                        return;
+                    }
+                    label.unwrap()
+                } else {
+                    buckle::Buckle::public() // garbage buckle
+                }
+            };
             if objtype == "dir" {
                 if let Err(e) = fs::utils::create_directory(&fs, &base_dir, name, label) {
                     eprintln!("Cannot create the directory: {:?}", e);
