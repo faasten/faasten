@@ -269,6 +269,7 @@ impl Vm {
                 },
                 _ = vm_process.wait() => {
                     crate::unlink_unix_sockets();
+                    error!("[Worker] cannot connect to the VM");
                     std::process::exit(1);
                 }
             };
@@ -542,10 +543,8 @@ impl Vm {
                 Some(SC::FsList(req)) => {
                     let value = fs::utils::list(&self.fs, &req.path).ok()
                         .map(|m| syscalls::EntryNameArr { names: m.keys().cloned().collect() });
-                    let result = syscalls::FsListResponse {
-                        value
-                    }.encode_to_vec();
-                    self.send_into_vm(result)?;
+                    let result = syscalls::FsListResponse { value };
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::FsFacetedList(req)) => {
                     let value = fs::utils::faceted_list(&self.fs, &req.path).ok()
