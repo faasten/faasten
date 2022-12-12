@@ -3,87 +3,54 @@
 from pathlib import Path
 import json
 import statistics
+from collections import defaultdict
 
-d = Path('storage-stats/lsroot')
-lsroot = []
+d = Path('syscall-storage-stats')
+stats = []
 for statfile in d.iterdir():
     with open(statfile) as f:
-        lsroot.append(json.loads(f.readline()))
+        stats.append(json.loads(f.readline()))
 
-d = Path('storage-stats/createuserfile')
-createuserfile = []
-for statfile in d.iterdir():
-    with open(statfile) as f:
-        createuserfile.append(json.loads(f.readline()))
+total_num = len(stats)
 
-d = Path('storage-stats/writeuserfile')
-writeuserfile = []
-for statfile in d.iterdir():
-    with open(statfile) as f:
-        writeuserfile.append(json.loads(f.readline()))
+e2e_lats = defaultdict(list)
+for stat in stats:
+    latencies = stat['response']['latencies']
+    for key in latencies:
+        e2e_lats[key].append(latencies[key])
 
-d = Path('storage-stats/readuserfile')
-readuserfile = []
-for statfile in d.iterdir():
-    with open(statfile) as f:
-        readuserfile.append(json.loads(f.readline()))
+tot_lats = defaultdict(list)
+store_lats = defaultdict(list)
+serde_lats = defaultdict(list)
+label_lats = defaultdict(list)
+for stat in stats:
+    latencies = stat['syscall']
+    for key in latencies:
+        tot, store, serde, label = latencies[key]
+        tot_lats[key].append(tot['secs']*(10^9) + tot['nanos'])
+        store_lats[key].append(store['secs']*(10^9) + store['nanos'])
+        serde_lats[key].append(serde['secs']*(10^9) + serde['nanos'])
+        label_lats[key].append(label['secs']*(10^9) + label['nanos'])
+print('')
 
-d = Path('storage-stats/deleteuserfile')
-deleteuserfile = []
-for statfile in d.iterdir():
-    with open(statfile) as f:
-        deleteuserfile.append(json.loads(f.readline()))
+header = 'Label store serde label other'
+writestoreops = {'write', 'create', 'delete'}
+largelines = []
+print(header)
+for key in tot_lats:
+    textkey = '-'.join(key.split('_'))
+    store = sum(store_lats[key])/total_num//1000
+    serde = sum(serde_lats[key])/total_num//1000
+    label = sum(label_lats[key])/total_num//1000
+    tot = sum(tot_lats[key])/total_num//1000
+    other = tot - store - serde - label
+    if key not in storeops:
+        line = ' '.join([textkey, str(store), str(serde), str(label), str(other)])
+        print(line)
+    else:
+        line = ' '.join([textkey, str(store/1000), str(serde/1000), str(label/1000), str(other/1000)])
+        largelines.append(line)
 
-print('lines:')
-print(len(lsroot))
-print(len(createuserfile))
-print(len(writeuserfile))
-print(len(readuserfile))
-print(len(deleteuserfile))
-total_num = len(lsroot)
-
-print("Average elapsed (nanos)")
-print('lsroot')
-elapses = []
-for stat in lsroot:
-    nanos = stat['elapsed']['secs'] * (10^6) + stat['elapsed']['nanos']
-    elapses.append(nanos)
-print(sum(elapses)/total_num)
-quantiles = statistics.quantiles(elapses)
-print(quantiles)
-
-print('createuserfile')
-elapses = []
-for stat in createuserfile:
-    nanos = stat['elapsed']['secs'] * (10^6) + stat['elapsed']['nanos']
-    elapses.append(nanos)
-print(sum(elapses)/total_num)
-quantiles = statistics.quantiles(elapses)
-print(quantiles)
-
-print('writeuserfile')
-elapses = []
-for stat in writeuserfile:
-    nanos = stat['elapsed']['secs'] * (10^6) + stat['elapsed']['nanos']
-    elapses.append(nanos)
-print(sum(elapses)/total_num)
-quantiles = statistics.quantiles(elapses)
-print(quantiles)
-
-print('readuserfile')
-elapses = []
-for stat in readuserfile:
-    nanos = stat['elapsed']['secs'] * (10^6) + stat['elapsed']['nanos']
-    elapses.append(nanos)
-print(sum(elapses)/total_num)
-quantiles = statistics.quantiles(elapses)
-print(quantiles)
-
-print('deleteuserfile')
-elapses = []
-for stat in deleteuserfile:
-    nanos = stat['elapsed']['secs'] * (10^6) + stat['elapsed']['nanos']
-    elapses.append(nanos)
-print(sum(elapses)/total_num)
-quantiles = statistics.quantiles(elapses)
-print(quantiles)
+print('milliseconds')
+for l in largelines:
+    print(l)

@@ -210,6 +210,7 @@ fn main() {
        .get_matches();
 
 
+    let mut print_at_end = true;
     let principal: Vec<&str> = cmd_arguments.value_of("principal").unwrap().split(',').collect();
     let clearance = Buckle::new([Clause::new_from_vec(vec![principal.clone()])], true);
     let mut fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
@@ -219,6 +220,7 @@ fn main() {
     let mut stat = fs::Metrics::default();
     match cmd_arguments.subcommand() {
         ("invoke", Some(sub_m)) => {
+            print_at_end = false;
             let addr = sub_m.value_of("server address").unwrap();
             let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
             let path = parse_path_vec(path);
@@ -230,6 +232,7 @@ fn main() {
                 eprintln!("Gate does not exist.");
                 return;
             }
+            drop(fs);
             for line in stdin().lines().map(|l| l.unwrap()) {
                 let request = LabeledInvoke {
                     gate: gate.clone().unwrap(),
@@ -241,10 +244,22 @@ fn main() {
                 request::write_u8(serde_json::to_vec(&request).unwrap().as_ref(), &mut connection).unwrap();
                 let buf = request::read_u8(&mut connection).unwrap();
                 let response: request::Response = serde_json::from_slice(&buf).unwrap();
-                println!("{:?}", response);
+                if let request::RequestStatus::SentToVM(s) = response.status {
+                    let val: serde_json::Value = serde_json::from_str(&s).unwrap();
+                    if let Some(fname) = cmd_arguments.value_of("stat") {
+                        let file = std::fs::File::create(fname).unwrap();
+                        serde_json::to_writer(file, &val).unwrap();
+                    } else {
+                        serde_json::to_writer_pretty(io::stdout(), &val).unwrap();
+                        println!("");
+                    }
+                } else {
+                    eprintln!("Failed to invoke. {:?}", response);
+                }
             }
         },
         ("newgate", Some(sub_m)) => {
+            print_at_end = false;
             let function = sub_m.value_of("function").unwrap().to_string();
             let name = sub_m.value_of("gate-name").unwrap().to_string();
             let policy = buckle::Buckle::parse(sub_m.value_of("policy").unwrap());
@@ -396,10 +411,12 @@ fn main() {
         "elapsed": elapsed,
         "stat": stat,
     });
-    if let Some(fname) = cmd_arguments.value_of("stat") { 
-        let file = std::fs::File::create(fname).unwrap();
-        serde_json::to_writer(file, &val).unwrap();
-    } else {
-        serde_json::to_writer_pretty(io::stdout(), &val).unwrap();
+    if print_at_end {
+        if let Some(fname) = cmd_arguments.value_of("stat") {
+            let file = std::fs::File::create(fname).unwrap();
+            serde_json::to_writer(file, &val).unwrap();
+        } else {
+            serde_json::to_writer_pretty(io::stdout(), &val).unwrap();
+        }
     }
 }

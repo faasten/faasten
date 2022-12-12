@@ -1,2 +1,2 @@
 def handle(obj, syscall):
-    return {}
+    return obj

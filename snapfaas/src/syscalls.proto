@@ -222,5 +222,6 @@ message Syscall {
     TokenList subPrivilege = 24;
     string buckleParse = 25;
     FSDelete fsDelete = 26;
+    Component endorse = 27;
   }
 }

@@ -16,7 +16,7 @@ thread_local!(static STAT: RefCell<Metrics> = RefCell::new(Metrics::default()));
 
 type UID = u64;
 
-#[derive(Default, Clone, Debug, Serialize)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Metrics {
     get: Duration,
     get_key_bytes: usize,
@@ -44,6 +44,43 @@ pub mod metrics {
 
     pub fn get_stat() -> Metrics {
         STAT.with(|stat| stat.borrow().clone())
+    }
+
+    pub fn calc_store_latencies(old: &Metrics) -> Duration {
+        STAT.with(|stat| { 
+            let curr = stat.borrow();
+            curr.add - old.add + curr.put - old.put + curr.get - old.get + curr.cas - old.cas 
+            //serde_json::json!({
+            //    "add": curr.add - old.add,
+            //    "put": curr.put - old.put,
+            //    "get": curr.get - old.get,
+            //    "cas": curr.cas - old.cas,
+            //})
+        })
+    }
+
+    pub fn calc_serde_latencies(old: &Metrics) -> Duration {
+        STAT.with(|stat| { 
+            let curr = stat.borrow();
+            curr.ser_dir - old.ser_dir + curr.ser_faceted - old.ser_faceted + curr.ser_label - old.ser_label + curr.de_dir - old.de_dir + curr.de_faceted - old.de_faceted 
+            //serde_json::json!({
+            //    "ser_dir": curr.ser_dir - old.ser_dir,
+            //    "ser_faceted": curr.ser_faceted - old.ser_faceted,
+            //    "ser_label": curr.ser_label - old.ser_label,
+            //    "de_dir": curr.de_dir - old.de_dir,
+            //    "de_faceted": curr.de_faceted - old.de_faceted,
+            //})
+        })
+    }
+
+    pub fn calc_label_latencies(old: &Metrics) -> Duration {
+        STAT.with(|stat| { 
+            let curr = stat.borrow();
+            curr.label_tracking - old.label_tracking
+            //serde_json::json!({
+            //    "label_tracking": curr.label_tracking - old.label_tracking,
+            //})
+        })
     }
 }
 
@@ -643,21 +680,29 @@ impl<S: BackingStore> FS<S> {
 
     pub fn read(&self, file: &File) -> Result<Vec<u8>, LabelError> {
         CURRENT_LABEL.with(|current_label| {
-            if file.label.can_flow_to(&*current_label.borrow()) {
-                Ok(self.storage.get(&file.object_id.to_be_bytes()).unwrap_or_default())
-            } else {
-                Err(LabelError::CannotRead)
-            }
+            STAT.with(|stat| {
+                let now = Instant::now();
+                if file.label.can_flow_to(&*current_label.borrow()) {
+                    stat.borrow_mut().label_tracking += now.elapsed();
+                    Ok(self.storage.get(&file.object_id.to_be_bytes()).unwrap_or_default())
+                } else {
+                    Err(LabelError::CannotRead)
+                }
+            })
         })
     }
 
     pub fn write(&mut self, file: &File, data: &Vec<u8>) -> Result<(), LabelError> {
         CURRENT_LABEL.with(|current_label| {
-            if current_label.borrow().can_flow_to(&file.label) {
-                Ok(self.storage.put(&file.object_id.to_be_bytes(), data))
-            } else {
-                Err(LabelError::CannotWrite)
-            }
+            STAT.with(|stat| {
+                let now = Instant::now();
+                if current_label.borrow().can_flow_to(&file.label) {
+                    stat.borrow_mut().label_tracking += now.elapsed();
+                    Ok(self.storage.put(&file.object_id.to_be_bytes(), data))
+                } else {
+                    Err(LabelError::CannotWrite)
+                }
+            })
         })
     }
 
@@ -987,6 +1032,25 @@ pub mod utils {
                 *current_label.borrow_mut() = endorsed;
             });
             stat.borrow_mut().label_tracking += now.elapsed();
+        })
+    }
+     
+    pub fn endorse_checked(privilege: &Component) -> Result<Buckle, Buckle> {
+        STAT.with(|stat| {
+            let now = Instant::now();
+            CURRENT_LABEL.with(|current_label| {
+                PRIVILEGE.with(|opriv| {
+                    if opriv.borrow().implies(privilege) {
+                        let endorsed = current_label.borrow().clone().endorse(privilege);
+                        *current_label.borrow_mut() = endorsed.clone();
+                        stat.borrow_mut().label_tracking += now.elapsed();
+                        Ok(endorsed)
+                    } else {
+                        stat.borrow_mut().label_tracking += now.elapsed();
+                        Err(current_label.borrow().clone())
+                    }
+                })
+            })
         })
     }
 

@@ -9,9 +9,13 @@ use std::sync::mpsc::Sender;
 use std::sync::mpsc;
 use std::io::{Seek, Write};
 use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::time::{Duration, Instant};
 
+use labeled::buckle::{Clause, Component, Buckle};
 use log::{debug, error};
 use tokio::process::{Child, Command};
+use::serde::Serialize;
 
 use crate::configs::FunctionConfig;
 use crate::message::Message;
@@ -26,7 +30,29 @@ const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
 const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
 const USER_AGENT: &str = "snapfaas";
 
-use labeled::buckle::{Clause, Component, Buckle};
+thread_local!(static STAT: RefCell<Metrics> = RefCell::new(Metrics::default()));
+
+#[derive(Default, Serialize, Clone)]
+struct Metrics {
+    write: [Duration;4],
+    list: [Duration;4],
+    faceted_list: [Duration;4],
+    read: [Duration;4],
+    create: [Duration;4],
+    delete: [Duration;4],
+    buckle_parse: [Duration;4],
+    sub_privilege: [Duration;4],
+    declassify: [Duration;4],
+    taint_with_label: [Duration;4],
+    get_current_label: [Duration;4],
+    endorse: [Duration;4],
+}
+
+fn get_stat() -> Metrics {
+    STAT.with(|stat| {
+        stat.borrow().clone()
+    })
+}
 
 fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Component {
     match component {
@@ -125,6 +151,7 @@ pub struct Vm {
     blobs: HashMap<u64, blobstore::Blob>,
     max_blob_id: u64,
     fs: fs::FS<&'static lmdb::Environment>,
+    start: Instant,
 }
 
 impl Vm {
@@ -154,6 +181,7 @@ impl Vm {
             blobs: Default::default(),
             max_blob_id: 0,
             fs,
+            start: Instant::now(),
         }
     }
 
@@ -314,7 +342,7 @@ impl Vm {
     /// Send request to vm and wait for its response
     pub fn process_req(&mut self, payload: String) -> Result<String, Error> {
         use prost::Message;
-
+        self.start = Instant::now();
         let sys_req = syscalls::Request {
             payload,
         }
@@ -411,29 +439,48 @@ impl Vm {
                 conn.read_exact(&mut buf).map_err(|e| Error::VsockRead(e))?;
                 buf
             };
+            let old = &fs::metrics::get_stat();
             match Syscall::decode(buf.as_ref()).map_err(|e| Error::Rpc(e))?.syscall {
                 Some(SC::Response(r)) => {
                     debug!("function response: {}", r.payload);
-                    return Ok(r.payload);
+                    let s = serde_json::json!({
+                        "elapsed": self.start.elapsed(),
+                        "fs": fs::metrics::get_stat(),
+                        "syscall": get_stat(),
+                        "response": serde_json::from_str::<serde_json::Value>(&r.payload).unwrap(),
+                    }).to_string();
+                    return Ok(s);
                 }
                 Some(SC::FsDelete(req)) => {
+                    let now = Instant::now();
                     let result = syscalls::WriteKeyResponse {
                         success: fs::utils::delete(&self.fs, &req.base_dir, req.name).is_ok(),
-                    }
-                    .encode_to_vec();
-                    self.send_into_vm(result)?;
+                    };
+                    STAT.with(|stat| {
+                        stat.borrow_mut().delete[0] += now.elapsed();
+                        stat.borrow_mut().delete[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().delete[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().delete[3] += fs::metrics::calc_label_latencies(old);
+                    });
+                    self.send_into_vm(result.encode_to_vec())?;
                 }
                 Some(SC::BuckleParse(s)) => {
+                    let now = Instant::now();
                     let result = syscalls::DeclassifyResponse {
                         label: Buckle::parse(&s).ok().map(|l| buckle_to_pblabel(&l)),
-                    }
-                    .encode_to_vec();
-
-                    self.send_into_vm(result)?;
+                    };
+                    STAT.with(|stat| {
+                        stat.borrow_mut().buckle_parse[0] += now.elapsed();
+                        stat.borrow_mut().buckle_parse[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().buckle_parse[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().buckle_parse[3] += fs::metrics::calc_label_latencies(old);
+                    });
+                    self.send_into_vm(result.encode_to_vec())?;
                 }
                 Some(SC::SubPrivilege(suffix)) => {
                     // omnipotent privilege: dc_false + suffix = dc_false
                     // empty privilege: dc_true + suffix = dc_true
+                    let now = Instant::now();
                     let mut my_priv = component_to_pbcomponent(&fs::utils::my_privilege());
                     if let Some(clauses) = my_priv.as_mut() {
                         if let Some(clause) = clauses.clauses.first_mut() {
@@ -443,10 +490,15 @@ impl Vm {
                     let result = syscalls::Buckle {
                         secrecy: my_priv,
                         integrity: None,
-                    }
-                    .encode_to_vec();
+                    };
+                    STAT.with(|stat| {
+                        stat.borrow_mut().sub_privilege[0] += now.elapsed();
+                        stat.borrow_mut().sub_privilege[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().sub_privilege[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().sub_privilege[3] += fs::metrics::calc_label_latencies(old);
+                    });
 
-                    self.send_into_vm(result)?;
+                    self.send_into_vm(result.encode_to_vec())?;
                 }
                 Some(SC::Invoke(req)) => {
                     let value = fs::utils::read_path(&self.fs, &req.gate).ok().and_then(|entry| {
@@ -533,20 +585,34 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::FsRead(req)) => {
+                    let now = Instant::now();
                     let value = fs::utils::read(&self.fs, &req.path).ok();
                     let result = syscalls::ReadKeyResponse {
                         value
-                    }.encode_to_vec();
-
-                    self.send_into_vm(result)?;
+                    };
+                    STAT.with(|stat| {
+                        stat.borrow_mut().read[0] += now.elapsed();
+                        stat.borrow_mut().read[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().read[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().read[3] += fs::metrics::calc_label_latencies(old);
+                    });
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::FsList(req)) => {
+                    let now = Instant::now();
                     let value = fs::utils::list(&self.fs, &req.path).ok()
                         .map(|m| syscalls::EntryNameArr { names: m.keys().cloned().collect() });
                     let result = syscalls::FsListResponse { value };
+                    STAT.with(|stat| {
+                        stat.borrow_mut().list[0] += now.elapsed();
+                        stat.borrow_mut().list[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().list[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().list[3] += fs::metrics::calc_label_latencies(old);
+                    });
                     self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::FsFacetedList(req)) => {
+                    let now = Instant::now();
                     let value = fs::utils::faceted_list(&self.fs, &req.path).ok()
                         .map(|facets| {
                             syscalls::FsFacetedListInner{
@@ -557,46 +623,72 @@ impl Vm {
                         });
                     let result = syscalls::FsFacetedListResponse {
                         value
-                    }
-                    .encode_to_vec();
-                    self.send_into_vm(result)?;
+                    };
+                    STAT.with(|stat| {
+                        stat.borrow_mut().faceted_list[0] += now.elapsed();
+                        stat.borrow_mut().faceted_list[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().faceted_list[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().faceted_list[3] += fs::metrics::calc_label_latencies(old);
+                    });
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::FsWrite(req)) => {
+                    let now = Instant::now();
                     let value = fs::utils::write(&mut self.fs, &req.path, req.data).ok();
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some()
-                    }
-                    .encode_to_vec();
-
-                    self.send_into_vm(result)?;
+                    };
+                    STAT.with(|stat| {
+                        stat.borrow_mut().write[0] += now.elapsed();
+                        stat.borrow_mut().write[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().write[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().write[3] += fs::metrics::calc_label_latencies(old);
+                    });
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::FsCreateFacetedDir(req)) => {
+                    let now = Instant::now();
                     let value = fs::utils::create_faceted(&self.fs, &req.base_dir, req.name).ok();
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
-                    }
-                    .encode_to_vec();
-                    self.send_into_vm(result)?;
+                    };
+                    STAT.with(|stat| {
+                        stat.borrow_mut().create[0] += now.elapsed();
+                        stat.borrow_mut().create[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().create[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().create[3] += fs::metrics::calc_label_latencies(old);
+                    });
+                    self.send_into_vm(result.encode_to_vec())?;
                 }
                 Some(SC::FsCreateDir(req)) => {
+                    let now = Instant::now();
                     let label = pblabel_to_buckle(&req.label.clone().expect("label"));
                     let value = fs::utils::create_directory(&self.fs, &req.base_dir, req.name, label).ok();
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some()
-                    }
-                    .encode_to_vec();
-
-                    self.send_into_vm(result)?;
+                    };
+                    STAT.with(|stat| {
+                        stat.borrow_mut().create[0] += now.elapsed();
+                        stat.borrow_mut().create[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().create[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().create[3] += fs::metrics::calc_label_latencies(old);
+                    });
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::FsCreateFile(req)) => {
+                    let now = Instant::now();
                     let label = pblabel_to_buckle(&req.label.clone().expect("label"));
                     let value = fs::utils::create_file(&self.fs, &req.base_dir, req.name, label).ok();
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some()
-                    }
-                    .encode_to_vec();
-
-                    self.send_into_vm(result)?;
+                    };
+                    STAT.with(|stat| {
+                        stat.borrow_mut().create[0] += now.elapsed();
+                        stat.borrow_mut().create[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().create[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().create[3] += fs::metrics::calc_label_latencies(old);
+                    });
+                    self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::GithubRest(req)) => {
                     let resp = match syscalls::HttpVerb::from_i32(req.verb) {
@@ -648,25 +740,56 @@ impl Vm {
                     self.send_into_vm(result)?;
                 },
                 Some(SC::GetCurrentLabel(_)) => {
+                    let now = Instant::now();
                     let result = buckle_to_pblabel(&fs::utils::get_current_label());
-
+                    STAT.with(|stat| {
+                        stat.borrow_mut().get_current_label[0] += now.elapsed();
+                        stat.borrow_mut().get_current_label[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().get_current_label[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().get_current_label[3] += fs::metrics::calc_label_latencies(old);
+                    });
                     self.send_into_vm(result.encode_to_vec())?;
                 }
                 Some(SC::TaintWithLabel(label)) => {
+                    let now = Instant::now();
                     let label = pblabel_to_buckle(&label);
                     let result = buckle_to_pblabel(&fs::utils::taint_with_label(label));
-
+                    STAT.with(|stat| {
+                        stat.borrow_mut().taint_with_label[0] += now.elapsed();
+                        stat.borrow_mut().taint_with_label[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().taint_with_label[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().taint_with_label[3] += fs::metrics::calc_label_latencies(old);
+                    });
+                    self.send_into_vm(result.encode_to_vec())?;
+                }
+                Some(SC::Endorse(p)) => {
+                    let now = Instant::now();
+                    let p = pbcomponent_to_component(&Some(p));
+                    let result = syscalls::DeclassifyResponse{
+                        label: fs::utils::endorse_checked(&p).map(|l| buckle_to_pblabel(&l)).ok()
+                    };
+                    STAT.with(|stat| {
+                        stat.borrow_mut().endorse[0] += now.elapsed();
+                        stat.borrow_mut().endorse[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().endorse[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().endorse[3] += fs::metrics::calc_label_latencies(old);
+                    });
                     self.send_into_vm(result.encode_to_vec())?;
                 }
                 Some(SC::Declassify(target)) => {
+                    let now = Instant::now();
                     let target = pbcomponent_to_component(&Some(target));
                     let result = syscalls::DeclassifyResponse{
                         label: fs::utils::declassify(target).map(|l| buckle_to_pblabel(&l)).ok(),
-                    }
-                    .encode_to_vec();
-
-                    self.send_into_vm(result)?;
-                },
+                    };
+                    STAT.with(|stat| {
+                        stat.borrow_mut().declassify[0] += now.elapsed();
+                        stat.borrow_mut().declassify[1] += fs::metrics::calc_store_latencies(old);
+                        stat.borrow_mut().declassify[2] += fs::metrics::calc_serde_latencies(old);
+                        stat.borrow_mut().declassify[3] += fs::metrics::calc_label_latencies(old);
+                    });
+                    self.send_into_vm(result.encode_to_vec())?;
+                }
                 Some(SC::CreateBlob(_cb)) => {
                     if let Ok(newblob) = self.blobstore.create().map_err(|_e| Error::AppfsNotExist) {
                         self.max_blob_id += 1;

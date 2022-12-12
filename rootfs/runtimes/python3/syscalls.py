@@ -102,6 +102,13 @@ class Syscall():
         response = self._recv(syscalls_pb2.DeclassifyResponse())
         return response.label
 
+    def endorse(self, privilege: syscalls_pb2.Component):
+        req = syscalls_pb2.Syscall(endorse = privilege)
+        self._send(req)
+        response = self._recv(syscalls_pb2.DeclassifyResponse())
+        return response.label
+
+
     def buckle_parse(self, s):
         """ Return a syscalls_pb2.Buckle if string s is valid. Otherwise, None.
 
@@ -176,7 +183,7 @@ class Syscall():
         return response.value
 
     def fs_faceted_list(self, path):
-        req = syscalls_pb2.Syscall(fsList = syscalls_pb2.FSFacetedList(path=convert_path(path)))
+        req = syscalls_pb2.Syscall(fsFacetedList = syscalls_pb2.FSFacetedList(path=convert_path(path)))
         self._send(req)
         response = self._recv(syscalls_pb2.FSFacetedListResponse())
         return response.value
