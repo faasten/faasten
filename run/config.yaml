@@ -1,0 +1,19 @@
+---
+allow_network: false
+firerunner_path: "firerunner"
+kernel_path: "/home/yue/dev/faas/faasten/run/vmlinux-4.20.0"
+runtimefs_dir: "/home/yue/dev/faas/faasten/run/rootfs"
+appfs_dir: "/home/yue/dev/faas/faasten/run/appfs"
+functions:
+  hello:
+    runtimefs: "python3.ext4"
+    appfs: "hello.ext2"
+    vcpus: 1
+    memory: 128
+    concurrency_limit: 600
+  sys-fs:
+    runtimefs: "python3.ext4"
+    appfs: "sys-fs.img"
+    vcpus: 1
+    memory: 128
+    concurrency_limit: 600
