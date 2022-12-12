@@ -18,10 +18,10 @@ def recvall(sock, n):
 def split_path(path):
     if not path:
         return [], '', False
-    name = path.pop()
+    name = path[-1]
     if not isinstance(name, str) or not name:
         return [], '', False
-    base = path
+    base = path[:-1]
     return base, name, True
 
 def convert_path(path):
@@ -163,9 +163,9 @@ class Syscall():
     ### end of github APIs ###
 
     def invoke(self, gate, payload):
-        req = syscalls_pb2.Syscall(invoke = syscalls_pb2.Invoke(gate = gate, payload = payload))
+        req = syscalls_pb2.Syscall(invoke = syscalls_pb2.Invoke(gate = convert_path(gate), payload = payload))
         self._send(req)
-        response= self._recv(syscalls_pb2.InvokeResponse())
+        response= self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
     ### named data object syscalls ###
@@ -260,7 +260,7 @@ class Syscall():
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
-     
+
     def fs_delete(self, path):
         base, name, ok = split_path(path)
         if not ok:
