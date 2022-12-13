@@ -3,6 +3,7 @@ extern crate clap;
 use clap::{App, Arg, SubCommand};
 use labeled::Label;
 use labeled::buckle::{self, Clause, Buckle};
+use serde::Deserialize;
 use serde_json::json;
 use snapfaas::request::LabeledInvoke;
 use snapfaas::{fs, request, syscalls, vm};
@@ -59,15 +60,15 @@ fn main() {
                    .required(true)
                    .help("Address on which SnapFaaS is listening for connections"),
            )
-           .arg(
-               Arg::with_name("path")
-                   .value_name("GATE PATH")
-                   .long("gate")
-                   .takes_value(true)
-                   .required(true)
-                   .value_delimiter(":")
-                   .help("Colon separated path of the gate to be invoked. Sfclient tries to parse each component first as a Buckle label. If failure, sfclient uses it as it is."),
-           )
+           //.arg(
+           //    Arg::with_name("path")
+           //        .value_name("GATE PATH")
+           //        .long("gate")
+           //        .takes_value(true)
+           //        .required(true)
+           //        .value_delimiter(":")
+           //        .help("Colon separated path of the gate to be invoked. Sfclient tries to parse each component first as a Buckle label. If failure, sfclient uses it as it is."),
+           //)
        )
        .subcommand(
            SubCommand::with_name("newgate")
@@ -220,27 +221,34 @@ fn main() {
     let mut stat = fs::Metrics::default();
     match cmd_arguments.subcommand() {
         ("invoke", Some(sub_m)) => {
+            #[derive(Deserialize)]
+            struct Invoke {
+                sleep_ms: u64,
+                payload: String,
+                path: String,
+            }
             print_at_end = false;
             let addr = sub_m.value_of("server address").unwrap();
-            let path: Vec<&str> = sub_m.values_of("path").unwrap().collect();
-            let path = parse_path_vec(path);
-            let gate = match fs::utils::read_path(&fs, &path) {
-                Ok(fs::DirEntry::Gate(g)) => fs.invoke_gate(&g).ok(),
-                _ => None,
-            };
-            if gate.is_none() {
-                eprintln!("Gate does not exist.");
-                return;
-            }
-            drop(fs);
+            let mut connection = TcpStream::connect(addr).unwrap();
             for line in stdin().lines().map(|l| l.unwrap()) {
+                let invoke: Invoke = serde_json::from_str(&line).unwrap();
+                let path: Vec<&str> = invoke.path.split(":").collect();
+                let path = parse_path_vec(path);
+                let gate = match fs::utils::read_path(&fs, &path) {
+                    Ok(fs::DirEntry::Gate(g)) => fs.invoke_gate(&g).ok(),
+                    _ => None,
+                };
+                if gate.is_none() {
+                    eprintln!("Gate does not exist.");
+                    return;
+                }
                 let request = LabeledInvoke {
                     gate: gate.clone().unwrap(),
                     label: fs::utils::get_current_label(),
-                    payload: line,
+                    payload: invoke.payload,
                 };
 
-                let mut connection = TcpStream::connect(addr).unwrap();
+                std::thread::sleep(time::Duration::from_millis(invoke.sleep_ms));
                 request::write_u8(serde_json::to_vec(&request).unwrap().as_ref(), &mut connection).unwrap();
                 let buf = request::read_u8(&mut connection).unwrap();
                 let response: request::Response = serde_json::from_slice(&buf).unwrap();
@@ -250,7 +258,7 @@ fn main() {
                         let file = std::fs::File::create(fname).unwrap();
                         serde_json::to_writer(file, &val).unwrap();
                     } else {
-                        serde_json::to_writer_pretty(io::stdout(), &val).unwrap();
+                        serde_json::to_writer_pretty(io::stdout(), &s).unwrap();
                         println!("");
                     }
                 } else {
