@@ -117,7 +117,7 @@ pub struct Vm {
     allow_network: bool,
     function_name: String,
     function_config: FunctionConfig,
-    //current_label: DCLabel,
+    pub label: Buckle,
     //privilege: Component,
     handle: Option<VmHandle>,
     blobstore: blobstore::Blobstore,
@@ -146,7 +146,7 @@ impl Vm {
             // We should also probably have a clearance to mitigate side channel attacks, but
             // meh for now...
             /// Starting label with public secrecy and integrity has app-name
-            //current_label: DCLabel::new(true, [[function_name.clone()]]),
+            label: Buckle::new(true, true),
             //privilege: Component::formula([[function_name]]),
             handle: None,
             blobstore: Default::default(),

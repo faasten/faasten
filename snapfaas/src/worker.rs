@@ -9,9 +9,11 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::os::unix::net::UnixListener;
 
+use labeled::Label;
 use log::{error, debug};
 use time::precise_time_ns;
 
+use crate::fs::utils::get_current_label;
 use crate::message::Message;
 use crate::request::{RequestStatus, Response, LabeledInvoke};
 use crate::vm;
@@ -65,6 +67,17 @@ fn handle_request(req: LabeledInvoke, rsp_sender: Sender<Response>, func_req_sen
                         continue;
                     }
                 }
+                if !vm.label.can_flow_to(&get_current_label()) {
+                    debug!("Cached VM too tainted. Requesting new one.");
+                    vm_req_sender.send(Message::ReleaseVm(vm)).expect("Failed to send ReleaseVm request");
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    vm_req_sender.send(Message::NewVm(function_name.clone(), tx)).expect("Failed to send NewVm request");
+                    if let Ok(newvm) = rx.recv().expect("Failed to receive NewVm response") {
+                        vm = newvm;
+                    } else {
+                        continue;
+                    }
+                }
 
                 debug!("VM is launched");
                 tsps.launched = precise_time_ns();
@@ -74,6 +87,7 @@ fn handle_request(req: LabeledInvoke, rsp_sender: Sender<Response>, func_req_sen
                         tsps.completed = precise_time_ns();
                         // TODO: output are currently ignored
                         debug!("{:?}", rsp);
+                        vm.label = fs::utils::get_current_label();
                         vm_req_sender.send(Message::ReleaseVm(vm)).expect("Failed to send ReleaseVm request");
                         break RequestStatus::SentToVM(rsp);
                     }

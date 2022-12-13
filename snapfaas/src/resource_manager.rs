@@ -90,6 +90,9 @@ impl ResourceManager {
                             Message::GetVm(function, vm_sender) => {
                                 vm_sender.send(self.acquire_vm(&function)).expect("Failed to send VM");
                             },
+                            Message::NewVm(function, vm_sender) => {
+                                vm_sender.send(self.allocate(&function)).expect("Failed to send VM");
+                            }
                             Message::ReleaseVm(vm) => {
                                 self.release(vm);
                             },
