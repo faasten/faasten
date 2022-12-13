@@ -230,9 +230,11 @@ fn main() {
             print_at_end = false;
             let addr = sub_m.value_of("server address").unwrap();
             let mut connection = TcpStream::connect(addr).unwrap();
+            let mut latencies = Vec::new();
             for line in stdin().lines().map(|l| l.unwrap()) {
                 let invoke: Invoke = serde_json::from_str(&line).unwrap();
                 let path: Vec<&str> = invoke.path.split(":").collect();
+                let name = path.last().unwrap().to_string();
                 let path = parse_path_vec(path);
                 let gate = match fs::utils::read_path(&fs, &path) {
                     Ok(fs::DirEntry::Gate(g)) => fs.invoke_gate(&g).ok(),
@@ -249,21 +251,26 @@ fn main() {
                 };
 
                 std::thread::sleep(time::Duration::from_millis(invoke.sleep_ms));
+                let now = time::Instant::now();
                 request::write_u8(serde_json::to_vec(&request).unwrap().as_ref(), &mut connection).unwrap();
                 let buf = request::read_u8(&mut connection).unwrap();
                 let response: request::Response = serde_json::from_slice(&buf).unwrap();
+                latencies.push((name, now.elapsed()));
                 if let request::RequestStatus::SentToVM(s) = response.status {
-                    let val: serde_json::Value = serde_json::from_str(&s).unwrap();
-                    if let Some(fname) = cmd_arguments.value_of("stat") {
-                        let file = std::fs::File::create(fname).unwrap();
-                        serde_json::to_writer(file, &val).unwrap();
-                    } else {
-                        serde_json::to_writer_pretty(io::stdout(), &s).unwrap();
-                        println!("");
-                    }
+                    //let val: serde_json::Value = serde_json::from_str(&s).unwrap();
+                    //if let Some(fname) = cmd_arguments.value_of("stat") {
+                    //    let file = std::fs::File::create(fname).unwrap();
+                    //    serde_json::to_writer(file, &val).unwrap();
+                    //} else {
+                    //    serde_json::to_writer_pretty(io::stdout(), &val).unwrap();
+                    //    println!("");
+                    //}
                 } else {
                     eprintln!("Failed to invoke. {:?}", response);
                 }
+                serde_json::to_writer(std::io::stdout(), &json!({
+                    "latencies": latencies,
+                })).unwrap();
             }
         },
         ("newgate", Some(sub_m)) => {
