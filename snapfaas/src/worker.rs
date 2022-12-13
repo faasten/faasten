@@ -74,6 +74,10 @@ fn handle_request(req: LabeledInvoke, rsp_sender: Sender<Response>, func_req_sen
                     vm_req_sender.send(Message::NewVm(function_name.clone(), tx)).expect("Failed to send NewVm request");
                     if let Ok(newvm) = rx.recv().expect("Failed to receive NewVm response") {
                         vm = newvm;
+                        if let Err(_) = vm.launch(Some(func_req_sender.clone()), vm_listener.try_clone().expect("clone unix listener"), cid, false, None) {
+                            vm_req_sender.send(Message::DeleteVm(vm)).unwrap();
+                            continue;
+                        }
                     } else {
                         continue;
                     }
