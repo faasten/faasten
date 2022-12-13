@@ -14,4 +14,5 @@ pub enum Message {
     GetVm(String, Sender<Result<Vm, resource_manager::Error>>),
     ReleaseVm(Vm),
     DeleteVm(Vm),
+    NewVm(String, Sender<Result<Vm, resource_manager::Error>>),
 }
