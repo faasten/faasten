@@ -12,6 +12,10 @@
 - [ ] garbage collection
   - [ ] measuring garbage collection performance overhead
   - [ ] ...
+- [ ] distributed scheduler
+- [ ] distributed storage
+- [ ] VM caching
+  - [ ] If the scheduler is unaware of labels, then for a worker thread what to do with a cached tainted VM.
 # Faasten application
 - [ ] grader
 - [ ] photo management
