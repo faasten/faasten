@@ -1,0 +1,18 @@
+# Faasten
+- [ ] add end user API for Faasten file system (complementary)
+- [ ] automate new function registration (complementary)
+  - [ ] functions can be registered dynamically, instead of from a YAML configuration file
+  - [ ] automate function packaging, i.e., converting the source into Faasten function image
+  - [ ] store function images as blobs in Faasten file system
+- [ ] low-level system calls (core)
+  - [ ] opaque handles (branch `opaque-handles` sketched something)
+  - [ ] system calls
+- [ ] generic gates (core)
+  - [ ] customized access points for external REST APIs
+- [ ] garbage collection
+  - [ ] measuring garbage collection performance overhead
+  - [ ] ...
+# Faasten application
+- [ ] grader
+- [ ] photo management
+- [ ] Deathstar
