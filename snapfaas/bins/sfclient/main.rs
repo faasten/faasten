@@ -268,10 +268,10 @@ fn main() {
                 } else {
                     eprintln!("Failed to invoke. {:?}", response);
                 }
-                serde_json::to_writer(std::io::stdout(), &json!({
-                    "latencies": latencies,
-                })).unwrap();
             }
+            serde_json::to_writer(std::io::stdout(), &json!({
+                "latencies": latencies,
+            })).unwrap();
         },
         ("newgate", Some(sub_m)) => {
             print_at_end = false;
