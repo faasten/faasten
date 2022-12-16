@@ -9,3 +9,4 @@ secret.pem
 *secret*
 *tmux*
 *\.ext4
+functions/*/__pycache__
