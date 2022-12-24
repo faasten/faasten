@@ -32,6 +32,12 @@ pub struct LabeledInvoke {
     pub label: Buckle,
 }
 
+impl LabeledInvoke {
+    pub fn to_vec(&self) -> Vec<u8> {
+        serde_json::to_vec(&self).unwrap()
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Request {
     pub gate: String,

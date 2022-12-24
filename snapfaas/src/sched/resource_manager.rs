@@ -7,10 +7,10 @@
 // use std::sync::atomic::{AtomicUsize, Ordering};
 use std::net::{TcpStream, IpAddr};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 use super::message;
 use super::message::{response, Response};
+use super::rpc::ResourceInfo;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Node(IpAddr);
@@ -160,7 +160,7 @@ impl ResourceManager {
         // (self.total_mem, self.total_num_vms) = (0, 0);
     }
 
-    pub fn update(&mut self, addr: IpAddr, info: LocalResourceManagerInfo) {
+    pub fn update(&mut self, addr: IpAddr, info: ResourceInfo) {
         log::debug!("update {:?}", info);
         let node = Node(addr);
 
@@ -229,11 +229,4 @@ impl ResourceManager {
         }
         !has_node
     }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LocalResourceManagerInfo {
-    pub stats: HashMap<String, usize>,
-    pub total_mem: usize,
-    pub free_mem: usize,
 }

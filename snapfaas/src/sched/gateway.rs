@@ -4,10 +4,11 @@ use std::sync::mpsc::{Receiver, channel};
 use log::{error, debug};
 
 use crate::request;
-use crate::metrics::RequestTimestamps;
+// use crate::metrics::RequestTimestamps;
 use crate::message::RequestInfo;
-use crate::sched::{message, resource_manager};
-use crate::sched::resource_manager::{ResourceManager, LocalResourceManagerInfo};
+use crate::sched::message;
+use crate::sched::resource_manager::ResourceManager;
+use crate::sched::rpc::ResourceInfo;
 
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
@@ -175,7 +176,7 @@ impl Gateway for SchedGateway {
                                 debug!("RPC INVOKE received {:?}", bytes);
                                 let _ = rx.lock().unwrap().recv();
                                 let manager_dup = Arc::clone(&manager);
-                                match request::parse_u8_request(bytes) {
+                                match request::parse_u8_invoke(bytes) {
                                     Ok(req) => {
                                         use crate::sched;
                                         thread::spawn(move || {
@@ -201,8 +202,7 @@ impl Gateway for SchedGateway {
                             Some(Kind::UpdateResource(bytes)) => {
                                 debug!("RPC UPDATE received");
                                 let manager = &mut manager.lock().unwrap();
-                                let info = serde_json::from_slice::
-                                            <LocalResourceManagerInfo>(&bytes);
+                                let info = serde_json::from_slice::<ResourceInfo>(&bytes);
                                 if let Ok(info) = info {
                                     let addr = stream.peer_addr().unwrap().ip();
                                     manager.update(addr, info);

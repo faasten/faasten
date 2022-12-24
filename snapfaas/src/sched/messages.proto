@@ -2,8 +2,6 @@ syntax = "proto3";
 
 package snapfaas.sched.messages;
 
-// message ShutdownAll {}
-
 message Request {
     oneof kind {
         // Worker

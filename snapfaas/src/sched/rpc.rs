@@ -1,12 +1,14 @@
 use std::net::{TcpStream, SocketAddr};
 use std::error::Error;
 use std::thread;
+use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use serde::{Serialize, Deserialize};
 
 use super::message;
 use super::message::{request, Request, Response};
-use super::resource_manager::LocalResourceManagerInfo;
+// use super::resource_manager::LocalResourceManagerInfo;
 
 
 /// RPC calls
@@ -84,7 +86,7 @@ impl Scheduler {
     /// resource status, such as number of cached VMs per function
     pub fn update_resource(
         &self,
-        info: LocalResourceManagerInfo
+        info: ResourceInfo
     ) -> Result<(), Box<dyn Error>> {
         let mut stream = self.connect()?;
         let buf = serde_json::to_vec(&info).unwrap();
@@ -107,4 +109,11 @@ impl Scheduler {
         let _ = message::read_response(&mut stream)?;
         Ok(())
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResourceInfo {
+    pub stats: HashMap<String, usize>,
+    pub total_mem: usize,
+    pub free_mem: usize,
 }

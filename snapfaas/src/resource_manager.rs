@@ -5,12 +5,14 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
+use std::net::SocketAddr;
 
 use log::{error, debug};
 
 use crate::configs::{ResourceManagerConfig, FunctionConfig};
 use crate::vm::Vm;
 use crate::message::Message;
+use crate::sched::rpc::{Scheduler, ResourceInfo};
 
 #[derive(Debug)]
 pub enum Error {
@@ -35,12 +37,13 @@ pub struct ResourceManager {
     pub total_num_vms: usize, // total number of vms ever created
     total_mem: usize,
     pub free_mem: usize,
+    sched_sa: SocketAddr,
 }
 
 impl ResourceManager {
     /// create and return a ResourceManager value
     /// The ResourceManager value encapsulates the idle lists and function configs
-    pub fn new(config: ResourceManagerConfig) -> (Self, Sender<Message>) {
+    pub fn new(config: ResourceManagerConfig, sched_sa: SocketAddr) -> (Self, Sender<Message>) {
         let mut idle = HashMap::<String, VmList>::new();
         for (name, _) in &config.functions {
             idle.insert(name.clone(), VmList::new());
@@ -48,7 +51,7 @@ impl ResourceManager {
         // set default total memory to free memory on the machine
         let total_mem = crate::get_machine_memory();
         let (sender, receiver) = mpsc::channel();
-        
+
         (ResourceManager {
             config,
             idle,
@@ -56,12 +59,24 @@ impl ResourceManager {
             total_num_vms: 0,
             total_mem,
             free_mem: total_mem,
+            sched_sa,
         },
         sender)
     }
 
     pub fn total_mem(&self) -> usize {
         self.total_mem
+    }
+
+    pub fn free_mem(&self) -> usize {
+        self.free_mem
+    }
+
+    pub fn get_vm_stats(&self) -> HashMap<String, usize> {
+        self.idle
+            .iter()
+            .map(|(f, v)| (f.clone(), v.len()))
+            .collect()
     }
 
     /// This function should only be called once before resource manager kicks off. Not supporting
@@ -79,10 +94,11 @@ impl ResourceManager {
         self.total_mem = mem;
         self.free_mem = mem;
     }
-    
+
     /// Kicks off the single thread resource manager
     pub fn run(mut self) -> JoinHandle<()> {
         std::thread::spawn(move || {
+            let sched_rpc = Scheduler::new(self.sched_sa.clone());
             loop {
                 match self.receiver.recv() {
                     Ok(msg) => {
@@ -97,10 +113,18 @@ impl ResourceManager {
                                 self.delete(vm);
                             }
                             Message::Shutdown => {
+                                debug!("local resource manager shutdown received");
+                                let _ = sched_rpc.drop_resource();
                                 return;
                             }
                             _ => (),
                         }
+                        let info = ResourceInfo {
+                            stats: self.get_vm_stats(),
+                            total_mem: self.total_mem(),
+                            free_mem: self.free_mem(),
+                        };
+                        let _ = sched_rpc.update_resource(info);
                     }
                     Err(e) => {
                         panic!("ResourceManager cannot read requests: {:?}", e);
@@ -233,6 +257,10 @@ impl VmList {
             num_vms: AtomicUsize::new(0),
             list: Mutex::new(vec![]),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.num_vms.load(Ordering::Relaxed)
     }
 
     /// Pop a vm from self.list if the list is not empty.

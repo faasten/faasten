@@ -5,8 +5,6 @@ use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Stdio;
 use std::string::String;
-use std::sync::mpsc::Sender;
-use std::sync::mpsc;
 use std::io::{Seek, Write};
 use std::collections::{HashMap, HashSet};
 
@@ -14,11 +12,11 @@ use log::{debug, error};
 use tokio::process::{Child, Command};
 
 use crate::configs::FunctionConfig;
-use crate::message::Message;
 use crate::request::LabeledInvoke;
 use crate::{blobstore, syscalls};
 use crate::labeled_fs::DBENV;
 use crate::fs;
+use crate::sched::rpc::Scheduler;
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
@@ -107,7 +105,8 @@ struct VmHandle {
     // killed, before the VmHandle is dropped.
     vm_process: Child,
     // None when VM is created from single-VM launcher
-    invoke_handle: Option<Sender<Message>>,
+    // invoke_handle: Option<Sender<Message>>,
+    invoke_handle: Option<Scheduler>
 }
 
 #[derive(Debug)]
@@ -166,7 +165,8 @@ impl Vm {
     /// When this function returns, the VM has finished booting and is ready to accept requests.
     pub fn launch(
         &mut self,
-        invoke_handle: Option<Sender<Message>>,
+        // invoke_handle: Option<Sender<Message>>,
+        invoke_handle: Option<Scheduler>,
         vm_listener: UnixListener,
         cid: u32,
         force_exit: bool,
@@ -373,14 +373,16 @@ impl Vm {
     fn sched_invoke(&self, invoke: LabeledInvoke) -> bool {
         use time::precise_time_ns;
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
-            let (tx, _) = mpsc::channel();
+            // let (tx, _) = mpsc::channel();
             use crate::metrics::RequestTimestamps;
-            let timestamps = RequestTimestamps {
+            let _timestamps = RequestTimestamps {
                 at_vmm: precise_time_ns(),
                 //request: req.clone(),
                 ..Default::default()
             };
-            invoke_handle.send(Message::Request((invoke, tx, timestamps))).is_ok()
+            invoke_handle.invoke(invoke.to_vec()).is_ok()
+            // Scheduler::new(handle).invoke(invoke);
+            // invoke_handle.send(Message::Request((invoke, tx, timestamps))).is_ok()
         } else {
             debug!("No invoke handle, ignoring invoke syscall.");
             false
