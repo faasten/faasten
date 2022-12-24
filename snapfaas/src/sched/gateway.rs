@@ -14,8 +14,6 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-// FIXME tmp
-// type RequestInfo = (request::Request, RequestTimestamps);
 pub type Manager = Arc<Mutex<ResourceManager>>;
 
 /// A gateway listens on a endpoint and accepts requests

@@ -5,15 +5,11 @@ pub mod rpc;
 
 use std::error::Error;
 use crate::request::LabeledInvoke;
-// use crate::resource_manager::ResourceManager
-    // as LocalResourceManger;
-// use self::resource_manager::ResourceManager;
 use message::{response, Response};
-// use self::resource_manager::LocalResourceManagerInfo;
 
 /// This method schedules a http request to a remote worker
 pub fn schedule(
-    invoke: LabeledInvoke, resman: self::gateway::Manager,
+    invoke: LabeledInvoke, resman: gateway::Manager,
 ) -> Result<(), Box<dyn Error>> {
     let mut resman = resman.lock().unwrap();
     let gate = &invoke.gate.image;
