@@ -9,15 +9,12 @@ use super::Error;
 use super::message;
 use super::message::{Request, Response};
 use super::message::request::Kind as ReqKind;
-// use super::message::response::Kind as ResKind;
 
 /// RPC calls
 #[derive(Debug, Clone)]
 pub struct Scheduler {
     sa: SocketAddr,
 }
-
-// TODO error type
 
 impl Scheduler {
     pub fn new(sa: SocketAddr) -> Self {
@@ -69,7 +66,6 @@ impl Scheduler {
         let _ = message::read_response(&mut stream)?;
         Ok(())
     }
-
 
     /// This method is to shutdown all workers (for debug)
     pub fn shutdown_all(&self) -> Result<(), Error> {

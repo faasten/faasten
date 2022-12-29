@@ -165,7 +165,6 @@ impl Vm {
     /// When this function returns, the VM has finished booting and is ready to accept requests.
     pub fn launch(
         &mut self,
-        // invoke_handle: Option<Sender<Message>>,
         invoke_handle: Option<Scheduler>,
         vm_listener: UnixListener,
         cid: u32,
@@ -373,16 +372,12 @@ impl Vm {
     fn sched_invoke(&self, invoke: LabeledInvoke) -> bool {
         use time::precise_time_ns;
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
-            // let (tx, _) = mpsc::channel();
             use crate::metrics::RequestTimestamps;
             let _timestamps = RequestTimestamps {
                 at_vmm: precise_time_ns(),
-                //request: req.clone(),
                 ..Default::default()
             };
             invoke_handle.invoke(invoke.to_vec()).is_ok()
-            // Scheduler::new(handle).invoke(invoke);
-            // invoke_handle.send(Message::Request((invoke, tx, timestamps))).is_ok()
         } else {
             debug!("No invoke handle, ignoring invoke syscall.");
             false

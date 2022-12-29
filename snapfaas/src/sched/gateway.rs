@@ -70,40 +70,6 @@ impl Gateway for HTTPGateway {
             }
         });
 
-
-        // thread::spawn(move || {
-            // for stream in listener.incoming() {
-                // if let Ok(mut stream) = stream {
-                    // debug!("connection from {:?}", stream.peer_addr());
-                    // let requests = requests_tx.clone();
-
-                    // thread::spawn(move || {
-                        // while let Ok(buf) = request::read_u8(&mut stream) {
-                            // // there's a request sitting in the stream
-                            // // If parse succeeds, return the Request value and a
-                            // // clone of the TcpStream value.
-                            // match request::parse_u8_request(buf) {
-                                // Err(e) => {
-                                    // error!("request parsing failed: {:?}", e);
-                                    // return;
-                                // }
-                                // Ok(req) => {
-                                    // use time::precise_time_ns;
-                                    // let timestamps = RequestTimestamps {
-                                        // at_gateway: precise_time_ns(),
-                                        // request: req.clone(),
-                                        // ..Default::default()
-                                    // };
-                                    // let _ = requests
-                                        // .send((req, timestamps));
-                                // }
-                            // }
-                        // }
-                    // });
-                // }
-            // }
-        // });
-
         HTTPGateway {
             requests: requests_rx,
         }

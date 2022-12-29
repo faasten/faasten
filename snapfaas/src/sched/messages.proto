@@ -30,10 +30,6 @@ message ProcessJob {
     bytes  invoke = 2;
 }
 
-// message Response {
-    // bytes payload = 1;
-// }
-
 message Shutdown {}
 message Fail {}
 // End of response messages

@@ -1,10 +1,6 @@
 //! This resource manager maintains a global resource
 //! state across worker nodes.
 
-// use std::error::Error;
-// use std::sync::{Arc, Mutex};
-// use std::thread;
-// use std::sync::atomic::{AtomicUsize, Ordering};
 use std::net::{TcpStream, IpAddr};
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
@@ -47,7 +43,7 @@ impl NodeInfo {
 #[derive(Debug)]
 pub struct Worker {
     // pub id: WorkerId,
-    pub stream: TcpStream, // connection on demand
+    pub stream: TcpStream, // on demand
 }
 
 /// Global resource manager

@@ -29,7 +29,6 @@ pub struct Worker {
     pub thread: JoinHandle<()>,
 }
 
-// fn handle_request(req: LabeledInvoke, rsp_sender: Sender<Response>, func_req_sender: Sender<Message>, vm_req_sender: Sender<Message>, vm_listener: UnixListener, mut tsps: RequestTimestamps, stat: &mut metrics::WorkerMetrics, cid: u32) {
 fn handle_request(
     req: LabeledInvoke,
     sched_rpc: &Scheduler,
@@ -38,7 +37,6 @@ fn handle_request(
     mut tsps: RequestTimestamps,
     stat: &mut metrics::WorkerMetrics,
     cid: u32,
-    // mock_github: Option<&str>
 ) -> Response {
     debug!("invoke: {:?}", &req);
 
@@ -69,7 +67,6 @@ fn handle_request(
                         cid, false,
                         None,
                     ) {
-                    // if let Err(e) = vm.launch(Some(func_req_sender.clone()), vm_listener.try_clone().expect("clone unix listener"), cid, false, None) {
                         handle_vm_error(e);
                         // TODO send response back to gateway
                         // let _ = rsp_sender.send(Response {
@@ -93,7 +90,6 @@ fn handle_request(
                         tsps.completed = precise_time_ns();
                         // TODO: output are currently ignored
                         debug!("{:?}", rsp);
-                        // response = Some(rsp.as_bytes().to_vec());
                         vm_req_sender.send(Message::ReleaseVm(vm)).expect("Failed to send ReleaseVm request");
                         break RequestStatus::SentToVM(rsp);
                     }
@@ -129,9 +125,6 @@ fn handle_request(
         }
     };
 
-    // let _ = rsp_sender.send(Response {
-        // status: result
-    // });
     // insert the request's timestamps
     stat.push(tsps);
     Response { status: result }
@@ -139,10 +132,8 @@ fn handle_request(
 
 impl Worker {
     pub fn new(
-        // receiver: Arc<Mutex<Receiver<Message>>>,
         sched_sa: SocketAddr,
         vm_req_sender: Sender<Message>,
-        // func_req_sender: Sender<Message>,
         cid: u32,
     ) -> Self {
         let handle = thread::spawn(move || {
