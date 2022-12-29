@@ -133,14 +133,14 @@ fn main() {
     // TCP gateway
     if let Some(l) = matches.value_of("http listen address") {
         let gateway = snapfaas::sched::gateway::HTTPGateway::listen(l, None);
-        for (request, _, _timestamps) in gateway {
+        for (request, tx, _timestamps) in gateway {
             // Return when a VM acquisition succeeds or fails
             // but before a VM launches (if it is newly allocated)
             // and execute the request.
             if let Some(_) = schedgate.next() {
                 let sched_resman_dup = Arc::clone(&sched_resman);
                 thread::spawn(move || {
-                    let _ = snapfaas::sched::schedule(request, sched_resman_dup);
+                    let _ = snapfaas::sched::schedule_sync(request, sched_resman_dup, tx);
                 });
             }
         }

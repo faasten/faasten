@@ -12,7 +12,7 @@ use log::{error, debug};
 use time::precise_time_ns;
 
 use crate::message::Message;
-use crate::request::{RequestStatus, LabeledInvoke};
+use crate::request::{RequestStatus, LabeledInvoke, Response};
 use crate::vm;
 use crate::metrics::{self, RequestTimestamps};
 use crate::resource_manager;
@@ -39,7 +39,7 @@ fn handle_request(
     stat: &mut metrics::WorkerMetrics,
     cid: u32,
     // mock_github: Option<&str>
-) -> Option<Vec<u8>> {
+) -> Response {
     debug!("invoke: {:?}", &req);
 
     tsps.arrived = precise_time_ns();
@@ -49,8 +49,7 @@ fn handle_request(
     fs::utils::set_my_privilge(req.gate.privilege);
     let function_name = req.gate.image;
     let mut i = 0;
-    let mut response = None;
-    let _result = loop {
+    let result = loop {
         let mut tsps = tsps.clone();
         if i == 5 {
             break RequestStatus::ProcessRequestFailed;
@@ -94,7 +93,7 @@ fn handle_request(
                         tsps.completed = precise_time_ns();
                         // TODO: output are currently ignored
                         debug!("{:?}", rsp);
-                        response = Some(rsp.as_bytes().to_vec());
+                        // response = Some(rsp.as_bytes().to_vec());
                         vm_req_sender.send(Message::ReleaseVm(vm)).expect("Failed to send ReleaseVm request");
                         break RequestStatus::SentToVM(rsp);
                     }
@@ -135,7 +134,7 @@ fn handle_request(
     // });
     // insert the request's timestamps
     stat.push(tsps);
-    response
+    Response { status: result }
 }
 
 impl Worker {
@@ -167,32 +166,17 @@ impl Worker {
                     Err(e) => panic!("Failed to clone unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
                 };
 
-                // let msg: Message = receiver.lock().unwrap().recv().unwrap();
-                // match msg {
-                    // // To shutdown, dump collected statistics and then terminate
-                    // Message::Shutdown => {
-                        // debug!("[Worker {:?}] shutdown received", id);
-                        // stat.flush();
-                        // return;
-                    // }
-                    // Message::Request((req, rsp_sender, tsps)) => {
-                        // handle_request(req, rsp_sender, func_req_sender.clone(), vm_req_sender.clone(), vm_listener_dup, tsps, &mut stat, cid)
-                    // }
-                    // _ => {
-                        // error!("[Worker {:?}] Invalid message: {:?}", id, msg);
-                    // }
-                // }
-
-                let message = sched_rpc.recv(); // wait for request
-                let req = {
+                let message = sched_rpc.get(); // wait for request
+                let (req_id, req) = {
                     use sched::message::response::Kind;
                     use crate::request;
                     match message {
                         Ok(res) => {
                             match res.kind {
-                                Some(Kind::Process(buf)) => {
-                                    request::parse_u8_invoke(buf)
-                                        .expect("Failed to parse request")
+                                Some(Kind::ProcessJob(r)) => {
+                                    let req = request::parse_u8_invoke(r.invoke)
+                                                        .expect("Failed to parse request");
+                                    (r.id, req)
                                 }
                                 Some(Kind::Shutdown(_)) => {
                                     debug!("[Worker {:?}] shutdown received", id);
@@ -213,11 +197,11 @@ impl Worker {
                 };
 
                 // FIXME use the tsps at gateway
-                let mut tsps = RequestTimestamps {..Default::default()};
+                let dummy_tsps = RequestTimestamps {..Default::default()};
                 let result = handle_request(req, &sched_rpc,
-                    vm_req_sender.clone(), vm_listener_dup, tsps, &mut stat, cid);
+                    vm_req_sender.clone(), vm_listener_dup, dummy_tsps, &mut stat, cid);
 
-                let _ = sched_rpc.send(result.unwrap_or(vec![])); // return the result
+                let _ = sched_rpc.finish(req_id, result.to_vec()); // return the result
             }
         });
 

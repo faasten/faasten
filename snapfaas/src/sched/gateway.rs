@@ -1,6 +1,7 @@
-// use std::net::TcpListener;
-
+use std::net::TcpListener;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Receiver, channel};
+use std::thread;
 use log::{error, debug};
 
 use crate::request;
@@ -9,10 +10,6 @@ use crate::message::RequestInfo;
 use crate::sched::message;
 use crate::sched::resource_manager::ResourceManager;
 use crate::sched::rpc::ResourceInfo;
-
-use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
-use std::thread;
 
 pub type Manager = Arc<Mutex<ResourceManager>>;
 
@@ -156,34 +153,42 @@ impl Gateway for SchedGateway {
                         let req = message::read_request(&mut stream);
                         let kind = req.ok().and_then(|r| r.kind);
                         match kind {
-                            Some(Kind::Begin(id)) => {
-                                debug!("RPC BEGIN received {:?}", id);
+                            Some(Kind::GetJob(r)) => {
+                                debug!("RPC BEGIN received {:?}", r.id);
                                 let manager = &mut manager.lock().unwrap();
                                 manager.add_idle(stream);
                                 let _ = tx.send(()); // notify
                             }
-                            Some(Kind::Finish(bytes)) => {
-                                let result = String::from_utf8(bytes);
+                            Some(Kind::FinishJob(r)) => {
+                                let result = String::from_utf8(r.result.clone());
                                 debug!("RPC FINISH received {:?}", result);
-                                let res = Response {
-                                    kind: None
-                                };
+                                let res = Response { kind: None };
                                 let _ = message::write(&mut stream, res);
+                                let result = serde_json::from_slice(&r.result).ok();
+                                let uuid = uuid::Uuid::parse_str(&r.id).ok();
+                                if let (Some(result), Some(uuid)) = (result, uuid) {
+                                    if !uuid.is_nil() {
+                                        let mut manager = manager.lock().unwrap();
+                                        if let Some(tx) = manager.wait_list.remove(&uuid) {
+                                            let _ = tx.send(result);
+                                        }
+                                    }
+                                }
                             }
-                            Some(Kind::Invoke(bytes)) => {
-                                debug!("RPC INVOKE received {:?}", bytes);
+                            Some(Kind::Invoke(r)) => {
+                                debug!("RPC INVOKE received {:?}", r.invoke);
                                 let _ = rx.lock().unwrap().recv();
                                 let manager_dup = Arc::clone(&manager);
-                                match request::parse_u8_invoke(bytes) {
+                                match request::parse_u8_invoke(r.invoke) {
                                     Ok(req) => {
-                                        use crate::sched;
+                                        use super::schedule_async;
                                         thread::spawn(move || {
-                                            let _ = sched::schedule(req, manager_dup);
+                                            let _ = schedule_async(req, manager_dup);
                                         });
                                         let res = Response { kind: None };
                                         let _ = message::write(&mut stream, res);
                                     }
-                                    Err(_e) => {
+                                    Err(_) => {
                                         // TODO return error message!
                                         let res = Response { kind: None };
                                         let _ = message::write(&mut stream, res);
@@ -192,15 +197,15 @@ impl Gateway for SchedGateway {
                             }
                             Some(Kind::ShutdownAll(_)) => {
                                 debug!("RPC SHUTDOWNALL received");
-                                let manager = &mut manager.lock().unwrap();
+                                let mut manager = manager.lock().unwrap();
                                 manager.reset();
                                 let res = Response { kind: None };
                                 let _ = message::write(&mut stream, res);
                             }
-                            Some(Kind::UpdateResource(bytes)) => {
+                            Some(Kind::UpdateResource(r)) => {
                                 debug!("RPC UPDATE received");
                                 let manager = &mut manager.lock().unwrap();
-                                let info = serde_json::from_slice::<ResourceInfo>(&bytes);
+                                let info = serde_json::from_slice::<ResourceInfo>(&r.info);
                                 if let Ok(info) = info {
                                     let addr = stream.peer_addr().unwrap().ip();
                                     manager.update(addr, info);

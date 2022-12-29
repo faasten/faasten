@@ -2,29 +2,31 @@ include!(concat!(env!("OUT_DIR"), "/snapfaas.sched.messages.rs"));
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::error::Error;
 use prost::Message;
+
+use super::Error;
 
 fn recv_from(
     stream: &mut TcpStream,
-) -> Result<Vec<u8>, Box<dyn Error>> {
+) -> Result<Vec<u8>, Error> {
     let mut lenbuf = [0; 4];
-    stream.read_exact(&mut lenbuf)?;
+    stream.read_exact(&mut lenbuf)
+          .map_err(|e| Error::StreamRead(e))?;
     let size = u32::from_be_bytes(lenbuf);
     let mut buf = vec![0u8; size as usize];
-    stream.read_exact(&mut buf)?;
+    stream.read_exact(&mut buf)
+          .map_err(|e| Error::StreamRead(e))?;
     Ok(buf)
 }
 
 fn send_to(
     stream: &mut TcpStream,
     msg: Vec<u8>,
-) -> Result<(), Box<dyn Error>> {
-    stream.write_all(&(msg.len() as u32).to_be_bytes())?;
+) -> Result<(), Error> {
+    stream.write_all(&(msg.len() as u32).to_be_bytes())
+          .map_err(|e| Error::StreamWrite(e))?;
     stream.write_all(msg.as_ref())
-        .map_err(|e| -> Box<dyn Error> {
-            Box::new(e) as _
-        })?;
+          .map_err(|e| Error::StreamWrite(e))?;
     Ok(())
 }
 
@@ -32,7 +34,7 @@ fn send_to(
 pub fn write<T: Message>(
     stream: &mut TcpStream,
     msg: T,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Error> {
     let buf = msg.encode_to_vec();
     send_to(stream, buf)
 }
@@ -40,17 +42,15 @@ pub fn write<T: Message>(
 /// Wrapper function that reads a request
 pub fn read_request(
     stream: &mut TcpStream
-) -> Result<Request, Box<dyn Error>> {
+) -> Result<Request, Error> {
     let buf = recv_from(stream)?;
-    let req = Request::decode(&buf[..])?;
-    Ok(req)
+    Request::decode(&buf[..]).map_err(|e| Error::Rpc(e))
 }
 
 /// Wrapper function that reads a response
 pub fn read_response(
     stream: &mut TcpStream
-) -> Result<Response, Box<dyn Error>> {
+) -> Result<Response, Error> {
     let buf = recv_from(stream)?;
-    let req = Response::decode(&buf[..])?;
-    Ok(req)
+    Response::decode(&buf[..]).map_err(|e| Error::Rpc(e))
 }

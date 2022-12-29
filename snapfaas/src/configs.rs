@@ -91,7 +91,8 @@ impl ResourceManagerConfig {
                 .expect("Bad kernel path URL").path().to_string();
             // use `firerunner`'s default DEFAULT_KERNEL_CMDLINE
             // defined in firecracker/vmm/lib.rs
-            app.cmdline = None;
+            // TODO: Not None for debug
+            // app.cmdline = None;
             // `snapctr` does not support generate snapshots
             app.dump_dir = None;
         }

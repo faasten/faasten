@@ -7,10 +7,11 @@
 // use std::sync::atomic::{AtomicUsize, Ordering};
 use std::net::{TcpStream, IpAddr};
 use std::collections::HashMap;
+use std::sync::mpsc::Sender;
+use uuid::Uuid;
 
-use super::message;
-use super::message::{response, Response};
 use super::rpc::ResourceInfo;
+use crate::request::Response;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Node(IpAddr);
@@ -59,6 +60,8 @@ pub struct ResourceManager {
     // If no idle workers, we simply remove the entry out of
     // the hashmap, which is why we need another struct to store info
     pub idle: HashMap<Node, Vec<Worker>>,
+    // for sync invoke
+    pub wait_list: HashMap<Uuid, Sender<Response>>,
 }
 
 impl ResourceManager {
@@ -144,11 +147,12 @@ impl ResourceManager {
     }
 
     pub fn reset(&mut self) {
+        use super::message;
+        use super::message::{response::Kind, Response};
         for (_, workers) in self.idle.iter_mut() {
             while let Some(mut w) = workers.pop() {
-                let buf = "".as_bytes().to_vec();
                 let res = Response {
-                    kind: Some(response::Kind::Shutdown(buf)),
+                    kind: Some(Kind::Shutdown(message::Shutdown {})),
                 };
                 let _ = message::write(&mut w.stream, res);
             }
