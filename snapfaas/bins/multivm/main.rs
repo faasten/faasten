@@ -13,7 +13,6 @@ use clap::{App, Arg};
 use log::{warn, info};
 use snapfaas::{configs, fs};
 use snapfaas::resource_manager::ResourceManager;
-// use snapfaas::gateway;
 use snapfaas::message::Message;
 use snapfaas::worker::Worker;
 use snapfaas::sched::gateway::Gateway;
@@ -145,53 +144,23 @@ fn main() {
             }
         }
     }
-
-    // // TCP gateway
-    // if let Some(l) = matches.value_of("listen address") {
-        // let gateway = gateway::HTTPGateway::listen(l);
-
-        // for (request, response_tx, timestamps) in gateway {
-            // // Return when a VM acquisition succeeds or fails
-            // // but before a VM launches (if it is newly allocated)
-            // // and execute the request.
-            // request_sender.send(Message::Request((request, response_tx, timestamps))).expect("Failed to send request");
-        // }
-    // }
 }
 
 fn new_workerpool(
     pool_size: usize, sched_sa: SocketAddr, manager_sender: Sender<Message>
 ) -> Vec<Worker> {
-    // let response_receiver = Arc::new(Mutex::new(response_receiver));
     let mut pool = Vec::with_capacity(pool_size);
     for i in 0..pool_size {
         let cid = i as u32 + 100;
         pool.push(Worker::new(
-            // response_receiver.clone(),
             sched_sa.clone(),
             manager_sender.clone(),
-            // request_sender.clone(),
             cid,
         ));
     }
 
-    // (pool, request_sender)
     pool
 }
-
-// fn new_workerpool(pool_size: usize, manager_sender: Sender<Message>) -> (Vec<Worker>, Sender<Message>) {
-    // let (request_sender, response_receiver) = mpsc::channel();
-    // let response_receiver = Arc::new(Mutex::new(response_receiver));
-
-    // let mut pool = Vec::with_capacity(pool_size);
-
-    // for i in 0..pool_size {
-        // let cid = i as u32 + 100;
-        // pool.push(Worker::new(response_receiver.clone(), manager_sender.clone(), request_sender.clone(), cid));
-    // }
-
-    // (pool, request_sender)
-// }
 
 fn set_ctrlc_handler(
     mut pool: Vec<Worker>, sched_sa: SocketAddr,
@@ -211,21 +180,3 @@ fn set_ctrlc_handler(
         std::process::exit(0);
     }).expect("Error setting Ctrl-C handler");
 }
-
-// fn set_ctrlc_handler(request_sender: Sender<Message>, mut pool: Vec<Worker>, manager_sender: Sender<Message>, mut manager_handle: Option<JoinHandle<()>>) {
-    // ctrlc::set_handler(move || {
-        // println!("");
-        // warn!("{}", "Handling Ctrl-C. Shutting down...");
-        // let pool_size = pool.len();
-        // for _ in 0..pool_size {
-            // request_sender.send(Message::Shutdown).expect("failed to shut down workers");
-        // }
-        // while let Some(worker) = pool.pop() {
-            // worker.join().expect("failed to join worker thread");
-        // }
-        // snapfaas::unlink_unix_sockets();
-        // manager_sender.send(Message::Shutdown).expect("failed to shut down resource manager");
-        // manager_handle.take().map(JoinHandle::join).unwrap().expect("failed to join resource manager thread");
-        // std::process::exit(0);
-    // }).expect("Error setting Ctrl-C handler");
-// }

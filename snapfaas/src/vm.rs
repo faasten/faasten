@@ -105,7 +105,6 @@ struct VmHandle {
     // killed, before the VmHandle is dropped.
     vm_process: Child,
     // None when VM is created from single-VM launcher
-    // invoke_handle: Option<Sender<Message>>,
     invoke_handle: Option<Scheduler>
 }
 
