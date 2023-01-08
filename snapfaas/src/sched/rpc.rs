@@ -11,24 +11,22 @@ use super::message::{Request, Response};
 use super::message::request::Kind as ReqKind;
 
 /// RPC calls
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Scheduler {
-    sa: SocketAddr,
+    _sock_addr: SocketAddr, // reconnect
+    stream: TcpStream,
 }
 
 impl Scheduler {
-    pub fn new(sa: SocketAddr) -> Self {
-        Scheduler { sa }
-    }
-
-    fn connect(&self) -> Result<TcpStream, Error> {
-        TcpStream::connect(&self.sa).map_err(|e| Error::StreamConnect(e))
+    pub fn new(addr: String) -> Self {
+        let stream = TcpStream::connect(&addr).unwrap();
+        let _sock_addr = addr.parse().unwrap();
+        Scheduler { _sock_addr, stream }
     }
 
     /// This method is for workers to retrieve a HTTP request, and
     /// it is supposed to block if there's no further HTTP requests
-    pub fn get(&self) -> Result<Response, Error> {
-        let mut stream = self.connect()?;
+    pub fn get(&mut self) -> Result<Response, Error> {
         let id = {
             // avoid using unstable #![feature(thread_id_value)]
             let mut hasher = DefaultHasher::new();
@@ -36,72 +34,77 @@ impl Scheduler {
             hasher.finish()
         };
         let req = Request {
-            kind: Some(ReqKind::GetJob(message::GetJob { id })),
+            kind: Some(ReqKind::GetTask(message::GetTask { id })),
         };
-        message::write(&mut stream, req)?;
-        let response = message::read_response(&mut stream)?;
+        message::write(&mut self.stream, req)?;
+        let response = message::read_response(&mut self.stream)?;
         Ok(response)
     }
 
     /// This method is for workers to return the result of a HTTP request
     pub fn finish(
-        &self, id: String, result: Vec<u8>
+        &mut self, id: String, result: Vec<u8>
     ) -> Result<Response, Error> {
-        let mut stream = self.connect()?;
         let req = Request {
-            kind: Some(ReqKind::FinishJob(message::FinishJob { id, result })),
+            kind: Some(ReqKind::FinishTask(message::FinishTask { id, result })),
         };
-        message::write(&mut stream, req)?;
-        let response = message::read_response(&mut stream)?;
+        message::write(&mut self.stream, req)?;
+        let response = message::read_response(&mut self.stream)?;
         Ok(response)
     }
 
     /// This method is for workers to invoke a function
-    pub fn invoke(&self, invoke: Vec<u8>) -> Result<(), Error> {
-        let mut stream = self.connect()?;
+    pub fn invoke(&mut self, invoke: Vec<u8>) -> Result<(), Error> {
         let req = Request {
-            kind: Some(ReqKind::Invoke(message::Invoke {invoke}))
+            kind: Some(ReqKind::Invoke(message::Invoke { invoke }))
         };
-        message::write(&mut stream, req)?;
-        let _ = message::read_response(&mut stream)?;
+        message::write(&mut self.stream, req)?;
+        let _ = message::read_response(&mut self.stream)?;
         Ok(())
     }
 
-    /// This method is to shutdown all workers (for debug)
-    pub fn shutdown_all(&self) -> Result<(), Error> {
-        let mut stream = self.connect()?;
+    /// This method is for workers to terminate themselves
+    pub fn terminate(&mut self) -> Result<(), Error> {
         let req = Request {
-            kind: Some(ReqKind::ShutdownAll(message::ShutdownAll {})),
+            kind: Some(ReqKind::Terminate(message::Terminate {})),
         };
-        message::write(&mut stream, req)?;
-        let _ = message::read_response(&mut stream)?;
+        message::write(&mut self.stream, req)?;
+        let _ = message::read_response(&mut self.stream)?;
+        Ok(())
+    }
+
+    /// This method is to terminate all workers (for debug)
+    pub fn terminate_all(&mut self) -> Result<(), Error> {
+        let req = Request {
+            kind: Some(ReqKind::TerminateAll(message::TerminateAll {})),
+        };
+        message::write(&mut self.stream, req)?;
+        let _ = message::read_response(&mut self.stream)?;
         Ok(())
     }
 
     /// This method is for local resource managers to update it's
     /// resource status, such as number of cached VMs per function
     pub fn update_resource(
-        &self,
+        &mut self,
         info: ResourceInfo
     ) -> Result<(), Error> {
-        let mut stream = self.connect()?;
         let info = serde_json::to_vec(&info).unwrap();
         let req = Request {
             kind: Some(ReqKind::UpdateResource(message::UpdateResource { info })),
         };
-        message::write(&mut stream, req)?;
-        let _ = message::read_response(&mut stream)?;
+        message::write(&mut self.stream, req)?;
+        let _ = message::read_response(&mut self.stream)?;
         Ok(())
     }
 
     /// TODO This method is for local resrouce managers to drop itself
-    pub fn drop_resource(&self) -> Result<(), Error> {
-        let mut stream = self.connect()?;
+    pub fn drop_resource(&mut self) -> Result<(), Error> {
         let req = Request {
             kind: Some(ReqKind::DropResource(message::DropResource {})),
         };
-        message::write(&mut stream, req)?;
-        let _ = message::read_response(&mut stream)?;
+        message::write(&mut self.stream, req)?;
+        let _ = message::read_response(&mut self.stream)?;
         Ok(())
     }
 }

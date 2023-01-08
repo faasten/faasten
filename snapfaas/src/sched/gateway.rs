@@ -5,11 +5,11 @@ use std::thread;
 use log::{error, debug};
 
 use crate::request;
-// use crate::metrics::RequestTimestamps;
 use crate::message::RequestInfo;
-use crate::sched::message;
-use crate::sched::resource_manager::ResourceManager;
-use crate::sched::rpc::ResourceInfo;
+
+use super::message;
+use super::resource_manager::ResourceManager;
+use super::rpc::ResourceInfo;
 
 pub type Manager = Arc<Mutex<ResourceManager>>;
 
@@ -115,83 +115,115 @@ impl Gateway for SchedGateway {
 
                     // process the RPC request
                     thread::spawn(move || {
-                        use message::{request::Kind, Response};
-                        let req = message::read_request(&mut stream);
-                        let kind = req.ok().and_then(|r| r.kind);
-                        match kind {
-                            Some(Kind::GetJob(r)) => {
-                                debug!("RPC BEGIN received {:?}", r.id);
-                                let manager = &mut manager.lock().unwrap();
-                                manager.add_idle(stream);
-                                let _ = tx.send(()); // notify
-                            }
-                            Some(Kind::FinishJob(r)) => {
-                                let result = String::from_utf8(r.result.clone());
-                                debug!("RPC FINISH received {:?}", result);
-                                let res = Response { kind: None };
-                                let _ = message::write(&mut stream, res);
-                                let result = serde_json::from_slice(&r.result).ok();
-                                let uuid = uuid::Uuid::parse_str(&r.id).ok();
-                                if let (Some(result), Some(uuid)) = (result, uuid) {
-                                    if !uuid.is_nil() {
-                                        let mut manager = manager.lock().unwrap();
-                                        if let Some(tx) = manager.wait_list.remove(&uuid) {
-                                            let _ = tx.send(result);
+                        while let Ok(req) = message::read_request(&mut stream) {
+                            use message::{request::Kind, Response};
+                            use super::Task;
+                            match req.kind {
+                                Some(Kind::GetTask(r)) => {
+                                    debug!("RPC GET received {:?}", r.id);
+                                    let addr = stream.peer_addr().unwrap();
+                                    let (task_sender, task_receiver) = channel();
+                                    // release lock immediately because `schedule` will later
+                                    // acquire it to send a task
+                                    let _ = manager.lock().unwrap().add_idle(addr, task_sender);
+                                    let _ = tx.send(()); // notify scheduler
+                                    if let Ok(task) = task_receiver.recv() {
+                                        match task {
+                                            Task::Invoke(uuid, invoke) => {
+                                                use message::response::Kind as ResKind;
+                                                let invoke = invoke.to_vec();
+                                                let res = message::Response {
+                                                    kind: Some(ResKind::ProcessTask(message::ProcessTask {
+                                                        id: uuid.to_string(), invoke,
+                                                    })),
+                                                };
+                                                let _ = message::write(&mut stream, res);
+                                            }
+                                            Task::Terminate => {
+                                                use message::response::Kind as ResKind;
+                                                let res = Response {
+                                                    kind: Some(ResKind::Terminate(message::Terminate {})),
+                                                };
+                                                let _ = message::write(&mut stream, res);
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            Some(Kind::Invoke(r)) => {
-                                debug!("RPC INVOKE received {:?}", r.invoke);
-                                let _ = rx.lock().unwrap().recv();
-                                let manager_dup = Arc::clone(&manager);
-                                match request::parse_u8_invoke(r.invoke) {
-                                    Ok(req) => {
-                                        use super::schedule_async;
-                                        thread::spawn(move || {
-                                            let _ = schedule_async(req, manager_dup);
-                                        });
+                                Some(Kind::FinishTask(r)) => {
+                                    let result = String::from_utf8(r.result.clone());
+                                    debug!("RPC FINISH received {:?}", result);
+                                    let res = Response { kind: None };
+                                    let _ = message::write(&mut stream, res);
+                                    let result = serde_json::from_slice(&r.result).ok();
+                                    let uuid = uuid::Uuid::parse_str(&r.id).ok();
+                                    if let (Some(result), Some(uuid)) = (result, uuid) {
+                                        if !uuid.is_nil() {
+                                            let mut manager = manager.lock().unwrap();
+                                            if let Some(tx) = manager.wait_list.remove(&uuid) {
+                                                let _ = tx.send(result);
+                                            }
+                                        }
+                                    }
+                                }
+                                Some(Kind::Invoke(r)) => {
+                                    debug!("RPC INVOKE received {:?}", r.invoke);
+                                    let _ = rx.lock().unwrap().recv();
+                                    let manager_dup = Arc::clone(&manager);
+                                    match request::parse_u8_invoke(r.invoke) {
+                                        Ok(req) => {
+                                            use super::schedule_async;
+                                            thread::spawn(move || {
+                                                let _ = schedule_async(req, manager_dup);
+                                            });
+                                            let res = Response { kind: None };
+                                            let _ = message::write(&mut stream, res);
+                                        }
+                                        Err(_) => {
+                                            // TODO return error message!
+                                            let res = Response { kind: None };
+                                            let _ = message::write(&mut stream, res);
+                                        }
+                                    }
+                                }
+                                Some(Kind::Terminate(_)) => {
+                                    debug!("RPC TERMINATE received");
+                                    let res = Response { kind: None };
+                                    let _ = message::write(&mut stream, res);
+                                    break;
+                                }
+                                Some(Kind::TerminateAll(_)) => {
+                                    debug!("RPC TERMINATEALL received");
+                                    let _ = manager.lock().unwrap().reset();
+                                    let res = Response { kind: None };
+                                    let _ = message::write(&mut stream, res);
+                                    break;
+                                }
+                                Some(Kind::UpdateResource(r)) => {
+                                    debug!("RPC UPDATE received");
+                                    let manager = &mut manager.lock().unwrap();
+                                    let info = serde_json::from_slice::<ResourceInfo>(&r.info);
+                                    if let Ok(info) = info {
+                                        let addr = stream.peer_addr().unwrap().ip();
+                                        manager.update(addr, info);
                                         let res = Response { kind: None };
                                         let _ = message::write(&mut stream, res);
-                                    }
-                                    Err(_) => {
-                                        // TODO return error message!
+                                    } else {
+                                        // TODO send error code
                                         let res = Response { kind: None };
                                         let _ = message::write(&mut stream, res);
                                     }
                                 }
-                            }
-                            Some(Kind::ShutdownAll(_)) => {
-                                debug!("RPC SHUTDOWNALL received");
-                                let mut manager = manager.lock().unwrap();
-                                manager.reset();
-                                let res = Response { kind: None };
-                                let _ = message::write(&mut stream, res);
-                            }
-                            Some(Kind::UpdateResource(r)) => {
-                                debug!("RPC UPDATE received");
-                                let manager = &mut manager.lock().unwrap();
-                                let info = serde_json::from_slice::<ResourceInfo>(&r.info);
-                                if let Ok(info) = info {
+                                Some(Kind::DropResource(_)) => {
+                                    debug!("RPC DROP received");
+                                    let manager = &mut manager.lock().unwrap();
                                     let addr = stream.peer_addr().unwrap().ip();
-                                    manager.update(addr, info);
+                                    manager.remove(addr);
                                     let res = Response { kind: None };
                                     let _ = message::write(&mut stream, res);
-                                } else {
-                                    // TODO send error code
-                                    let res = Response { kind: None };
-                                    let _ = message::write(&mut stream, res);
+                                    break;
                                 }
+                                _ => {}
                             }
-                            Some(Kind::DropResource(_)) => {
-                                debug!("RPC DROP received");
-                                let manager = &mut manager.lock().unwrap();
-                                let addr = stream.peer_addr().unwrap().ip();
-                                manager.remove(addr);
-                                let res = Response { kind: None };
-                                let _ = message::write(&mut stream, res);
-                            }
-                            _ => {}
                         }
                     });
                 }

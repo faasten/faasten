@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::thread::JoinHandle;
 use std::os::unix::net::UnixListener;
-use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 
 use log::{error, debug};
 use time::precise_time_ns;
@@ -31,7 +31,7 @@ pub struct Worker {
 
 fn handle_request(
     req: LabeledInvoke,
-    sched_rpc: &Scheduler,
+    sched_rpc: Arc<Mutex<Scheduler>>,
     vm_req_sender: Sender<Message>,
     vm_listener: UnixListener,
     mut tsps: RequestTimestamps,
@@ -62,7 +62,7 @@ fn handle_request(
                 if !vm.is_launched() {
                     // newly allocated VM is returned, launch it first
                     if let Err(e) = vm.launch(
-                        Some(sched_rpc.clone()),
+                        Some(Arc::clone(&sched_rpc)),
                         vm_listener.try_clone().expect("clone unix listener"),
                         cid, false,
                         None,
@@ -132,7 +132,7 @@ fn handle_request(
 
 impl Worker {
     pub fn new(
-        sched_sa: SocketAddr,
+        sched_addr: String,
         vm_req_sender: Sender<Message>,
         cid: u32,
     ) -> Self {
@@ -150,27 +150,28 @@ impl Worker {
                 Err(e) => panic!("Failed to bind to unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
             };
 
-            let sched_rpc = Scheduler::new(sched_sa);
+            let sched_rpc = Arc::new(Mutex::new(Scheduler::new(sched_addr)));
             loop {
                 let vm_listener_dup = match vm_listener.try_clone() {
                     Ok(listener) => listener,
                     Err(e) => panic!("Failed to clone unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
                 };
 
-                let message = sched_rpc.get(); // wait for request
+                let message = sched_rpc.lock().unwrap().get(); // wait for request
                 let (req_id, req) = {
                     use sched::message::response::Kind;
                     use crate::request;
                     match message {
                         Ok(res) => {
                             match res.kind {
-                                Some(Kind::ProcessJob(r)) => {
+                                Some(Kind::ProcessTask(r)) => {
                                     let req = request::parse_u8_invoke(r.invoke)
                                                         .expect("Failed to parse request");
                                     (r.id, req)
                                 }
-                                Some(Kind::Shutdown(_)) => {
-                                    debug!("[Worker {:?}] shutdown received", id);
+                                Some(Kind::Terminate(_)) => {
+                                    debug!("[Worker {:?}] terminate received", id);
+                                    let _ = sched_rpc.lock().unwrap().terminate();
                                     stat.flush();
                                     return;
                                 }
@@ -189,10 +190,10 @@ impl Worker {
 
                 // FIXME use the tsps at gateway
                 let dummy_tsps = RequestTimestamps {..Default::default()};
-                let result = handle_request(req, &sched_rpc,
+                let result = handle_request(req, Arc::clone(&sched_rpc),
                     vm_req_sender.clone(), vm_listener_dup, dummy_tsps, &mut stat, cid);
 
-                let _ = sched_rpc.finish(req_id, result.to_vec()); // return the result
+                let _ = sched_rpc.lock().unwrap().finish(req_id, result.to_vec()); // return the result
             }
         });
 

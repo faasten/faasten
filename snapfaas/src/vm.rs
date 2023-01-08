@@ -7,6 +7,7 @@ use std::process::Stdio;
 use std::string::String;
 use std::io::{Seek, Write};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use log::{debug, error};
 use tokio::process::{Child, Command};
@@ -105,7 +106,7 @@ struct VmHandle {
     // killed, before the VmHandle is dropped.
     vm_process: Child,
     // None when VM is created from single-VM launcher
-    invoke_handle: Option<Scheduler>
+    invoke_handle: Option<Arc<Mutex<Scheduler>>>
 }
 
 #[derive(Debug)]
@@ -164,7 +165,7 @@ impl Vm {
     /// When this function returns, the VM has finished booting and is ready to accept requests.
     pub fn launch(
         &mut self,
-        invoke_handle: Option<Scheduler>,
+        invoke_handle: Option<Arc<Mutex<Scheduler>>>,
         vm_listener: UnixListener,
         cid: u32,
         force_exit: bool,
@@ -376,7 +377,7 @@ impl Vm {
                 at_vmm: precise_time_ns(),
                 ..Default::default()
             };
-            invoke_handle.invoke(invoke.to_vec()).is_ok()
+            invoke_handle.lock().unwrap().invoke(invoke.to_vec()).is_ok()
         } else {
             debug!("No invoke handle, ignoring invoke syscall.");
             false

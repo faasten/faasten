@@ -37,13 +37,13 @@ pub struct ResourceManager {
     pub total_num_vms: usize, // total number of vms ever created
     total_mem: usize,
     pub free_mem: usize,
-    sched_sa: SocketAddr,
+    sched_addr: String,
 }
 
 impl ResourceManager {
     /// create and return a ResourceManager value
     /// The ResourceManager value encapsulates the idle lists and function configs
-    pub fn new(config: ResourceManagerConfig, sched_sa: SocketAddr) -> (Self, Sender<Message>) {
+    pub fn new(config: ResourceManagerConfig, sched_addr: String) -> (Self, Sender<Message>) {
         let mut idle = HashMap::<String, VmList>::new();
         for (name, _) in &config.functions {
             idle.insert(name.clone(), VmList::new());
@@ -59,7 +59,7 @@ impl ResourceManager {
             total_num_vms: 0,
             total_mem,
             free_mem: total_mem,
-            sched_sa,
+            sched_addr,
         },
         sender)
     }
@@ -98,7 +98,7 @@ impl ResourceManager {
     /// Kicks off the single thread resource manager
     pub fn run(mut self) -> JoinHandle<()> {
         std::thread::spawn(move || {
-            let sched_rpc = Scheduler::new(self.sched_sa.clone());
+            let mut sched_rpc = Scheduler::new(self.sched_addr.clone());
             loop {
                 match self.receiver.recv() {
                     Ok(msg) => {
@@ -149,13 +149,17 @@ impl ResourceManager {
                 match e {
                    // No Idle vm for this function. Try to allocate a new vm.
                     Error::NoIdleVm => {
+                        // FIXME only tried once? if alloc failed this doesnt go evict path
+                                debug!("no idle vm {:?}", function_name);
                         self.allocate(function_name)
                     },
                     // Not enough free memory to allocate. Try eviction
                     Error::LowMemory(_) => {
                         if self.evict(func_memory) {
+                                debug!("evic {:?}", function_name);
                             self.allocate(function_name)
                         } else {
+                                debug!("fail to evic {:?}", function_name);
                             Err(Error::InsufficientEvict)
                         }
                     }

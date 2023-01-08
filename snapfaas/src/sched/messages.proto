@@ -3,11 +3,11 @@ syntax = "proto3";
 package snapfaas.sched.messages;
 
 // Begin of request messages
-message GetJob {
+message GetTask {
     uint64 id = 1;
 }
 
-message FinishJob {
+message FinishTask {
     string id     = 1;
     bytes  result = 2;
 }
@@ -21,41 +21,41 @@ message UpdateResource {
 }
 
 message DropResource {}
-message ShutdownAll {}
+message TerminateAll {}
+message Terminate {}
 // End of request messages
 
 // Begin of response messages
-message ProcessJob {
+message ProcessTask {
     string id     = 1;
     bytes  invoke = 2;
 }
 
-message Shutdown {}
 message Fail {}
 // End of response messages
 
 message Request {
     oneof kind {
         // Worker
-        GetJob         getJob         = 1;
-        FinishJob      finishJob      = 2;
+        GetTask        getTask        = 1;
+        FinishTask     finishTask     = 2;
         Invoke         invoke         = 3;
         // Local resource manager
         UpdateResource updateResource = 4;
         DropResource   dropResource   = 5;
         // Debug
-        ShutdownAll    shutdownAll    = 6;
+        TerminateAll   terminateAll   = 6;
+        Terminate      terminate      = 7;
     }
 }
 
 message Response {
     oneof kind {
         // Worker
-        ProcessJob processJob = 1;
-        Shutdown   shutdown   = 2;
+        ProcessTask processTask = 1;
+        Terminate   terminate   = 2;
         // Debug
-        Fail       fail       = 3;
+        Fail        fail        = 3;
     }
 }
-
 

@@ -13,9 +13,16 @@ use resource_manager::ResourceManager;
 #[derive(Debug)]
 pub enum Error {
     Rpc(prost::DecodeError),
+    TaskSend(std::sync::mpsc::SendError<Task>),
     StreamConnect(std::io::Error),
     StreamRead(std::io::Error),
     StreamWrite(std::io::Error),
+}
+
+#[derive(Debug)]
+pub enum Task {
+    Invoke(Uuid, LabeledInvoke),
+    Terminate,
 }
 
 fn schedule(
@@ -25,25 +32,16 @@ fn schedule(
 ) -> Result<(), Error> {
     let gate = &invoke.gate.image;
 
-    let mut stream = manager
+    let task_sender = manager
         .find_idle(gate)
-        .map(|w| w.stream)
+        .map(|w| w.sender)
         .unwrap_or_else(|| {
             panic!("no idle worker found")
         });
 
-    // forward http request
-    use message::response::Kind as ResKind;
-    let invoke = invoke.to_vec();
-    let res = message::Response {
-        kind: Some(ResKind::ProcessJob(message::ProcessJob {
-            id: uuid.to_string(), invoke,
-        })),
-    };
-    let _ = message::write(&mut stream, res)?;
-
-    // response are received as an message
-    Ok(())
+    log::debug!("before sned");
+    task_sender.send(Task::Invoke(uuid, invoke))
+        .map_err(|e| Error::TaskSend(e))
 }
 
 /// This method schedules an async invoke to a remote worker

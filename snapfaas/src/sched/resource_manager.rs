@@ -1,12 +1,13 @@
 //! This resource manager maintains a global resource
 //! state across worker nodes.
 
-use std::net::{TcpStream, IpAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use uuid::Uuid;
 
 use super::rpc::ResourceInfo;
+use super::Task;
 use crate::request::Response;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -43,7 +44,8 @@ impl NodeInfo {
 #[derive(Debug)]
 pub struct Worker {
     // pub id: WorkerId,
-    pub stream: TcpStream, // on demand
+    pub addr: SocketAddr,
+    pub sender: Sender<Task>,
 }
 
 /// Global resource manager
@@ -67,16 +69,17 @@ impl ResourceManager {
         }
     }
 
-    pub fn add_idle(&mut self, stream: TcpStream) {
-        let addr = stream.peer_addr().unwrap();
+    pub fn add_idle(&mut self, addr: SocketAddr, sender: Sender<Task>) {
+        // let addr = stream.peer_addr().unwrap();
         let node = Node(addr.ip());
-        let _ = self.try_add_node(&node);
-        let worker = Worker { stream };
-        let idle = &mut self.idle;
-        if let Some(v) = idle.get_mut(&node) {
-            v.push(worker);
-        } else {
-            idle.insert(node, vec![worker]);
+        if self.try_add_node(&node) {
+            let worker = Worker { addr, sender };
+            let idle = &mut self.idle;
+            if let Some(v) = idle.get_mut(&node) {
+                v.push(worker);
+            } else {
+                idle.insert(node, vec![worker]);
+            }
         }
     }
 
@@ -123,12 +126,11 @@ impl ResourceManager {
                                 .next()
                                 .and_then(|v| v.pop());
                 // Mark the node dirty because it may or may not have
-                // some cached function. This indicates an implicit
+                // the same cached functions. This indicates an implicit
                 // eviction on the remote worker node, thus we can't
-                // further make decisions based on it unless confirmed
+                // make further decisions based on it unless confirmed
                 if let Some(w) = worker.as_ref() {
-                    let addr = w.stream
-                                .peer_addr().unwrap().ip();
+                    let addr = w.addr.ip();
                     let node = Node(addr);
                     self.info
                         .get_mut(&node)
@@ -143,14 +145,9 @@ impl ResourceManager {
     }
 
     pub fn reset(&mut self) {
-        use super::message;
-        use super::message::{response::Kind, Response};
         for (_, workers) in self.idle.iter_mut() {
-            while let Some(mut w) = workers.pop() {
-                let res = Response {
-                    kind: Some(Kind::Shutdown(message::Shutdown {})),
-                };
-                let _ = message::write(&mut w.stream, res);
+            while let Some(w) = workers.pop() {
+                let _ = w.sender.send(Task::Terminate);
             }
         }
         self.idle.retain(|_, v| !v.is_empty());
