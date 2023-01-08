@@ -187,7 +187,7 @@ impl Worker {
                     }
                 };
 
-                // FIXME use the tsps at gateway
+                // FIXME dummy tsps fow now
                 let dummy_tsps = RequestTimestamps {..Default::default()};
                 let result = handle_request(req, Arc::clone(&sched_rpc),
                     vm_req_sender.clone(), vm_listener_dup, dummy_tsps, &mut stat, cid);
