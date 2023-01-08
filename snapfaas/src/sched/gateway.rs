@@ -185,12 +185,6 @@ impl Gateway for SchedGateway {
                                         }
                                     }
                                 }
-                                Some(Kind::Terminate(_)) => {
-                                    debug!("RPC TERMINATE received");
-                                    let res = Response { kind: None };
-                                    let _ = message::write(&mut stream, res);
-                                    break;
-                                }
                                 Some(Kind::TerminateAll(_)) => {
                                     debug!("RPC TERMINATEALL received");
                                     let _ = manager.lock().unwrap().reset();

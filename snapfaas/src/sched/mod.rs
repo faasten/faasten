@@ -31,15 +31,12 @@ fn schedule(
     uuid: Uuid,
 ) -> Result<(), Error> {
     let gate = &invoke.gate.image;
-
     let task_sender = manager
         .find_idle(gate)
         .map(|w| w.sender)
         .unwrap_or_else(|| {
             panic!("no idle worker found")
         });
-
-    log::debug!("before sned");
     task_sender.send(Task::Invoke(uuid, invoke))
         .map_err(|e| Error::TaskSend(e))
 }

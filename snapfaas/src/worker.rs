@@ -171,7 +171,6 @@ impl Worker {
                                 }
                                 Some(Kind::Terminate(_)) => {
                                     debug!("[Worker {:?}] terminate received", id);
-                                    let _ = sched_rpc.lock().unwrap().terminate();
                                     stat.flush();
                                     return;
                                 }

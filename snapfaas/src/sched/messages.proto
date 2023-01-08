@@ -22,7 +22,6 @@ message UpdateResource {
 
 message DropResource {}
 message TerminateAll {}
-message Terminate {}
 // End of request messages
 
 // Begin of response messages
@@ -31,6 +30,7 @@ message ProcessTask {
     bytes  invoke = 2;
 }
 
+message Terminate {}
 message Fail {}
 // End of response messages
 
@@ -45,7 +45,6 @@ message Request {
         DropResource   dropResource   = 5;
         // Debug
         TerminateAll   terminateAll   = 6;
-        Terminate      terminate      = 7;
     }
 }
 

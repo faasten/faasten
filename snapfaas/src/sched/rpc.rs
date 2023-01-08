@@ -63,16 +63,6 @@ impl Scheduler {
         Ok(())
     }
 
-    /// This method is for workers to terminate themselves
-    pub fn terminate(&mut self) -> Result<(), Error> {
-        let req = Request {
-            kind: Some(ReqKind::Terminate(message::Terminate {})),
-        };
-        message::write(&mut self.stream, req)?;
-        let _ = message::read_response(&mut self.stream)?;
-        Ok(())
-    }
-
     /// This method is to terminate all workers (for debug)
     pub fn terminate_all(&mut self) -> Result<(), Error> {
         let req = Request {

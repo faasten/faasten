@@ -70,16 +70,14 @@ impl ResourceManager {
     }
 
     pub fn add_idle(&mut self, addr: SocketAddr, sender: Sender<Task>) {
-        // let addr = stream.peer_addr().unwrap();
         let node = Node(addr.ip());
-        if self.try_add_node(&node) {
-            let worker = Worker { addr, sender };
-            let idle = &mut self.idle;
-            if let Some(v) = idle.get_mut(&node) {
-                v.push(worker);
-            } else {
-                idle.insert(node, vec![worker]);
-            }
+        self.try_add_node(&node);
+        let worker = Worker { addr, sender };
+        let idle = &mut self.idle;
+        if let Some(v) = idle.get_mut(&node) {
+            v.push(worker);
+        } else {
+            idle.insert(node, vec![worker]);
         }
     }
 

@@ -143,7 +143,6 @@ fn main() {
                 });
             }
         }
-        // TODO schedgate drops only when all workers joined
     }
 }
 
