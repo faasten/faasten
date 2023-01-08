@@ -149,17 +149,14 @@ impl ResourceManager {
                 match e {
                    // No Idle vm for this function. Try to allocate a new vm.
                     Error::NoIdleVm => {
-                        // FIXME only tried once? if alloc failed this doesnt go evict path
-                                debug!("no idle vm {:?}", function_name);
+                        // FIXME If low memory, it won't try eviction
                         self.allocate(function_name)
                     },
                     // Not enough free memory to allocate. Try eviction
                     Error::LowMemory(_) => {
                         if self.evict(func_memory) {
-                                debug!("evic {:?}", function_name);
                             self.allocate(function_name)
                         } else {
-                                debug!("fail to evic {:?}", function_name);
                             Err(Error::InsufficientEvict)
                         }
                     }
