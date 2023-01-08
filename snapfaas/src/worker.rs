@@ -167,7 +167,7 @@ impl Worker {
                                 Some(Kind::ProcessTask(r)) => {
                                     let req = request::parse_u8_invoke(r.invoke)
                                                         .expect("Failed to parse request");
-                                    (r.id, req)
+                                    (r.task_id, req)
                                 }
                                 Some(Kind::Terminate(_)) => {
                                     debug!("[Worker {:?}] terminate received", id);

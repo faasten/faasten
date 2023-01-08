@@ -4,11 +4,11 @@ package snapfaas.sched.messages;
 
 // Begin of request messages
 message GetTask {
-    uint64 id = 1;
+    uint64 threadId = 1;
 }
 
 message FinishTask {
-    string id     = 1;
+    string taskId = 1;
     bytes  result = 2;
 }
 
@@ -26,7 +26,7 @@ message TerminateAll {}
 
 // Begin of response messages
 message ProcessTask {
-    string id     = 1;
+    string taskId = 1;
     bytes  invoke = 2;
 }
 

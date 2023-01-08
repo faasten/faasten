@@ -27,14 +27,14 @@ impl Scheduler {
     /// This method is for workers to retrieve a HTTP request, and
     /// it is supposed to block if there's no further HTTP requests
     pub fn get(&mut self) -> Result<Response, Error> {
-        let id = {
-            // avoid using unstable #![feature(thread_id_value)]
+        // avoid using unstable #![feature(thread_id_value)]
+        let thread_id = {
             let mut hasher = DefaultHasher::new();
             thread::current().id().hash(&mut hasher);
             hasher.finish()
         };
         let req = Request {
-            kind: Some(ReqKind::GetTask(message::GetTask { id })),
+            kind: Some(ReqKind::GetTask(message::GetTask { thread_id })),
         };
         message::write(&mut self.stream, req)?;
         let response = message::read_response(&mut self.stream)?;
@@ -43,10 +43,10 @@ impl Scheduler {
 
     /// This method is for workers to return the result of a HTTP request
     pub fn finish(
-        &mut self, id: String, result: Vec<u8>
+        &mut self, task_id: String, result: Vec<u8>
     ) -> Result<Response, Error> {
         let req = Request {
-            kind: Some(ReqKind::FinishTask(message::FinishTask { id, result })),
+            kind: Some(ReqKind::FinishTask(message::FinishTask { task_id, result })),
         };
         message::write(&mut self.stream, req)?;
         let response = message::read_response(&mut self.stream)?;

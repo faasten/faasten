@@ -120,7 +120,7 @@ impl Gateway for SchedGateway {
                             use super::Task;
                             match req.kind {
                                 Some(Kind::GetTask(r)) => {
-                                    debug!("RPC GET received {:?}", r.id);
+                                    debug!("RPC GET received {:?}", r.thread_id);
                                     let addr = stream.peer_addr().unwrap();
                                     let (task_sender, task_receiver) = channel();
                                     // release lock immediately because `schedule` will later
@@ -134,7 +134,7 @@ impl Gateway for SchedGateway {
                                                 let invoke = invoke.to_vec();
                                                 let res = message::Response {
                                                     kind: Some(ResKind::ProcessTask(message::ProcessTask {
-                                                        id: uuid.to_string(), invoke,
+                                                        task_id: uuid.to_string(), invoke,
                                                     })),
                                                 };
                                                 let _ = message::write(&mut stream, res);
@@ -155,7 +155,7 @@ impl Gateway for SchedGateway {
                                     let res = Response { kind: None };
                                     let _ = message::write(&mut stream, res);
                                     let result = serde_json::from_slice(&r.result).ok();
-                                    let uuid = uuid::Uuid::parse_str(&r.id).ok();
+                                    let uuid = uuid::Uuid::parse_str(&r.task_id).ok();
                                     if let (Some(result), Some(uuid)) = (result, uuid) {
                                         if !uuid.is_nil() {
                                             let mut manager = manager.lock().unwrap();
