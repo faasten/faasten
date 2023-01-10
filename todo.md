@@ -10,6 +10,7 @@
 - [ ] generic gates (core)
   - [ ] customized access points for external REST APIs
 - [ ] garbage collection
+  - [ ] implementation
   - [ ] measuring garbage collection performance overhead
   - [ ] ...
 - [ ] distributed scheduler
