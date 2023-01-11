@@ -4,12 +4,13 @@ use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 use log::{error, debug};
 
-use crate::request;
-use crate::message::RequestInfo;
+// use crate::request;
+// use crate::message::RequestInfo;
 
 use super::message;
 use super::resource_manager::ResourceManager;
 use super::rpc::ResourceInfo;
+use super::RequestInfo;
 
 pub type Manager = Arc<Mutex<ResourceManager>>;
 
@@ -44,23 +45,24 @@ impl Gateway for HTTPGateway {
                     let requests = requests_tx.clone();
 
                     std::thread::spawn(move || {
-                        while let Ok(buf) = request::read_u8(&mut stream) {
-                            if let Ok(parsed) = request::parse_u8_invoke(buf)  {
-                                use time::precise_time_ns;
-                                let timestamps = crate::metrics::RequestTimestamps {
-                                    at_gateway: precise_time_ns(),
-                                    ..Default::default()
-                                };
-                                let (tx, rx) = channel::<request::Response>();
-                                let _ = requests.send((parsed, tx, timestamps));
+                        while let Ok(buf) = message::read_u8(&mut stream) {
+                            if let Ok(parsed) = message::parse_u8_labeled_invoke(buf) {
+                                // use time::precise_time_ns;
+                                // let timestamps = crate::metrics::RequestTimestamps {
+                                    // at_gateway: precise_time_ns(),
+                                    // ..Default::default()
+                                // };
+                                let (tx, rx) = channel::<String>();
+                                let _ = requests.send((parsed, tx));
                                 if let Ok(response) = rx.recv() {
-                                    if request::write_u8(&response.to_vec(), &mut stream).is_err() {
+                                    let buf = response.as_bytes().to_vec();
+                                    if message::write_u8(&mut stream, buf).is_err() {
                                         error!("Failed to write response");
                                     }
                                 }
-
                             } else {
-                                if request::write_u8("Error decoding invoke".as_bytes(), &mut stream).is_err() {
+                                let buf = "Error decoding invoke".as_bytes().to_vec();
+                                if message::write_u8(&mut stream, buf).is_err() {
                                     error!("Failed to write response");
                                 }
                             }
@@ -91,7 +93,6 @@ pub struct SchedGateway {
 
 impl Gateway for SchedGateway {
     fn listen(addr: &str, manager: Option<Manager>) -> Self {
-
         let listener = TcpListener::bind(addr)
             .unwrap_or_else(|_| {
                 panic!("listener failed to bind on {:?}", addr)
@@ -150,13 +151,12 @@ impl Gateway for SchedGateway {
                                     }
                                 }
                                 Some(Kind::FinishTask(r)) => {
-                                    let result = String::from_utf8(r.result.clone());
-                                    debug!("RPC FINISH received {:?}", result);
+                                    debug!("RPC FINISH received {:?}", r.result);
                                     let res = Response { kind: None };
                                     let _ = message::write(&mut stream, res);
-                                    let result = serde_json::from_slice(&r.result).ok();
-                                    let uuid = uuid::Uuid::parse_str(&r.task_id).ok();
-                                    if let (Some(result), Some(uuid)) = (result, uuid) {
+                                    // let result = serde_json::from_slice(&r.result).ok();
+                                    let result = r.result;
+                                    if let Ok(uuid) = uuid::Uuid::parse_str(&r.task_id) {
                                         if !uuid.is_nil() {
                                             let mut manager = manager.lock().unwrap();
                                             if let Some(tx) = manager.wait_list.remove(&uuid) {
@@ -169,7 +169,27 @@ impl Gateway for SchedGateway {
                                     debug!("RPC INVOKE received {:?}", r.invoke);
                                     let _ = rx.lock().unwrap().recv();
                                     let manager_dup = Arc::clone(&manager);
-                                    match request::parse_u8_invoke(r.invoke) {
+                                    match message::parse_u8_labeled_invoke(r.invoke) {
+                                        Ok(req) => {
+                                            use super::schedule_async;
+                                            thread::spawn(move || {
+                                                let _ = schedule_async(req, manager_dup);
+                                            });
+                                            let res = Response { kind: None };
+                                            let _ = message::write(&mut stream, res);
+                                        }
+                                        Err(_) => {
+                                            // TODO return error message!
+                                            let res = Response { kind: None };
+                                            let _ = message::write(&mut stream, res);
+                                        }
+                                    }
+                                }
+                                Some(Kind::LabeledInvoke(r)) => {
+                                    debug!("RPC INVOKE received {:?}", r);
+                                    let _ = rx.lock().unwrap().recv();
+                                    let manager_dup = Arc::clone(&manager);
+                                    match message::parse_u8_labeled_invoke(r.invoke) {
                                         Ok(req) => {
                                             use super::schedule_async;
                                             thread::spawn(move || {

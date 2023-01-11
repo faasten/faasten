@@ -6,9 +6,10 @@ pub mod rpc;
 use std::sync::MutexGuard;
 use std::sync::mpsc::Sender;
 use uuid::Uuid;
-use crate::request::{LabeledInvoke, Response};
 use resource_manager::ResourceManager;
+use message::LabeledInvoke;
 
+pub type RequestInfo = (message::LabeledInvoke, Sender<String>);
 
 #[derive(Debug)]
 pub enum Error {
@@ -17,6 +18,7 @@ pub enum Error {
     StreamConnect(std::io::Error),
     StreamRead(std::io::Error),
     StreamWrite(std::io::Error),
+    Other(String),
 }
 
 #[derive(Debug)]
@@ -52,7 +54,7 @@ pub fn schedule_async(
 
 /// This method schedules a sync invoke to a remote worker
 pub fn schedule_sync(
-    invoke: LabeledInvoke, manager: gateway::Manager, tx: Sender<Response>
+    invoke: LabeledInvoke, manager: gateway::Manager, tx: Sender<String>
 ) -> Result<(), Error> {
     let mut manager = manager.lock().unwrap();
     let uuid = Uuid::new_v4();

@@ -8,7 +8,6 @@ use uuid::Uuid;
 
 use super::rpc::ResourceInfo;
 use super::Task;
-use crate::request::Response;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Node(IpAddr);
@@ -59,7 +58,7 @@ pub struct ResourceManager {
     // the hashmap, which is why we need another struct to store info
     pub idle: HashMap<Node, Vec<Worker>>,
     // for sync invoke
-    pub wait_list: HashMap<Uuid, Sender<Response>>,
+    pub wait_list: HashMap<Uuid, Sender<String>>,
 }
 
 impl ResourceManager {

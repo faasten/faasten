@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package snapfaas.sched.messages;
 
+import "syscalls.proto";
+
 // Begin of request messages
 message GetTask {
     uint64 threadId = 1;
@@ -9,7 +11,14 @@ message GetTask {
 
 message FinishTask {
     string taskId = 1;
-    bytes  result = 2;
+    string result = 2;
+}
+
+message LabeledInvoke {
+    // repeated syscalls.PathComponent path = 1;
+    // string payload = 2;
+    syscalls.Invoke invoke = 1;
+    syscalls.Buckle label = 2;
 }
 
 message Invoke {
@@ -40,6 +49,7 @@ message Request {
         GetTask        getTask        = 1;
         FinishTask     finishTask     = 2;
         Invoke         invoke         = 3;
+        LabeledInvoke  labeledInvoke  = 7;
         // Local resource manager
         UpdateResource updateResource = 4;
         DropResource   dropResource   = 5;
