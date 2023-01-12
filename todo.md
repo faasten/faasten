@@ -1,9 +1,11 @@
 # Faasten
 - [ ] add end user API for Faasten file system (complementary)
-- [ ] automate new function registration (complementary)
+- [ ] dynamic function registration (complementary)
   - [ ] functions can be registered dynamically, instead of from a YAML configuration file
   - [ ] automate function packaging, i.e., converting the source into Faasten function image
+- [ ] self-hosting (complementary)
   - [ ] store function images as blobs in Faasten file system
+  - [ ] makes function gates link image blobs
 - [ ] low-level system calls (core)
   - [ ] opaque handles (branch `opaque-handles` sketched something)
   - [ ] system calls
