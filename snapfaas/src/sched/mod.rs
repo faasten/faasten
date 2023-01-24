@@ -28,18 +28,26 @@ pub enum Task {
 }
 
 fn schedule(
-    invoke: LabeledInvoke,
+    labeled_invoke: LabeledInvoke,
     manager: &mut MutexGuard<ResourceManager>,
     uuid: Uuid,
 ) -> Result<(), Error> {
-    let gate = &invoke.gate.image;
+    use crate::syscalls::path_component::Component::Dscrp;
+    let gate_component = labeled_invoke.invoke.as_ref()
+        .and_then(|ref i| i.gate.last())
+        .and_then(|f| f.component.as_ref());
+    let gate = match gate_component {
+        Some(Dscrp(f)) => Ok(f),
+        _ => Err(Error::Other("Invalid gate components".to_string())),
+    }?;
+
     let task_sender = manager
         .find_idle(gate)
         .map(|w| w.sender)
         .unwrap_or_else(|| {
             panic!("no idle worker found")
         });
-    task_sender.send(Task::Invoke(uuid, invoke))
+    task_sender.send(Task::Invoke(uuid, labeled_invoke))
         .map_err(|e| Error::TaskSend(e))
 }
 

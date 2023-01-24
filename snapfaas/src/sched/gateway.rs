@@ -130,12 +130,12 @@ impl Gateway for SchedGateway {
                                     let _ = tx.send(()); // notify scheduler
                                     if let Ok(task) = task_receiver.recv() {
                                         match task {
-                                            Task::Invoke(uuid, invoke) => {
+                                            Task::Invoke(uuid, labeled_invoke) => {
                                                 use message::response::Kind as ResKind;
-                                                let invoke = invoke.to_vec();
                                                 let res = message::Response {
                                                     kind: Some(ResKind::ProcessTask(message::ProcessTask {
-                                                        task_id: uuid.to_string(), invoke,
+                                                        task_id: uuid.to_string(),
+                                                        labeled_invoke: Some(labeled_invoke),
                                                     })),
                                                 };
                                                 let _ = message::write(&mut stream, res);
@@ -187,23 +187,14 @@ impl Gateway for SchedGateway {
                                 }
                                 Some(Kind::LabeledInvoke(r)) => {
                                     debug!("RPC INVOKE received {:?}", r);
+                                    use super::schedule_async;
                                     let _ = rx.lock().unwrap().recv();
                                     let manager_dup = Arc::clone(&manager);
-                                    match message::parse_u8_labeled_invoke(r.invoke) {
-                                        Ok(req) => {
-                                            use super::schedule_async;
-                                            thread::spawn(move || {
-                                                let _ = schedule_async(req, manager_dup);
-                                            });
-                                            let res = Response { kind: None };
-                                            let _ = message::write(&mut stream, res);
-                                        }
-                                        Err(_) => {
-                                            // TODO return error message!
-                                            let res = Response { kind: None };
-                                            let _ = message::write(&mut stream, res);
-                                        }
-                                    }
+                                    thread::spawn(move || { // No check
+                                        let _ = schedule_async(r, manager_dup);
+                                    });
+                                    let res = Response { kind: None };
+                                    let _ = message::write(&mut stream, res);
                                 }
                                 Some(Kind::TerminateAll(_)) => {
                                     debug!("RPC TERMINATEALL received");

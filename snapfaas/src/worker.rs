@@ -17,6 +17,7 @@ use crate::vm;
 use crate::metrics::{self, RequestTimestamps};
 use crate::resource_manager;
 use crate::fs;
+use crate::labeled_fs;
 use crate::sched;
 use crate::sched::rpc::Scheduler;
 
@@ -165,9 +166,39 @@ impl Worker {
                         Ok(res) => {
                             match res.kind {
                                 Some(Kind::ProcessTask(r)) => {
-                                    let req = request::parse_u8_invoke(r.invoke)
-                                                        .expect("Failed to parse request");
-                                    (r.task_id, req)
+
+
+                                    // let principal: Vec<&str> = cmd_arguments.value_of("principal").unwrap().split(',').collect();
+                                    // let clearance = Buckle::new([Clause::new_from_vec(vec![principal.clone()])], true);
+
+                                    let privilege = r.labeled_invoke
+                                        .map(|e| vm::pbcomponent_to_component(&e.privilege))
+                                        .unwrap();
+
+                                    let mut fs = fs::FS::new(&*labeled_fs::DBENV);
+                                    fs::utils::clear_label();
+                                    fs::utils::set_my_privilge(privilege);
+
+                                    let label = r.labeled_invoke
+                                        .and_then(|e| e.label)
+                                        .map(|l| vm::pblabel_to_buckle(&l))
+                                        .unwrap();
+                                    let (path, payload) = r.labeled_invoke
+                                        .and_then(|e| e.invoke)
+                                        .map(|i| (i.gate, i.payload))
+                                        .unwrap();
+                                    let gate = fs::utils::read_path(&fs, &path).ok()
+                                        .and_then(|fs::DirEntry::Gate(g)| { fs.invoke_gate(&g).ok()
+                                            // if let fs::DirEntry::Gate(g) = e {
+                                                // fs.invoke_gate(&g).ok()
+                                            // } else {
+                                                // None
+                                            // }
+                                        })
+                                        .expect("Gate does not exist"); // return error instead
+
+                                    let request = LabeledInvoke { gate, label, payload };
+                                    (r.task_id, request)
                                 }
                                 Some(Kind::Terminate(_)) => {
                                     debug!("[Worker {:?}] terminate received", id);
@@ -192,7 +223,7 @@ impl Worker {
                 let result = handle_request(req, Arc::clone(&sched_rpc),
                     vm_req_sender.clone(), vm_listener_dup, dummy_tsps, &mut stat, cid);
 
-                let _ = sched_rpc.lock().unwrap().finish(req_id, result.to_vec()); // return the result
+                let _ = sched_rpc.lock().unwrap().finish(req_id, format!("{:?}", result)); // return the result
             }
         });
 

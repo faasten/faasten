@@ -43,7 +43,7 @@ impl Scheduler {
 
     /// This method is for workers to return the result of a HTTP request
     pub fn finish(
-        &mut self, task_id: String, result: Vec<u8>
+        &mut self, task_id: String, result: String,
     ) -> Result<Response, Error> {
         let req = Request {
             kind: Some(ReqKind::FinishTask(message::FinishTask { task_id, result })),
@@ -57,6 +57,16 @@ impl Scheduler {
     pub fn invoke(&mut self, invoke: Vec<u8>) -> Result<(), Error> {
         let req = Request {
             kind: Some(ReqKind::Invoke(message::Invoke { invoke }))
+        };
+        message::write(&mut self.stream, req)?;
+        let _ = message::read_response(&mut self.stream)?;
+        Ok(())
+    }
+
+    /// This method is for workers to invoke a function
+    pub fn labeled_invoke(&mut self, labeled_invoke: message::LabeledInvoke) -> Result<(), Error> {
+        let req = Request {
+            kind: Some(ReqKind::LabeledInvoke(labeled_invoke))
         };
         message::write(&mut self.stream, req)?;
         let _ = message::read_response(&mut self.stream)?;

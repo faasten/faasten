@@ -5,7 +5,7 @@ use labeled::Label;
 use labeled::buckle::{self, Clause, Buckle};
 use serde_json::json;
 use snapfaas::request::LabeledInvoke;
-use snapfaas::{fs, request, syscalls, vm};
+use snapfaas::{fs, request, syscalls, vm, sched};
 use std::collections::HashMap;
 use std::net::TcpStream;
 use std::io::{stdin, self, Write, Read};
@@ -231,11 +231,18 @@ fn main() {
                 return;
             }
             for line in stdin().lines().map(|l| l.unwrap()) {
-                let request = LabeledInvoke {
-                    gate: gate.clone().unwrap(),
-                    label: fs::utils::get_current_label(),
-                    payload: line,
+                let label = fs::utils::get_current_label();
+                let request = sched::message::LabeledInvoke {
+                    invoke: Some(syscalls::Invoke { gate: path, payload: line }),
+                    label: Some(vm::buckle_to_pblabel(&label)),
+                    privilege: vm::component_to_pbcomponent([Clause::new_from_vec(vec![principal])].into()),
                 };
+
+                // let request = LabeledInvoke {
+                    // gate: gate.clone().unwrap(),
+                    // label: fs::utils::get_current_label(),
+                    // payload: line,
+                // };
 
                 let mut connection = TcpStream::connect(addr).unwrap();
                 request::write_u8(serde_json::to_vec(&request).unwrap().as_ref(), &mut connection).unwrap();
@@ -396,7 +403,7 @@ fn main() {
         "elapsed": elapsed,
         "stat": stat,
     });
-    if let Some(fname) = cmd_arguments.value_of("stat") { 
+    if let Some(fname) = cmd_arguments.value_of("stat") {
         let file = std::fs::File::create(fname).unwrap();
         serde_json::to_writer(file, &val).unwrap();
     } else {

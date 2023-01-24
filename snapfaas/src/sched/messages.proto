@@ -15,10 +15,9 @@ message FinishTask {
 }
 
 message LabeledInvoke {
-    // repeated syscalls.PathComponent path = 1;
-    // string payload = 2;
-    syscalls.Invoke invoke = 1;
-    syscalls.Buckle label = 2;
+    syscalls.Invoke    invoke    = 1;
+    syscalls.Buckle    label     = 2;
+    syscalls.Component privilege = 3;
 }
 
 message Invoke {
@@ -35,8 +34,8 @@ message TerminateAll {}
 
 // Begin of response messages
 message ProcessTask {
-    string taskId = 1;
-    bytes  invoke = 2;
+    string        taskId        = 1;
+    LabeledInvoke labeledInvoke = 2;
 }
 
 message Terminate {}

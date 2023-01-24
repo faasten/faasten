@@ -18,6 +18,7 @@ use crate::{blobstore, syscalls};
 use crate::labeled_fs::DBENV;
 use crate::fs;
 use crate::sched::rpc::Scheduler;
+use crate::sched::message;
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
@@ -27,7 +28,7 @@ const USER_AGENT: &str = "snapfaas";
 
 use labeled::buckle::{Clause, Component, Buckle};
 
-fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Component {
+pub fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Component {
     match component {
         None => Component::DCFalse,
         Some(set) => Component::DCFormula(set.clauses.iter()
@@ -43,7 +44,7 @@ pub fn pblabel_to_buckle(label: &syscalls::Buckle) -> Buckle {
     }
 }
 
-fn component_to_pbcomponent(component: &Component) -> Option<syscalls::Component> {
+pub fn component_to_pbcomponent(component: &Component) -> Option<syscalls::Component> {
     match component {
         Component::DCFalse => None,
         Component::DCFormula(set) => Some(syscalls::Component {
@@ -369,7 +370,7 @@ impl Vm {
         }
     }
 
-    fn sched_invoke(&self, invoke: LabeledInvoke) -> bool {
+    fn sched_invoke(&self, labeled_invoke: message::LabeledInvoke) -> bool {
         use time::precise_time_ns;
         if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
             use crate::metrics::RequestTimestamps;
@@ -377,7 +378,7 @@ impl Vm {
                 at_vmm: precise_time_ns(),
                 ..Default::default()
             };
-            invoke_handle.lock().unwrap().invoke(invoke.to_vec()).is_ok()
+            invoke_handle.lock().unwrap().labeled_invoke(labeled_invoke).is_ok()
         } else {
             debug!("No invoke handle, ignoring invoke syscall.");
             false
@@ -454,12 +455,21 @@ impl Vm {
                     });
                     let mut result = syscalls::WriteKeyResponse { success: value.is_some() };
                     if value.is_some() {
-                        let labeled = LabeledInvoke {
-                            gate: value.clone().unwrap(),
-                            label: fs::utils::get_current_label(),
-                            payload: req.payload,
+                        // let labeled = LabeledInvoke {
+                            // gate: value.clone().unwrap(),
+                            // label: fs::utils::get_current_label(),
+                            // payload: req.payload,
+                        // };
+
+                        use crate::sched::message;
+                        let labeled = message::LabeledInvoke {
+                            invoke: Some(syscalls::Invoke { gate: req.gate, payload: req.payload }),
+                            label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
+                            privilege: component_to_pbcomponent([Clause::new_from_vec(vec![principal])].into()),
                         };
-                        result.success = self.sched_invoke(labeled)
+                        result.success = self.sched_invoke(labeled) // FIXME use
+                                                                    // message::LabeledInvoke
+                                                                    // instead
                     }
                     self.send_into_vm(result.encode_to_vec())?;
                 },
