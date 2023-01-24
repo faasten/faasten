@@ -455,21 +455,12 @@ impl Vm {
                     });
                     let mut result = syscalls::WriteKeyResponse { success: value.is_some() };
                     if value.is_some() {
-                        // let labeled = LabeledInvoke {
-                            // gate: value.clone().unwrap(),
-                            // label: fs::utils::get_current_label(),
-                            // payload: req.payload,
-                        // };
-
-                        use crate::sched::message;
                         let labeled = message::LabeledInvoke {
                             invoke: Some(syscalls::Invoke { gate: req.gate, payload: req.payload }),
                             label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
-                            privilege: component_to_pbcomponent([Clause::new_from_vec(vec![principal])].into()),
+                            privilege: None,
                         };
-                        result.success = self.sched_invoke(labeled) // FIXME use
-                                                                    // message::LabeledInvoke
-                                                                    // instead
+                        result.success = self.sched_invoke(labeled)
                     }
                     self.send_into_vm(result.encode_to_vec())?;
                 },

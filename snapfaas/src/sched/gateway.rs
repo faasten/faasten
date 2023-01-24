@@ -154,7 +154,6 @@ impl Gateway for SchedGateway {
                                     debug!("RPC FINISH received {:?}", r.result);
                                     let res = Response { kind: None };
                                     let _ = message::write(&mut stream, res);
-                                    // let result = serde_json::from_slice(&r.result).ok();
                                     let result = r.result;
                                     if let Ok(uuid) = uuid::Uuid::parse_str(&r.task_id) {
                                         if !uuid.is_nil() {

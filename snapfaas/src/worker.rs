@@ -166,36 +166,26 @@ impl Worker {
                         Ok(res) => {
                             match res.kind {
                                 Some(Kind::ProcessTask(r)) => {
-
-
-                                    // let principal: Vec<&str> = cmd_arguments.value_of("principal").unwrap().split(',').collect();
-                                    // let clearance = Buckle::new([Clause::new_from_vec(vec![principal.clone()])], true);
-
-                                    let privilege = r.labeled_invoke
-                                        .map(|e| vm::pbcomponent_to_component(&e.privilege))
-                                        .unwrap();
-
-                                    let mut fs = fs::FS::new(&*labeled_fs::DBENV);
+                                    let fs = fs::FS::new(&*labeled_fs::DBENV);
                                     fs::utils::clear_label();
-                                    fs::utils::set_my_privilge(privilege);
 
-                                    let label = r.labeled_invoke
-                                        .and_then(|e| e.label)
+                                    let labeled_invoke = r.labeled_invoke.as_ref();
+                                    if let Some(privilege) = labeled_invoke
+                                        .map(|e| vm::pbcomponent_to_component(&e.privilege)) {
+                                        fs::utils::set_my_privilge(privilege);
+                                    }
+                                    let label = labeled_invoke
+                                        .and_then(|e| e.label.as_ref())
                                         .map(|l| vm::pblabel_to_buckle(&l))
                                         .unwrap();
                                     let (path, payload) = r.labeled_invoke
                                         .and_then(|e| e.invoke)
                                         .map(|i| (i.gate, i.payload))
                                         .unwrap();
-                                    let gate = fs::utils::read_path(&fs, &path).ok()
-                                        .and_then(|fs::DirEntry::Gate(g)| { fs.invoke_gate(&g).ok()
-                                            // if let fs::DirEntry::Gate(g) = e {
-                                                // fs.invoke_gate(&g).ok()
-                                            // } else {
-                                                // None
-                                            // }
-                                        })
-                                        .expect("Gate does not exist"); // return error instead
+                                    let gate = match fs::utils::read_path(&fs, &path) {
+                                        Ok(fs::DirEntry::Gate(g)) => fs.invoke_gate(&g).ok(),
+                                        _ => None,
+                                    }.expect("invalid gate");
 
                                     let request = LabeledInvoke { gate, label, payload };
                                     (r.task_id, request)

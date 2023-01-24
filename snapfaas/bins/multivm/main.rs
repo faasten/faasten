@@ -132,7 +132,7 @@ fn main() {
     // TCP gateway
     if let Some(l) = matches.value_of("http listen address") {
         let gateway = snapfaas::sched::gateway::HTTPGateway::listen(l, None);
-        for (request, tx, _timestamps) in gateway {
+        for (request, tx) in gateway {
             // Return when a VM acquisition succeeds or fails
             // but before a VM launches (if it is newly allocated)
             // and execute the request.

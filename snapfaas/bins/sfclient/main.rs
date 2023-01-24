@@ -214,7 +214,7 @@ fn main() {
     let clearance = Buckle::new([Clause::new_from_vec(vec![principal.clone()])], true);
     let mut fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
     fs::utils::clear_label();
-    fs::utils::set_my_privilge([Clause::new_from_vec(vec![principal])].into());
+    fs::utils::set_my_privilge([Clause::new_from_vec(vec![principal.clone()])].into());
     let mut elapsed = Duration::new(0, 0);
     let mut stat = fs::Metrics::default();
     match cmd_arguments.subcommand() {
@@ -232,20 +232,14 @@ fn main() {
             }
             for line in stdin().lines().map(|l| l.unwrap()) {
                 let label = fs::utils::get_current_label();
+                use prost::Message;
                 let request = sched::message::LabeledInvoke {
-                    invoke: Some(syscalls::Invoke { gate: path, payload: line }),
+                    invoke: Some(syscalls::Invoke { gate: path.clone(), payload: line }),
                     label: Some(vm::buckle_to_pblabel(&label)),
-                    privilege: vm::component_to_pbcomponent([Clause::new_from_vec(vec![principal])].into()),
+                    privilege: vm::component_to_pbcomponent(&[Clause::new_from_vec(vec![principal.clone()])].into()),
                 };
-
-                // let request = LabeledInvoke {
-                    // gate: gate.clone().unwrap(),
-                    // label: fs::utils::get_current_label(),
-                    // payload: line,
-                // };
-
                 let mut connection = TcpStream::connect(addr).unwrap();
-                request::write_u8(serde_json::to_vec(&request).unwrap().as_ref(), &mut connection).unwrap();
+                request::write_u8(&request.encode_to_vec(), &mut connection).unwrap();
                 let buf = request::read_u8(&mut connection).unwrap();
                 let response: request::Response = serde_json::from_slice(&buf).unwrap();
                 println!("{:?}", response);
