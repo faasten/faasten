@@ -34,7 +34,7 @@ the blob specified in the payload.
 }
 ```
 
-4. `PUT /gates`. Update an existing gate at the path specified in the payload to link 
+4. `PUT /gates`. Update an existing gate at the path specified in the payload to link
 
 4. `POST /dirs/dir/path/to/the/object`. Create a gate. The request body specifies at what path to
 create the gate and the function image the gate links. The response indicates the success of the creation.
@@ -54,7 +54,7 @@ An invoke RPC from the API gateway, the event server or a worker.
 ### Output
 The input invoke RPC to a worker.
 ### Job
-The scheduler distibutes a queue of invocation requests to idle workers. 
+The scheduler distibutes a queue of invocation requests to idle workers.
 The invoke RPC message format (in protobuf):
 ```proto
 message{
@@ -72,25 +72,46 @@ A LabeledInvoke struct
 N/A
 ### Job
 A worker is either idle waiting for invocation requests from the scheduler or
-occupied processing an invocation to completion. A function runs in a VM. 
+occupied processing an invocation to completion (acts as the invokee). A function runs in a VM.
 
-#### Invocation authorization
-A worker is responsible for checking if the invoker is authorized to invoke a
-function gate. The invoker is identified by its owned privilege. The invoke RPC
-message includes the value `invokePrivilege`.
+#### Invocation authorization & function instance privilege
+Functions are named by one or more gates in the global file system. A gate stores
+a hard link to the underlying function image. Moreover, a gate stores the security
+policies on the underlying function as well, including the policies who can invoke
+and what privilege the instance will run with.
+```txt
+            | inst1 | inst2 | inst3 |
+            |/|     |/|     |/|     |/|
+ ------------>|------>|------>|------>|   ...
+ information / flow  /       /       /
+            |   |   |       |       |
+            |   |   |       |       |
+          gate1 | gate2   gate3   gate4
+                |
+               \|/
+               ___
+           ___|   |___ external resource gate (e.g. GitHub repo resource)
 
-The API gateway sets the field to `[idstring]`, where `idstring` is the
+```
+For an invocation, there is an invoker and an invokee. The invokee is always a worker but the
+invoker can be an client (through the API gateway or the event server). The invokee worker is
+responsible for checking the authorization and set the instance's privilege accordingly.
+
+The invoker is identified by its owned privilege. The invoke RPC message includes the value
+`invokePrivilege`. The invokee worker checks if `invokePrivilege` implies the invokee gate's invoking
+policy.
+
+The API gateway sets the `invokePrivilege` field to `[idstring]`, where `idstring` is the
 authenticated client's identity string. The event server sets the field according
-to an event's configuration. A worker (when a function invokes
-another function) sets the field to the thread-local variable `OWNED_PRIVILEGE`.
+to an event's configuration. An invoker worker sets the field to the thread-local variable
+`OWNED_PRIVILEGE`.
 
-A worker first traverses the file system to read the gate and check if the gate's
-invoking policy authorizes the invoker. Traversing the file system implicitly
-raises the current computation's label.
+The invokee worker first traverses the file system to read the gate. Traversing the file system
+implicitly raises the current computation's label.
 
 A worker maintains a floating label for each invocation/computation. The label
-starts as the public label. Then, it gets tainted with 1) the gate's label; 2)
-the payload's label; 3) the VM's label.
+starts as the public label. Then, it gets tainted with 1) the gate's label and those of its parents;
+2) the payload's label; 3) the VM's label (see below).
 
 If authorized, a worker either runs the invocation in a less tainted than the
 payload, idle VM on the local machine or, if no such VM exists, it runs the
