@@ -43,11 +43,6 @@ impl Gateway for HTTPGateway {
 
                     std::thread::spawn(move || {
                         while let Ok(buf) = message::read_u8(&mut stream) {
-                        // loop {
-                            // let buf = message::read_u8(&mut stream);
-                            // debug!("{:?}", buf);
-                            // if buf.is_err() { break; }
-                            // let buf = buf.unwrap();
                             if let Ok(parsed) = message::parse_u8_labeled_invoke(buf) {
                                 // use time::precise_time_ns;
                                 // let timestamps = crate::metrics::RequestTimestamps {
@@ -101,12 +96,12 @@ impl Gateway for SchedGateway {
         debug!("Gateway started listening on: {:?}", addr);
 
         let manager = manager.expect("No Resource Manager Found!");
-        // to wait for resource before scheduling
+        // To wait for resource before scheduling
         let (tx, rx) = channel();
         let rx = Arc::new(Mutex::new(rx));
         let rx_dup = Arc::clone(&rx);
 
-        // handle incoming RPC requests
+        // Handle incoming RPC requests
         thread::spawn(move || {
             for stream in listener.incoming() {
                 if let Ok(mut stream) = stream {
@@ -115,7 +110,7 @@ impl Gateway for SchedGateway {
                     let tx = tx.clone();
                     let rx = Arc::clone(&rx_dup);
 
-                    // process the RPC request
+                    // Process the RPC request
                     thread::spawn(move || {
                         while let Ok(req) = message::read_request(&mut stream) {
                             use message::{request::Kind, Response};
@@ -125,10 +120,10 @@ impl Gateway for SchedGateway {
                                     debug!("RPC GET received {:?}", r.thread_id);
                                     let addr = stream.peer_addr().unwrap();
                                     let (task_sender, task_receiver) = channel();
-                                    // release lock immediately because `schedule` will later
+                                    // Release lock immediately because `schedule` will later
                                     // acquire it to send a task
                                     let _ = manager.lock().unwrap().add_idle(addr, task_sender);
-                                    let _ = tx.send(()); // notify scheduler
+                                    let _ = tx.send(()); // Notify scheduler
                                     if let Ok(task) = task_receiver.recv() {
                                         match task {
                                             Task::Invoke(uuid, labeled_invoke) => {
@@ -139,14 +134,14 @@ impl Gateway for SchedGateway {
                                                         labeled_invoke: Some(labeled_invoke),
                                                     })),
                                                 };
-                                                let _ = message::write(&mut stream, res);
+                                                let _ = message::write(&mut stream, &res);
                                             }
                                             Task::Terminate => {
                                                 use message::response::Kind as ResKind;
                                                 let res = Response {
                                                     kind: Some(ResKind::Terminate(message::Terminate {})),
                                                 };
-                                                let _ = message::write(&mut stream, res);
+                                                let _ = message::write(&mut stream, &res);
                                             }
                                         }
                                     }
@@ -154,7 +149,7 @@ impl Gateway for SchedGateway {
                                 Some(Kind::FinishTask(r)) => {
                                     debug!("RPC FINISH received {:?}", r.result);
                                     let res = Response { kind: None };
-                                    let _ = message::write(&mut stream, res);
+                                    let _ = message::write(&mut stream, &res);
                                     let result = r.result;
                                     if let Ok(uuid) = uuid::Uuid::parse_str(&r.task_id) {
                                         if !uuid.is_nil() {
@@ -174,13 +169,13 @@ impl Gateway for SchedGateway {
                                         let _ = schedule_async(r, manager_dup);
                                     });
                                     let res = Response { kind: None };
-                                    let _ = message::write(&mut stream, res);
+                                    let _ = message::write(&mut stream, &res);
                                 }
                                 Some(Kind::TerminateAll(_)) => {
                                     debug!("RPC TERMINATEALL received");
                                     let _ = manager.lock().unwrap().reset();
                                     let res = Response { kind: None };
-                                    let _ = message::write(&mut stream, res);
+                                    let _ = message::write(&mut stream, &res);
                                     break;
                                 }
                                 Some(Kind::UpdateResource(r)) => {
@@ -191,11 +186,11 @@ impl Gateway for SchedGateway {
                                         let addr = stream.peer_addr().unwrap().ip();
                                         manager.update(addr, info);
                                         let res = Response { kind: None };
-                                        let _ = message::write(&mut stream, res);
+                                        let _ = message::write(&mut stream, &res);
                                     } else {
-                                        // TODO send error code
+                                        // TODO Send error code
                                         let res = Response { kind: None };
-                                        let _ = message::write(&mut stream, res);
+                                        let _ = message::write(&mut stream, &res);
                                     }
                                 }
                                 Some(Kind::DropResource(_)) => {
@@ -204,7 +199,7 @@ impl Gateway for SchedGateway {
                                     let addr = stream.peer_addr().unwrap().ip();
                                     manager.remove(addr);
                                     let res = Response { kind: None };
-                                    let _ = message::write(&mut stream, res);
+                                    let _ = message::write(&mut stream, &res);
                                     break;
                                 }
                                 _ => {}

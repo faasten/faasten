@@ -27,7 +27,7 @@ fn send_to(stream: &mut TcpStream, msg: &[u8]) -> Result<(), Error> {
 }
 
 /// Wrapper function that sends a message
-pub fn write<T: Message>(stream: &mut TcpStream, msg: T) -> Result<(), Error> {
+pub fn write<T: Message>(stream: &mut TcpStream, msg: &T) -> Result<(), Error> {
     let buf = msg.encode_to_vec();
     send_to(stream, &buf)
 }

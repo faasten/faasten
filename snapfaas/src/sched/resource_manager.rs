@@ -50,14 +50,14 @@ pub struct Worker {
 /// Global resource manager
 #[derive(Debug, Default)]
 pub struct ResourceManager {
-    // TODO garbage collection
+    // TODO Garbage collection
     pub info: HashMap<Node, NodeInfo>,
     // Locations of cached VMs for a function
     pub cached: HashMap<String, Vec<(Node, usize)>>,
     // If no idle workers, we simply remove the entry out of
     // the hashmap, which is why we need another struct to store info
     pub idle: HashMap<Node, Vec<Worker>>,
-    // for sync invoke
+    // For sync invoke
     pub wait_list: HashMap<Uuid, Sender<String>>,
 }
 

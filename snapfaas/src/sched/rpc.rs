@@ -36,7 +36,7 @@ impl Scheduler {
         let req = Request {
             kind: Some(ReqKind::GetTask(message::GetTask { thread_id })),
         };
-        message::write(&mut self.stream, req)?;
+        message::write(&mut self.stream, &req)?;
         let response = message::read_response(&mut self.stream)?;
         Ok(response)
     }
@@ -48,7 +48,7 @@ impl Scheduler {
         let req = Request {
             kind: Some(ReqKind::FinishTask(message::FinishTask { task_id, result })),
         };
-        message::write(&mut self.stream, req)?;
+        message::write(&mut self.stream, &req)?;
         let response = message::read_response(&mut self.stream)?;
         Ok(response)
     }
@@ -58,7 +58,7 @@ impl Scheduler {
         let req = Request {
             kind: Some(ReqKind::LabeledInvoke(labeled_invoke))
         };
-        message::write(&mut self.stream, req)?;
+        message::write(&mut self.stream, &req)?;
         let _ = message::read_response(&mut self.stream)?;
         Ok(())
     }
@@ -68,7 +68,7 @@ impl Scheduler {
         let req = Request {
             kind: Some(ReqKind::TerminateAll(message::TerminateAll {})),
         };
-        message::write(&mut self.stream, req)?;
+        message::write(&mut self.stream, &req)?;
         let _ = message::read_response(&mut self.stream)?;
         Ok(())
     }
@@ -83,7 +83,7 @@ impl Scheduler {
         let req = Request {
             kind: Some(ReqKind::UpdateResource(message::UpdateResource { info })),
         };
-        message::write(&mut self.stream, req)?;
+        message::write(&mut self.stream, &req)?;
         let _ = message::read_response(&mut self.stream)?;
         Ok(())
     }
@@ -93,7 +93,7 @@ impl Scheduler {
         let req = Request {
             kind: Some(ReqKind::DropResource(message::DropResource {})),
         };
-        message::write(&mut self.stream, req)?;
+        message::write(&mut self.stream, &req)?;
         let _ = message::read_response(&mut self.stream)?;
         Ok(())
     }
