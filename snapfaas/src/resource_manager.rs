@@ -142,7 +142,6 @@ impl ResourceManager {
         function_name: &str,
     )-> Result<Vm, Error> {
         let func_memory = self.get_function_config(function_name)?.memory;
-
         self.get_idle_vm(function_name)
             .or_else(|e| {
                 match e {
@@ -150,7 +149,6 @@ impl ResourceManager {
                     Error::NoIdleVm => {
                         self.allocate(function_name)
                     }
-                    // Just return all other errors
                     _ => Err(e)
                 }
             })
@@ -164,62 +162,10 @@ impl ResourceManager {
                             Err(Error::InsufficientEvict)
                         }
                     }
+                    // Just return all other errors
                     _ => Err(e)
                 }
             })
-
-        // self.get_idle_vm(function_name)
-            // .or_else(|e| {
-                // match e {
-                    // // No Idle vm for this function. Try to allocate a new vm.
-                    // Error::NoIdleVm => {
-                        // self.allocate(function_name)
-                            // .or_else(|e| {
-                                // match e {
-                                    // error::lowmemory(_) => {
-                                        // if self.evict(func_memory) {
-                                            // self.allocate(function_name)
-                                        // } else {
-                                            // err(error::insufficientevict)
-                                        // }
-                                    // }
-                                    // _ => err(e)
-                                // }
-                            // })
-                        // // let mut retry = 0;
-                        // // loop {
-                            // // if retry > 5 { break Err(Error::InsufficientEvict); }
-                            // // retry += 1;
-                        // // let allocated = self.allocate(function_name);
-                        // // match allocated {
-                            // // Err(Error::LowMemory(_)) => {
-                                // // if !self.evict(func_memory) {
-                                    // // break Err(Error::InsufficientEvict)
-                                // // }
-                            // // }
-                            // // _ => break allocated,
-                        // // }
-                        // // }
-                        // // // FIXME If low memory, it won't try eviction
-                        // // self.allocate(function_name)
-                            // // .or_else(|e| {
-                                // // match e {
-                                    // // // Not enough free memory to allocate. Try eviction
-                                    // // Error::LowMemory(_) => {
-                                        // // if self.evict(func_memory) {
-                                            // // self.allocate(function_name)
-                                        // // } else {
-                                            // // Err(Error::InsufficientEvict)
-                                        // // }
-                                    // // }
-                                    // // _ => Err(e)
-                                // // }
-                            // // })
-                    // },
-                    // // Just return all other errors
-                    // _ => Err(e)
-                // }
-            // })
     }
 
     // Try to find an idle vm from the function's idle list
