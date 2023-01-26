@@ -161,7 +161,6 @@ impl Worker {
                 let message = sched_rpc.lock().unwrap().get(); // wait for request
                 let (req_id, req) = {
                     use sched::message::response::Kind;
-                    use crate::request;
                     match message {
                         Ok(res) => {
                             match res.kind {
@@ -174,21 +173,29 @@ impl Worker {
                                         .map(|e| vm::pbcomponent_to_component(&e.privilege)) {
                                         fs::utils::set_my_privilge(privilege);
                                     }
+                                    let gate = labeled_invoke
+                                        .and_then(|e| e.invoke.as_ref())
+                                        .map(|i| i.gate.clone())
+                                        .and_then(|p| {
+                                            match fs::utils::read_path(&fs, &p) {
+                                                Ok(fs::DirEntry::Gate(g)) => fs.invoke_gate(&g).ok(),
+                                                _ => None,
+                                            }
+                                        });
                                     let label = labeled_invoke
                                         .and_then(|e| e.label.as_ref())
-                                        .map(|l| vm::pblabel_to_buckle(&l))
-                                        .unwrap();
-                                    let (path, payload) = r.labeled_invoke
-                                        .and_then(|e| e.invoke)
-                                        .map(|i| (i.gate, i.payload))
-                                        .unwrap();
-                                    let gate = match fs::utils::read_path(&fs, &path) {
-                                        Ok(fs::DirEntry::Gate(g)) => fs.invoke_gate(&g).ok(),
-                                        _ => None,
-                                    }.expect("invalid gate");
+                                        .map(|l| vm::pblabel_to_buckle(&l));
+                                    let payload = labeled_invoke
+                                        .and_then(|e| e.invoke.as_ref())
+                                        .map(|i| i.payload.clone());
 
-                                    let request = LabeledInvoke { gate, label, payload };
-                                    (r.task_id, request)
+                                    match (gate, label, payload) {
+                                        (Some(gate), Some(label), Some(payload)) => {
+                                            let request = LabeledInvoke { gate, label, payload };
+                                            (r.task_id, Some(request))
+                                        }
+                                        _ => (r.task_id, None)
+                                    }
                                 }
                                 Some(Kind::Terminate(_)) => {
                                     debug!("[Worker {:?}] terminate received", id);
@@ -208,12 +215,19 @@ impl Worker {
                     }
                 };
 
-                // FIXME dummy tsps fow now
+                // FIXME dummy tsps for now
                 let dummy_tsps = RequestTimestamps {..Default::default()};
-                let result = handle_request(req, Arc::clone(&sched_rpc),
-                    vm_req_sender.clone(), vm_listener_dup, dummy_tsps, &mut stat, cid);
+                let vm_req_sender_dup = vm_req_sender.clone();
+                let sched_rpc_dup = Arc::clone(&sched_rpc);
+                let result = req
+                    .map(|r| {
+                        handle_request(r, sched_rpc_dup, vm_req_sender_dup,
+                                       vm_listener_dup, dummy_tsps, &mut stat, cid)
+                    })
+                    .unwrap_or_else(|| Response { status: RequestStatus::GateNotExist });
 
-                let _ = sched_rpc.lock().unwrap().finish(req_id, format!("{:?}", result)); // return the result
+                // return the result
+                let _ = sched_rpc.lock().unwrap().finish(req_id, format!("{:?}", result));
             }
         });
 

@@ -13,7 +13,6 @@ use log::{debug, error};
 use tokio::process::{Child, Command};
 
 use crate::configs::FunctionConfig;
-use crate::request::LabeledInvoke;
 use crate::{blobstore, syscalls};
 use crate::labeled_fs::DBENV;
 use crate::fs;
@@ -447,21 +446,13 @@ impl Vm {
                     self.send_into_vm(result)?;
                 }
                 Some(SC::Invoke(req)) => {
-                    let value = fs::utils::read_path(&self.fs, &req.gate).ok().and_then(|entry| {
-                        match entry {
-                            fs::DirEntry::Gate(gate) => self.fs.invoke_gate(&gate).ok(),
-                            _ => None,
-                        }
-                    });
-                    let mut result = syscalls::WriteKeyResponse { success: value.is_some() };
-                    if value.is_some() {
-                        let labeled = message::LabeledInvoke {
-                            invoke: Some(syscalls::Invoke { gate: req.gate, payload: req.payload }),
-                            label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
-                            privilege: None,
-                        };
-                        result.success = self.sched_invoke(labeled)
-                    }
+                    let labeled = message::LabeledInvoke {
+                        invoke: Some(syscalls::Invoke { gate: req.gate, payload: req.payload }),
+                        label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
+                        privilege: component_to_pbcomponent(&fs::utils::my_privilege()),
+                    };
+                    let success = self.sched_invoke(labeled);
+                    let result = syscalls::WriteKeyResponse { success };
                     self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::DupGate(req)) => {

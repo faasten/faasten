@@ -4,8 +4,7 @@ use clap::{App, Arg, SubCommand};
 use labeled::Label;
 use labeled::buckle::{self, Clause, Buckle};
 use serde_json::json;
-use snapfaas::request::LabeledInvoke;
-use snapfaas::{fs, request, syscalls, vm, sched};
+use snapfaas::{fs, syscalls, vm, sched};
 use std::collections::HashMap;
 use std::net::TcpStream;
 use std::io::{stdin, self, Write, Read};
@@ -239,9 +238,9 @@ fn main() {
                     privilege: vm::component_to_pbcomponent(&[Clause::new_from_vec(vec![principal.clone()])].into()),
                 };
                 let mut connection = TcpStream::connect(addr).unwrap();
-                request::write_u8(&request.encode_to_vec(), &mut connection).unwrap();
-                let buf = request::read_u8(&mut connection).unwrap();
-                let response: request::Response = serde_json::from_slice(&buf).unwrap();
+                sched::message::write_u8(&mut connection, &request.encode_to_vec()).unwrap();
+                let buf = sched::message::read_u8(&mut connection).unwrap();
+                let response = String::from_utf8(buf).unwrap();
                 println!("{:?}", response);
             }
         },

@@ -4,9 +4,6 @@ use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 use log::{error, debug};
 
-// use crate::request;
-// use crate::message::RequestInfo;
-
 use super::message;
 use super::resource_manager::ResourceManager;
 use super::rpc::ResourceInfo;
@@ -46,6 +43,11 @@ impl Gateway for HTTPGateway {
 
                     std::thread::spawn(move || {
                         while let Ok(buf) = message::read_u8(&mut stream) {
+                        // loop {
+                            // let buf = message::read_u8(&mut stream);
+                            // debug!("{:?}", buf);
+                            // if buf.is_err() { break; }
+                            // let buf = buf.unwrap();
                             if let Ok(parsed) = message::parse_u8_labeled_invoke(buf) {
                                 // use time::precise_time_ns;
                                 // let timestamps = crate::metrics::RequestTimestamps {
@@ -55,14 +57,13 @@ impl Gateway for HTTPGateway {
                                 let (tx, rx) = channel::<String>();
                                 let _ = requests.send((parsed, tx));
                                 if let Ok(response) = rx.recv() {
-                                    let buf = response.as_bytes().to_vec();
-                                    if message::write_u8(&mut stream, buf).is_err() {
+                                    if message::write_u8(&mut stream, response.as_bytes()).is_err() {
                                         error!("Failed to write response");
                                     }
                                 }
                             } else {
-                                let buf = "Error decoding invoke".as_bytes().to_vec();
-                                if message::write_u8(&mut stream, buf).is_err() {
+                                let response = "Error decoding invoke";
+                                if message::write_u8(&mut stream, response.as_bytes()).is_err() {
                                     error!("Failed to write response");
                                 }
                             }
@@ -161,26 +162,6 @@ impl Gateway for SchedGateway {
                                             if let Some(tx) = manager.wait_list.remove(&uuid) {
                                                 let _ = tx.send(result);
                                             }
-                                        }
-                                    }
-                                }
-                                Some(Kind::Invoke(r)) => {
-                                    debug!("RPC INVOKE received {:?}", r.invoke);
-                                    let _ = rx.lock().unwrap().recv();
-                                    let manager_dup = Arc::clone(&manager);
-                                    match message::parse_u8_labeled_invoke(r.invoke) {
-                                        Ok(req) => {
-                                            use super::schedule_async;
-                                            thread::spawn(move || {
-                                                let _ = schedule_async(req, manager_dup);
-                                            });
-                                            let res = Response { kind: None };
-                                            let _ = message::write(&mut stream, res);
-                                        }
-                                        Err(_) => {
-                                            // TODO return error message!
-                                            let res = Response { kind: None };
-                                            let _ = message::write(&mut stream, res);
                                         }
                                     }
                                 }

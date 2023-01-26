@@ -20,10 +20,6 @@ message LabeledInvoke {
     syscalls.Component privilege = 3;
 }
 
-message Invoke {
-    bytes invoke = 1;
-}
-
 message UpdateResource {
     bytes info = 1;
 }
@@ -47,8 +43,7 @@ message Request {
         // Worker
         GetTask        getTask        = 1;
         FinishTask     finishTask     = 2;
-        Invoke         invoke         = 3;
-        LabeledInvoke  labeledInvoke  = 7;
+        LabeledInvoke  labeledInvoke  = 3;
         // Local resource manager
         UpdateResource updateResource = 4;
         DropResource   dropResource   = 5;

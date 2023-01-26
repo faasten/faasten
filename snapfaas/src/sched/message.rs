@@ -7,20 +7,21 @@ use prost::Message;
 use super::Error;
 
 fn recv_from(stream: &mut TcpStream) -> Result<Vec<u8>, Error> {
-    let mut lenbuf = [0; 4];
+    let mut lenbuf = [0; 8];
     stream.read_exact(&mut lenbuf)
           .map_err(|e| Error::StreamRead(e))?;
-    let size = u32::from_be_bytes(lenbuf);
+    let size = u64::from_be_bytes(lenbuf);
     let mut buf = vec![0u8; size as usize];
     stream.read_exact(&mut buf)
           .map_err(|e| Error::StreamRead(e))?;
     Ok(buf)
 }
 
-fn send_to(stream: &mut TcpStream, msg: Vec<u8>) -> Result<(), Error> {
-    stream.write_all(&(msg.len() as u32).to_be_bytes())
+fn send_to(stream: &mut TcpStream, msg: &[u8]) -> Result<(), Error> {
+    let size = (msg.len() as u64).to_be_bytes();
+    stream.write_all(&size)
           .map_err(|e| Error::StreamWrite(e))?;
-    stream.write_all(msg.as_ref())
+    stream.write_all(msg)
           .map_err(|e| Error::StreamWrite(e))?;
     Ok(())
 }
@@ -28,7 +29,7 @@ fn send_to(stream: &mut TcpStream, msg: Vec<u8>) -> Result<(), Error> {
 /// Wrapper function that sends a message
 pub fn write<T: Message>(stream: &mut TcpStream, msg: T) -> Result<(), Error> {
     let buf = msg.encode_to_vec();
-    send_to(stream, buf)
+    send_to(stream, &buf)
 }
 
 /// Wrapper function that reads a request
@@ -45,10 +46,10 @@ pub fn read_response(stream: &mut TcpStream) -> Result<Response, Error> {
 
 /// Function that reads bytes from a stream
 pub fn read_u8(stream: &mut TcpStream) -> Result<Vec<u8>, Error> {
-    let mut lenbuf = [0; 4];
+    let mut lenbuf = [0; 8];
     stream.read_exact(&mut lenbuf)
           .map_err(|e| Error::StreamRead(e))?;
-    let size = u32::from_be_bytes(lenbuf);
+    let size = u64::from_be_bytes(lenbuf);
     if size > 0 {
         let mut buf = vec![0u8; size as usize];
         stream.read_exact(&mut buf)
@@ -60,7 +61,7 @@ pub fn read_u8(stream: &mut TcpStream) -> Result<Vec<u8>, Error> {
 }
 
 /// Function that writes bytes to a stream
-pub fn write_u8(stream: &mut TcpStream, buf: Vec<u8>) -> Result<(), Error> {
+pub fn write_u8(stream: &mut TcpStream, buf: &[u8]) -> Result<(), Error> {
     send_to(stream, buf)
 }
 

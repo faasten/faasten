@@ -54,16 +54,6 @@ impl Scheduler {
     }
 
     /// This method is for workers to invoke a function
-    pub fn invoke(&mut self, invoke: Vec<u8>) -> Result<(), Error> {
-        let req = Request {
-            kind: Some(ReqKind::Invoke(message::Invoke { invoke }))
-        };
-        message::write(&mut self.stream, req)?;
-        let _ = message::read_response(&mut self.stream)?;
-        Ok(())
-    }
-
-    /// This method is for workers to invoke a function
     pub fn labeled_invoke(&mut self, labeled_invoke: message::LabeledInvoke) -> Result<(), Error> {
         let req = Request {
             kind: Some(ReqKind::LabeledInvoke(labeled_invoke))
@@ -98,7 +88,7 @@ impl Scheduler {
         Ok(())
     }
 
-    /// TODO This method is for local resrouce managers to drop itself
+    /// This method is for local resrouce managers to drop itself
     pub fn drop_resource(&mut self) -> Result<(), Error> {
         let req = Request {
             kind: Some(ReqKind::DropResource(message::DropResource {})),
