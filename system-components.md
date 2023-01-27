@@ -65,12 +65,18 @@ message{
 }
 ```
 
-## Label-aware workers
+## Label-aware local manager `multivm`
 ### Input
-A LabeledInvoke struct
+An invoke RPC from the scheduler.
 ### Output
 N/A
 ### Job
+The local manager `multivm` manages a single worker machine's resources. It mains a pool of
+worker threads, the size of which is calculated as total free memory divided by minimum supported
+VM size (i.e., maximum possible concurrent VMs). It dispatches incoming invoke RPCs from the
+scheduler to worker threads (or just workers).
+
+#### Worker thread (or just worker)
 A worker is either idle waiting for invocation requests from the scheduler or
 occupied processing an invocation to completion (acts as the invokee). A function runs in a VM.
 
@@ -106,6 +112,7 @@ authenticated client's identity string. The event server sets the field accordin
 to an event's configuration. An invoker worker sets the field to the thread-local variable
 `OWNED_PRIVILEGE`.
 
+#### The floating label
 The invokee worker first traverses the file system to read the gate. Traversing the file system
 implicitly raises the current computation's label.
 
@@ -113,6 +120,7 @@ A worker maintains a floating label for each invocation/computation. The label
 starts as the public label. Then, it gets tainted with 1) the gate's label and those of its parents;
 2) the payload's label; 3) the VM's label (see below).
 
+#### Use of tainted, cached VMs
 If authorized, a worker either runs the invocation in a less tainted than the
 payload, idle VM on the local machine or, if no such VM exists, it runs the
 invocation in a new allocated, untainted VM. When an invocation completes,
