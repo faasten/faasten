@@ -15,14 +15,12 @@ use snapfaas::{configs, fs};
 use snapfaas::resource_manager::ResourceManager;
 use snapfaas::message::Message;
 use snapfaas::worker::Worker;
-use snapfaas::sched::gateway::Gateway;
 
 use core::panic;
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc;
 use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
 use std::net::SocketAddr;
-use std::thread;
 
 fn main() {
     env_logger::init();
@@ -38,15 +36,6 @@ fn main() {
                 .takes_value(true)
                 .required(true)
                 .help("Path to controller config YAML file"),
-        )
-        .arg(
-            Arg::with_name("http listen address")
-                .value_name("[ADDR:]PORT")
-                .long("listen_http")
-                .short("l")
-                .takes_value(true)
-                .required(true)
-                .help("Address on which SnapFaaS listen for connections that sends requests"),
         )
         .arg(
             Arg::with_name("scheduler listen address")
@@ -71,13 +60,6 @@ fn main() {
                         .value_of("scheduler listen address")
                         .map(String::from)
                         .unwrap();
-    let sched_resman =
-        Arc::new(Mutex::new(
-            snapfaas::sched::resource_manager::ResourceManager::new()
-        ));
-    let mut schedgate = snapfaas::sched::gateway::SchedGateway::listen(
-        &sched_addr, Some(Arc::clone(&sched_resman))
-    );
     let _ = sched_addr.parse::<SocketAddr>().expect("invalid socket address");
 
     // populate the in-memory config struct
@@ -129,21 +111,9 @@ fn main() {
     // register signal handler
     set_ctrlc_handler(pool, sched_addr.clone(), manager_sender, Some(manager_handle));
 
-    // TCP gateway
-    if let Some(l) = matches.value_of("http listen address") {
-        let gateway = snapfaas::sched::gateway::HTTPGateway::listen(l, None);
-        for (request, tx) in gateway {
-            // Return when a VM acquisition succeeds or fails
-            // but before a VM launches (if it is newly allocated)
-            // and execute the request.
-            if let Some(_) = schedgate.next() {
-                let sched_resman_dup = Arc::clone(&sched_resman);
-                thread::spawn(move || {
-                    let _ = snapfaas::sched::schedule_sync(request, sched_resman_dup, tx).unwrap();
-                });
-            }
-        }
-    }
+    // hold on
+    let (_, rx) = mpsc::channel::<usize>();
+    loop { let _ = rx.recv(); }
 }
 
 fn new_workerpool(
@@ -158,7 +128,6 @@ fn new_workerpool(
             cid,
         ));
     }
-
     pool
 }
 
