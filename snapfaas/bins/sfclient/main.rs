@@ -235,7 +235,8 @@ fn main() {
                 let request = sched::message::LabeledInvoke {
                     invoke: Some(syscalls::Invoke { gate: path.clone(), payload: line }),
                     label: Some(vm::buckle_to_pblabel(&label)),
-                    privilege: vm::component_to_pbcomponent(&[Clause::new_from_vec(vec![principal.clone()])].into()),
+                    invoker_privilege: vm::component_to_pbcomponent(
+                        &[Clause::new_from_vec(vec![principal.clone()])].into()),
                 };
                 let mut connection = TcpStream::connect(addr).unwrap();
                 sched::message::write_u8(&mut connection, &request.encode_to_vec()).unwrap();

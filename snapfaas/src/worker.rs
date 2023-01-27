@@ -170,7 +170,7 @@ impl Worker {
 
                                     let labeled_invoke = r.labeled_invoke.as_ref();
                                     if let Some(privilege) = labeled_invoke
-                                        .map(|e| vm::pbcomponent_to_component(&e.privilege)) {
+                                        .map(|e| vm::pbcomponent_to_component(&e.invoker_privilege)) {
                                         fs::utils::set_my_privilge(privilege);
                                     }
                                     let gate = labeled_invoke

@@ -449,7 +449,7 @@ impl Vm {
                     let labeled = message::LabeledInvoke {
                         invoke: Some(syscalls::Invoke { gate: req.gate, payload: req.payload }),
                         label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
-                        privilege: component_to_pbcomponent(&fs::utils::my_privilege()),
+                        invoker_privilege: component_to_pbcomponent(&fs::utils::my_privilege()),
                     };
                     let success = self.sched_invoke(labeled);
                     let result = syscalls::WriteKeyResponse { success };

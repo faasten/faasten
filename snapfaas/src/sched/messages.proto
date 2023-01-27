@@ -15,9 +15,9 @@ message FinishTask {
 }
 
 message LabeledInvoke {
-    syscalls.Invoke    invoke    = 1;
-    syscalls.Buckle    label     = 2;
-    syscalls.Component privilege = 3;
+    syscalls.Invoke    invoke           = 1;
+    syscalls.Buckle    label            = 2;
+    syscalls.Component invokerPrivilege = 3;
 }
 
 message UpdateResource {
