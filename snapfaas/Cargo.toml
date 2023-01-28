@@ -17,8 +17,8 @@ name = "multivm"
 path = "bins/multivm/main.rs"
 
 [[bin]]
-name = "gateway"
-path = "bins/gateway/main.rs"
+name = "scheduler"
+path = "bins/scheduler/main.rs"
 
 [[bin]]
 name = "sfclient"

@@ -19,9 +19,15 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new(addr: String) -> Self {
-        let stream = TcpStream::connect(&addr).unwrap();
-        let _sock_addr = addr.parse().unwrap();
-        Scheduler { _sock_addr, stream }
+        Self::try_new(addr).expect("Fail to connect to the scheduler")
+    }
+
+    pub fn try_new(addr: String) -> Result<Self, Error> {
+        let stream = TcpStream::connect(&addr)
+            .map_err(|e| Error::StreamConnect(e))?;
+        let _sock_addr = addr.parse()
+            .map_err(|e| Error::SocketAddrParse(e))?;
+        Ok(Scheduler { _sock_addr, stream })
     }
 
     /// This method is for workers to retrieve a HTTP request, and

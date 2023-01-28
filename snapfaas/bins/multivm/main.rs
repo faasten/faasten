@@ -15,6 +15,7 @@ use snapfaas::{configs, fs};
 use snapfaas::resource_manager::ResourceManager;
 use snapfaas::message::Message;
 use snapfaas::worker::Worker;
+use snapfaas::sched;
 
 use core::panic;
 use std::sync::mpsc;
@@ -138,8 +139,9 @@ fn set_ctrlc_handler(
     ctrlc::set_handler(move || {
         println!("ctrlc handler");
         warn!("{}", "Handling Ctrl-C. Shutting down...");
-        let mut sched = snapfaas::sched::rpc::Scheduler::new(sched_addr.clone());
-        let _ = sched.terminate_all();
+        if let Ok(mut sched) = sched::rpc::Scheduler::try_new(sched_addr.clone()) {
+            let _ = sched.drop_resource();
+        }
         while let Some(worker) = pool.pop() {
             worker.join().expect("failed to join worker thread");
         }

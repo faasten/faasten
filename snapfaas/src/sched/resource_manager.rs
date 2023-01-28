@@ -141,19 +141,6 @@ impl ResourceManager {
         }
     }
 
-    pub fn reset(&mut self) {
-        for (_, workers) in self.idle.iter_mut() {
-            while let Some(w) = workers.pop() {
-                let _ = w.sender.send(Task::Terminate);
-            }
-        }
-        self.idle.retain(|_, v| !v.is_empty());
-        // TODO Only workers get killed, meaning that
-        // local resource menagers are still alive after this
-        // self.cached.retain(|_, _| false);
-        // (self.total_mem, self.total_num_vms) = (0, 0);
-    }
-
     pub fn update(&mut self, addr: IpAddr, info: ResourceInfo) {
         log::debug!("update {:?}", info);
         let node = Node(addr);
@@ -202,15 +189,27 @@ impl ResourceManager {
 
     pub fn remove(&mut self, addr: IpAddr) {
         let node = Node(addr);
-        // They must have no idle worker
+        // They must have no busy worker
         for (_, v) in self.cached.iter_mut() {
             if let Some(pos) = v.iter().position(|&n| n.0 == node) {
                 // This doesn't preserve ordering
                 v.swap_remove(pos);
+                v.retain(|n| n.1 != 0);
             }
         }
         self.info.remove(&node);
-        self.idle.remove(&node);
+        if let Some(mut workers) = self.idle.remove(&node) {
+            while let Some(w) = workers.pop() {
+                let _ = w.sender.send(Task::Terminate);
+            }
+        }
+    }
+
+    pub fn remove_all(&mut self) {
+        let nodes = self.info.keys().cloned().collect::<Vec<_>>();
+        for node in nodes.into_iter() {
+            self.remove(node.0)
+        }
     }
 
     fn try_add_node(&mut self, node: &Node) -> bool {

@@ -18,6 +18,7 @@ pub enum Error {
     StreamConnect(std::io::Error),
     StreamRead(std::io::Error),
     StreamWrite(std::io::Error),
+    SocketAddrParse(std::net::AddrParseError),
     Other(String),
 }
 
