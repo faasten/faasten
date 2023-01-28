@@ -4,8 +4,8 @@ out
 tmp
 storage/
 blobs/
-public.pem
-secret.pem
+*.pem
+*.pem
 *secret*
 *tmux*
 *\.ext4
