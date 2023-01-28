@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::io::Write;
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::SystemTime;
 use std::io::Read;
 use std::net::TcpStream;
 
+use openssl::derive;
 use reqwest::blocking::Client;
 use rouille::ResponseBody;
 use serde::{Deserialize, Serialize};
@@ -195,14 +197,30 @@ impl App {
             (POST) (/invoke/{function_name}) => {
                 self.invoke(request, function_name)
             },
-            (POST) (/gate) => {
-                self.gate(request)
+            (POST) (/gates) => {
+                self.gates(request)
+            },
+            (POST) (/functions) => {
+                self.functions(request)
             },
             _ => Ok(Response::empty_404())
         ).unwrap_or_else(|e| e).with_additional_header("Access-Control-Allow-Origin", "*")
     }
 
-    fn gate(&self, request: &Request) -> Result<Response, Response> {
+    fn functions(&self, request: &Request) -> Result<Response, Response> {
+        let _login = self.verify_jwt(request)?;
+
+        // write tarball to the blobstore
+        let mut input = request.data().ok_or(Response::empty_406())?;
+        let mut blob = self.blobstore.lock().expect("lock").create().or(Err(Response::empty_406()))?;
+        std::io::copy(&mut input, &mut blob).or(Err(Response::empty_406()))?;
+        blob.flush().or(Err(Response::empty_406()))?;
+        let blob = self.blobstore.lock().expect("lock").save(blob).or(Err(Response::empty_406()))?;
+
+        Ok(Response::json(&blob.name))
+    }
+
+    fn gates(&self, request: &Request) -> Result<Response, Response> {
         let login = self.verify_jwt(request)?;
 
         let conn = &mut self.conn.get().map_err(|_|
@@ -211,8 +229,10 @@ impl App {
             })).with_status_code(500))?;
         let input_json: Value = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
 
+        // TODO update webfront to issue LabeledInvoke RPC
         let req = request::Request {
-            gate: "sys_gate".to_string(),
+            // TODO update the gate field to fs path
+            gate: "sys-fs".to_string(),
             payload: serde_json::json!({
                 "payload": input_json,
                 "login": login,
