@@ -20,6 +20,7 @@ fn main() {
         .version(crate_version!())
         .author(crate_authors!())
         .about("Launch Faasten gateway")
+        // TODO upgrade webfront to use labeled_invoke and remove http listen address
         .arg(
             Arg::with_name("http listen address")
                 .value_name("[ADDR:]PORT")
