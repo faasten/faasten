@@ -50,7 +50,6 @@ fn handle_request(req: LabeledInvoke, rsp_sender: Sender<Response>, func_req_sen
         vm_req_sender.send(Message::GetVm(function_name.clone(), tx)).expect("Failed to send GetVm request");
         match rx.recv().expect("Failed to receive GetVm response") {
             Ok(mut vm) => {
-                // TODO: label cached VM
                 tsps.allocated = precise_time_ns();
                 if !vm.is_launched() {
                     // newly allocated VM is returned, launch it first
