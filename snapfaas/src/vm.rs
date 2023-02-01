@@ -7,7 +7,8 @@ use std::process::Stdio;
 use std::string::String;
 use std::io::{Seek, Write};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use log::{debug, error};
 use tokio::process::{Child, Command};
@@ -105,8 +106,6 @@ struct VmHandle {
     // This field is never used, but we need to it make sure the Child isn't dropped and, thus,
     // killed, before the VmHandle is dropped.
     vm_process: Child,
-    // None when VM is created from single-VM launcher
-    invoke_handle: Option<Arc<Mutex<Scheduler>>>
 }
 
 #[derive(Debug)]
@@ -165,7 +164,6 @@ impl Vm {
     /// When this function returns, the VM has finished booting and is ready to accept requests.
     pub fn launch(
         &mut self,
-        invoke_handle: Option<Arc<Mutex<Scheduler>>>,
         vm_listener: UnixListener,
         cid: u32,
         force_exit: bool,
@@ -283,7 +281,6 @@ impl Vm {
             conn,
             rest_client,
             vm_process,
-            invoke_handle,
         };
 
         self.handle = Some(handle);
@@ -311,7 +308,7 @@ impl Vm {
     }
 
     /// Send request to vm and wait for its response
-    pub fn process_req(&mut self, payload: String) -> Result<String, Error> {
+    pub fn process_req(&mut self, invoke_handle: Option<Rc<RefCell<Scheduler>>>, payload: String) -> Result<String, Error> {
         use prost::Message;
 
         let sys_req = syscalls::Request {
@@ -321,7 +318,7 @@ impl Vm {
 
         self.send_into_vm(sys_req)?;
 
-        self.process_syscalls()
+        self.process_syscalls(invoke_handle)
     }
 
     /// Send a HTTP GET request no matter if an authentication token is present
@@ -369,22 +366,22 @@ impl Vm {
         }
     }
 
-    fn sched_invoke(&self, labeled_invoke: message::LabeledInvoke) -> bool {
+    fn sched_invoke(&self, invoke_handle: Option<Rc<RefCell<Scheduler>>>, labeled_invoke: message::LabeledInvoke) -> bool {
         use time::precise_time_ns;
-        if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
+        if let Some(invoke_handle) = invoke_handle {
             use crate::metrics::RequestTimestamps;
             let _timestamps = RequestTimestamps {
                 at_vmm: precise_time_ns(),
                 ..Default::default()
             };
-            invoke_handle.lock().unwrap().labeled_invoke(labeled_invoke).is_ok()
+            invoke_handle.borrow_mut().labeled_invoke(labeled_invoke).is_ok()
         } else {
             debug!("No invoke handle, ignoring invoke syscall.");
             false
         }
     }
 
-    fn process_syscalls(&mut self) -> Result<String, Error> {
+    fn process_syscalls(&mut self, invoke_handle: Option<Rc<RefCell<Scheduler>>>) -> Result<String, Error> {
         use lmdb::{Transaction, WriteFlags};
         use prost::Message;
         use std::io::Read;
@@ -451,7 +448,8 @@ impl Vm {
                         label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
                         invoker_privilege: component_to_pbcomponent(&fs::utils::my_privilege()),
                     };
-                    let success = self.sched_invoke(labeled);
+                    let invoke_handle_dup = invoke_handle.as_ref().map(|e| Rc::clone(e));
+                    let success = self.sched_invoke(invoke_handle_dup, labeled);
                     let result = syscalls::WriteKeyResponse { success };
                     self.send_into_vm(result.encode_to_vec())?;
                 },

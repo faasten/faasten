@@ -6,7 +6,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::thread::JoinHandle;
 use std::os::unix::net::UnixListener;
-use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use log::{error, debug};
 use time::precise_time_ns;
@@ -32,7 +33,7 @@ pub struct Worker {
 
 fn handle_request(
     req: LabeledInvoke,
-    sched_rpc: Arc<Mutex<Scheduler>>,
+    sched_rpc: Rc<RefCell<Scheduler>>,
     vm_req_sender: Sender<Message>,
     vm_listener: UnixListener,
     mut tsps: RequestTimestamps,
@@ -63,10 +64,8 @@ fn handle_request(
                 if !vm.is_launched() {
                     // newly allocated VM is returned, launch it first
                     if let Err(e) = vm.launch(
-                        Some(Arc::clone(&sched_rpc)),
                         vm_listener.try_clone().expect("clone unix listener"),
-                        cid, false,
-                        None,
+                        cid, false, None,
                     ) {
                         handle_vm_error(e);
                         // TODO send response back to gateway
@@ -86,7 +85,7 @@ fn handle_request(
                 debug!("VM is launched");
                 tsps.launched = precise_time_ns();
 
-                match vm.process_req(req.payload.clone()) {
+                match vm.process_req(Some(Rc::clone(&sched_rpc)), req.payload.clone()) {
                     Ok(rsp) => {
                         tsps.completed = precise_time_ns();
                         // TODO: output are currently ignored
@@ -151,14 +150,14 @@ impl Worker {
                 Err(e) => panic!("Failed to bind to unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
             };
 
-            let sched_rpc = Arc::new(Mutex::new(Scheduler::new(sched_addr)));
+            let sched_rpc = Rc::new(RefCell::new(Scheduler::new(sched_addr)));
             loop {
                 let vm_listener_dup = match vm_listener.try_clone() {
                     Ok(listener) => listener,
                     Err(e) => panic!("Failed to clone unix listener \"worker-{}.sock_1234\": {:?}", cid, e),
                 };
 
-                let message = sched_rpc.lock().unwrap().get(); // wait for request
+                let message = sched_rpc.borrow_mut().get(); // wait for request
                 let (req_id, req) = {
                     use sched::message::response::Kind;
                     match message {
@@ -218,7 +217,7 @@ impl Worker {
                 // FIXME dummy tsps for now
                 let dummy_tsps = RequestTimestamps {..Default::default()};
                 let vm_req_sender_dup = vm_req_sender.clone();
-                let sched_rpc_dup = Arc::clone(&sched_rpc);
+                let sched_rpc_dup = Rc::clone(&sched_rpc);
                 let result = req
                     .map(|r| {
                         handle_request(r, sched_rpc_dup, vm_req_sender_dup,
@@ -227,7 +226,7 @@ impl Worker {
                     .unwrap_or_else(|| Response { status: RequestStatus::GateNotExist });
 
                 // return the result
-                let _ = sched_rpc.lock().unwrap().finish(req_id, format!("{:?}", result));
+                let _ = sched_rpc.borrow_mut().finish(req_id, format!("{:?}", result));
             }
         });
 

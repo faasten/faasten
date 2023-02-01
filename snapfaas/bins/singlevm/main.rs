@@ -227,7 +227,7 @@ fn main() {
     let _ = std::fs::remove_file(&vm_listener_path);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
     let force_exit = cmd_arguments.is_present("force_exit");
-    if let Err(e) = vm.launch(None, vm_listener, CID, force_exit, Some(odirect)) {
+    if let Err(e) = vm.launch(vm_listener, CID, force_exit, Some(odirect)) {
         log::error!("unable to launch the VM: {:?}", e);
         snapfaas::unlink_unix_sockets();
     }
@@ -259,7 +259,7 @@ fn main() {
     for req in requests {
         let t1 = Instant::now();
         log::debug!("request: {:?}", req);
-        match vm.process_req(req.to_string()) {
+        match vm.process_req(None, req.to_string()) {
             Ok(rsp) => {
                 let t2 = Instant::now();
                 println!("request returned in: {} us", t2.duration_since(t1).as_micros());
