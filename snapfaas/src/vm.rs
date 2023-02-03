@@ -5,20 +5,20 @@ use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Stdio;
 use std::string::String;
-use std::sync::mpsc::Sender;
-use std::sync::mpsc;
 use std::io::{Seek, Write};
 use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use log::{debug, error};
 use tokio::process::{Child, Command};
 
 use crate::configs::FunctionConfig;
-use crate::message::Message;
-use crate::request::LabeledInvoke;
 use crate::{blobstore, syscalls};
 use crate::labeled_fs::DBENV;
 use crate::fs;
+use crate::sched::rpc::Scheduler;
+use crate::sched::message;
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
@@ -28,7 +28,7 @@ const USER_AGENT: &str = "snapfaas";
 
 use labeled::buckle::{Clause, Component, Buckle};
 
-fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Component {
+pub fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Component {
     match component {
         None => Component::DCFalse,
         Some(set) => Component::DCFormula(set.clauses.iter()
@@ -44,7 +44,7 @@ pub fn pblabel_to_buckle(label: &syscalls::Buckle) -> Buckle {
     }
 }
 
-fn component_to_pbcomponent(component: &Component) -> Option<syscalls::Component> {
+pub fn component_to_pbcomponent(component: &Component) -> Option<syscalls::Component> {
     match component {
         Component::DCFalse => None,
         Component::DCFormula(set) => Some(syscalls::Component {
@@ -106,8 +106,6 @@ struct VmHandle {
     // This field is never used, but we need to it make sure the Child isn't dropped and, thus,
     // killed, before the VmHandle is dropped.
     vm_process: Child,
-    // None when VM is created from single-VM launcher
-    invoke_handle: Option<Sender<Message>>,
 }
 
 #[derive(Debug)]
@@ -166,7 +164,6 @@ impl Vm {
     /// When this function returns, the VM has finished booting and is ready to accept requests.
     pub fn launch(
         &mut self,
-        invoke_handle: Option<Sender<Message>>,
         vm_listener: UnixListener,
         cid: u32,
         force_exit: bool,
@@ -284,7 +281,6 @@ impl Vm {
             conn,
             rest_client,
             vm_process,
-            invoke_handle,
         };
 
         self.handle = Some(handle);
@@ -312,7 +308,7 @@ impl Vm {
     }
 
     /// Send request to vm and wait for its response
-    pub fn process_req(&mut self, payload: String) -> Result<String, Error> {
+    pub fn process_req(&mut self, invoke_handle: Option<Rc<RefCell<Scheduler>>>, payload: String) -> Result<String, Error> {
         use prost::Message;
 
         let sys_req = syscalls::Request {
@@ -322,7 +318,7 @@ impl Vm {
 
         self.send_into_vm(sys_req)?;
 
-        self.process_syscalls()
+        self.process_syscalls(invoke_handle)
     }
 
     /// Send a HTTP GET request no matter if an authentication token is present
@@ -370,24 +366,22 @@ impl Vm {
         }
     }
 
-    fn sched_invoke(&self, invoke: LabeledInvoke) -> bool {
+    fn sched_invoke(&self, invoke_handle: Option<Rc<RefCell<Scheduler>>>, labeled_invoke: message::LabeledInvoke) -> bool {
         use time::precise_time_ns;
-        if let Some(invoke_handle) = self.handle.as_ref().and_then(|h| h.invoke_handle.as_ref()) {
-            let (tx, _) = mpsc::channel();
+        if let Some(invoke_handle) = invoke_handle {
             use crate::metrics::RequestTimestamps;
-            let timestamps = RequestTimestamps {
+            let _timestamps = RequestTimestamps {
                 at_vmm: precise_time_ns(),
-                //request: req.clone(),
                 ..Default::default()
             };
-            invoke_handle.send(Message::Request((invoke, tx, timestamps))).is_ok()
+            invoke_handle.borrow_mut().labeled_invoke(labeled_invoke).is_ok()
         } else {
             debug!("No invoke handle, ignoring invoke syscall.");
             false
         }
     }
 
-    fn process_syscalls(&mut self) -> Result<String, Error> {
+    fn process_syscalls(&mut self, invoke_handle: Option<Rc<RefCell<Scheduler>>>) -> Result<String, Error> {
         use lmdb::{Transaction, WriteFlags};
         use prost::Message;
         use std::io::Read;
@@ -449,21 +443,14 @@ impl Vm {
                     self.send_into_vm(result)?;
                 }
                 Some(SC::Invoke(req)) => {
-                    let value = fs::utils::read_path(&self.fs, &req.gate).ok().and_then(|entry| {
-                        match entry {
-                            fs::DirEntry::Gate(gate) => self.fs.invoke_gate(&gate).ok(),
-                            _ => None,
-                        }
-                    });
-                    let mut result = syscalls::WriteKeyResponse { success: value.is_some() };
-                    if value.is_some() {
-                        let labeled = LabeledInvoke {
-                            gate: value.clone().unwrap(),
-                            label: fs::utils::get_current_label(),
-                            payload: req.payload,
-                        };
-                        result.success = self.sched_invoke(labeled)
-                    }
+                    let labeled = message::LabeledInvoke {
+                        invoke: Some(syscalls::Invoke { gate: req.gate, payload: req.payload }),
+                        label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
+                        invoker_privilege: component_to_pbcomponent(&fs::utils::my_privilege()),
+                    };
+                    let invoke_handle_dup = invoke_handle.as_ref().map(|e| Rc::clone(e));
+                    let success = self.sched_invoke(invoke_handle_dup, labeled);
+                    let result = syscalls::WriteKeyResponse { success };
                     self.send_into_vm(result.encode_to_vec())?;
                 },
                 Some(SC::DupGate(req)) => {

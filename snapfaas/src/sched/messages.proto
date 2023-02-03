@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package snapfaas.sched.messages;
+
+import "syscalls.proto";
+
+// Begin of request messages
+message GetTask {
+    uint64 threadId = 1;
+}
+
+message FinishTask {
+    string taskId = 1;
+    string result = 2;
+}
+
+message LabeledInvoke {
+    syscalls.Invoke    invoke           = 1;
+    syscalls.Buckle    label            = 2;
+    syscalls.Component invokerPrivilege = 3;
+}
+
+message UpdateResource {
+    bytes info = 1;
+}
+
+message DropResource {}
+message TerminateAll {}
+// End of request messages
+
+// Begin of response messages
+message ProcessTask {
+    string        taskId        = 1;
+    LabeledInvoke labeledInvoke = 2;
+}
+
+message Terminate {}
+message Fail {}
+// End of response messages
+
+message Request {
+    oneof kind {
+        // Worker
+        GetTask        getTask        = 1;
+        FinishTask     finishTask     = 2;
+        LabeledInvoke  labeledInvoke  = 3;
+        // Local resource manager
+        UpdateResource updateResource = 4;
+        DropResource   dropResource   = 5;
+        // Debug
+        TerminateAll   terminateAll   = 6;
+    }
+}
+
+message Response {
+    oneof kind {
+        // Worker
+        ProcessTask processTask = 1;
+        Terminate   terminate   = 2;
+        // Debug
+        Fail        fail        = 3;
+    }
+}
+

@@ -13,14 +13,15 @@ use clap::{App, Arg};
 use log::{warn, info};
 use snapfaas::{configs, fs};
 use snapfaas::resource_manager::ResourceManager;
-use snapfaas::gateway;
 use snapfaas::message::Message;
 use snapfaas::worker::Worker;
+use snapfaas::sched;
 
 use core::panic;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::mpsc;
 use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
+use std::net::SocketAddr;
 
 fn main() {
     env_logger::init();
@@ -38,13 +39,13 @@ fn main() {
                 .help("Path to controller config YAML file"),
         )
         .arg(
-            Arg::with_name("listen address")
+            Arg::with_name("scheduler listen address")
                 .value_name("[ADDR:]PORT")
-                .long("listen")
-                .short("l")
+                .long("listen_sched")
+                .short("s")
                 .takes_value(true)
                 .required(true)
-                .help("Address on which SnapFaaS listen for connections that sends requests"),
+                .help("Address on which SnapFaaS listen for RPCs that requests for tasks"),
         )
         .arg(Arg::with_name("total memory")
                 .value_name("MB")
@@ -54,6 +55,13 @@ fn main() {
                 .help("Total memory available for all VMs")
         )
         .get_matches();
+
+    // intialize remote scheduler
+    let sched_addr = matches
+                        .value_of("scheduler listen address")
+                        .map(String::from)
+                        .unwrap();
+    let _ = sched_addr.parse::<SocketAddr>().expect("invalid socket address");
 
     // populate the in-memory config struct
     let config_path = matches.value_of("config").unwrap();
@@ -85,56 +93,54 @@ fn main() {
             e => panic!("Cannot create \":{}\". {:?}", image, e),
         }
     }
-    // create the resource manager
-    let (mut manager, manager_sender) = ResourceManager::new(config);
+    // create the local resource manager
+    let (mut manager, manager_sender) = ResourceManager::new(config, sched_addr.clone());
 
     // set total memory
-    let total_mem = matches.value_of("total memory").unwrap()
-        .parse::<usize>().expect("Total memory is not a valid integer");
+    let total_mem = matches
+                        .value_of("total memory")
+                        .unwrap()
+                        .parse::<usize>()
+                        .expect("Total memory is not a valid integer");
     manager.set_total_mem(total_mem);
 
     // create the worker pool
-    let (pool, request_sender) = new_workerpool(manager.total_mem()/128, manager_sender.clone());
+    let pool = new_workerpool(manager.total_mem()/128, sched_addr.clone(), manager_sender.clone());
     // kick off the resource manager
     let manager_handle = manager.run();
 
     // register signal handler
-    set_ctrlc_handler(request_sender.clone(), pool, manager_sender, Some(manager_handle));
+    set_ctrlc_handler(pool, sched_addr.clone(), manager_sender, Some(manager_handle));
 
-    // TCP gateway
-    if let Some(l) = matches.value_of("listen address") {
-        let gateway = gateway::HTTPGateway::listen(l);
-
-        for (request, response_tx, timestamps) in gateway {
-            // Return when a VM acquisition succeeds or fails
-            // but before a VM launches (if it is newly allocated)
-            // and execute the request.
-            request_sender.send(Message::Request((request, response_tx, timestamps))).expect("Failed to send request");
-        }
-    }
+    // hold on
+    let (_, rx) = mpsc::channel::<usize>();
+    loop { let _ = rx.recv(); }
 }
 
-fn new_workerpool(pool_size: usize, manager_sender: Sender<Message>) -> (Vec<Worker>, Sender<Message>) {
-    let (request_sender, response_receiver) = mpsc::channel();
-    let response_receiver = Arc::new(Mutex::new(response_receiver));
-
+fn new_workerpool(
+    pool_size: usize, sched_addr: String, manager_sender: Sender<Message>
+) -> Vec<Worker> {
     let mut pool = Vec::with_capacity(pool_size);
-
     for i in 0..pool_size {
         let cid = i as u32 + 100;
-        pool.push(Worker::new(response_receiver.clone(), manager_sender.clone(), request_sender.clone(), cid));
+        pool.push(Worker::new(
+            sched_addr.clone(),
+            manager_sender.clone(),
+            cid,
+        ));
     }
-
-    (pool, request_sender)
+    pool
 }
 
-fn set_ctrlc_handler(request_sender: Sender<Message>, mut pool: Vec<Worker>, manager_sender: Sender<Message>, mut manager_handle: Option<JoinHandle<()>>) {
+fn set_ctrlc_handler(
+    mut pool: Vec<Worker>, sched_addr: String,
+    manager_sender: Sender<Message>, mut manager_handle: Option<JoinHandle<()>>
+) {
     ctrlc::set_handler(move || {
-        println!("");
+        println!("ctrlc handler");
         warn!("{}", "Handling Ctrl-C. Shutting down...");
-        let pool_size = pool.len();
-        for _ in 0..pool_size {
-            request_sender.send(Message::Shutdown).expect("failed to shut down workers");
+        if let Ok(mut sched) = sched::rpc::Scheduler::try_new(sched_addr.clone()) {
+            let _ = sched.drop_resource();
         }
         while let Some(worker) = pool.pop() {
             worker.join().expect("failed to join worker thread");

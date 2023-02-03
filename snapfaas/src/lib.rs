@@ -3,7 +3,6 @@ extern crate glob;
 pub mod request;
 pub mod worker;
 pub mod message;
-pub mod gateway;
 pub mod configs;
 pub mod resource_manager;
 pub mod vm;
@@ -13,6 +12,7 @@ pub mod firecracker_wrapper;
 pub mod blobstore;
 pub mod labeled_fs;
 pub mod fs;
+pub mod sched;
 
 use std::string::String;
 use std::io::{BufReader, BufRead, Error, ErrorKind, Result};
@@ -37,7 +37,7 @@ pub fn unlink_unix_sockets() {
             }
         }
     }
-    
+
     match glob::glob("dump_ws-*sock*") {
         Err(_) => error!("Invalid file pattern"),
         Ok(paths) => {
@@ -96,7 +96,7 @@ pub fn open_url(url: &str) -> Result<std::fs::File> {
         }
         Err(_)=> return Err(Error::new(ErrorKind::Other, "Url parse failed")),
     }
-    
+
 }
 
 pub fn get_machine_memory() -> usize {
