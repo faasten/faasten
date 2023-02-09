@@ -5,7 +5,7 @@ lazy_static::lazy_static! {
         if !std::path::Path::new("storage").exists() {
             let _ = std::fs::create_dir("storage").unwrap();
         }
-        
+
         lmdb::Environment::new()
             .set_map_size(100 * 1024 * 1024 * 1024)
             .set_max_readers(1024)

@@ -1,10 +1,10 @@
 ///! Labeled File System
 
 
-use lmdb::{Transaction, WriteFlags};
+use lmdb::{Transaction, WriteFlags, Cursor};
 use log::info;
 use serde::{Serialize, Deserialize};
-use std::{collections::HashMap, cell::RefCell, time::{Duration, Instant}};
+use std::{collections::{HashMap, HashSet}, cell::RefCell, time::{Duration, Instant}};
 use labeled::{buckle::{Clause, Buckle, Component, Principal}, Label};
 use serde_with::serde_as;
 
@@ -52,6 +52,8 @@ pub trait BackingStore {
     fn put(&self, key: &[u8], value: &[u8]);
     fn add(&self, key: &[u8], value: &[u8]) -> bool;
     fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8]) -> Result<(), Option<Vec<u8>>>;
+    fn del(&self, key: &[u8]) -> bool;
+    fn get_keys(&self) -> Option<Vec<&[u8]>>;
 }
 
 impl BackingStore for &lmdb::Environment {
@@ -120,6 +122,32 @@ impl BackingStore for &lmdb::Environment {
             res
         })
     }
+
+    fn del(&self, key: &[u8]) -> bool {
+        STAT.with(|_stat| {
+            let db = self.open_db(None).unwrap();
+            let mut txn = self.begin_rw_txn().unwrap();
+            let res = txn.del(db, &key, None).is_ok();
+            txn.commit().unwrap();
+            res
+        })
+    }
+
+    fn get_keys(&self) -> Option<Vec<&[u8]>> {
+        STAT.with(|_stat| {
+            let db = self.open_db(None).ok()?;
+            let txn = self.begin_ro_txn().ok()?;
+            let mut cursor = txn.open_ro_cursor(db).ok()?;
+            let mut keys = Vec::new();
+            for data in cursor.iter_start() {
+                if let Ok((key, _)) = data {
+                    keys.push(key);
+                }
+            }
+            Some(keys)
+        })
+    }
+
 }
 
 #[derive(Debug)]
@@ -661,6 +689,67 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
+    fn faceted_inner(&self, fdir: &FacetedDirectory) -> HashMap<String, DirEntry> {
+        match self.storage.get(&fdir.object_id.to_be_bytes()) {
+            Some(bs) => {
+                serde_json::from_slice::<FacetedDirectoryInner>(bs.as_slice())
+                    .map(|inner| {
+                        inner.list_facets()
+                    }).unwrap_or_default().iter()
+                    .fold(HashMap::<String, DirEntry>::new(), |mut m, dir| {
+                        m.insert(serde_json::ser::to_string(dir.label()).unwrap(), DirEntry::Directory(dir.clone()));
+                        m
+                    })
+            }
+            None => Default::default(),
+        }
+    }
+
+    pub fn collect_garbage(&mut self) -> Result<(), LabelError> {
+        use std::convert::TryInto;
+        let object_list = self.storage.get_keys().unwrap_or_default().iter()
+            .filter_map(|&b| b.try_into().ok())
+            .map(|b| UID::from_be_bytes(b)).collect::<Vec<_>>();
+        let mut objects = HashSet::new();
+        for obj in object_list.into_iter() {
+            objects.insert(obj);
+        }
+
+        let mut visited = HashSet::new();
+        let mut remaining = vec![DirEntry::Directory(self.root())];
+        while let Some(entry) = remaining.pop() {
+            match entry {
+                DirEntry::Directory(dir) => {
+                    if !visited.insert(dir.object_id) { continue; }
+                    let entries = self.list(dir)?;
+                    for entry in entries.into_values() {
+                        remaining.push(entry);
+                    }
+                }
+                DirEntry::FacetedDirectory(fdir) => {
+                    if !visited.insert(fdir.object_id) { continue; }
+                    let faceted_entries = self.faceted_inner(&fdir);
+                    for entry in faceted_entries.into_values() {
+                        remaining.push(entry);
+                    }
+                }
+                DirEntry::File(file) => { if !visited.insert(file.object_id) { continue; } }
+                DirEntry::Gate(gate) => { if !visited.insert(gate.object_id) { continue; } }
+            }
+        }
+
+        let diff = objects.difference(&visited).collect::<HashSet<_>>();
+        for obj in diff.into_iter() {
+            self.storage.del(&obj.to_be_bytes());
+        }
+
+        println!("objects: {:?}", objects);
+        println!("visited: {:?}", visited);
+        println!("difference: {:?}", objects.difference(&visited).collect::<HashSet<_>>());
+
+        Ok(())
+    }
+
 }
 
 impl Directory {
@@ -1057,4 +1146,61 @@ pub mod utils {
             res
         })
     }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::labeled_fs::DBENV;
+    use lmdb::Cursor;
+    use std::convert::TryInto;
+    use std::collections::HashSet;
+
+    fn get_objects() -> HashSet<UID> {
+        let lmdbenv = &*DBENV;
+        let db = lmdbenv.open_db(None).unwrap();
+        let txn = lmdbenv.begin_ro_txn().unwrap();
+        let mut cursor = txn.open_ro_cursor(db).unwrap();
+
+        let mut set = HashSet::new();
+        for i in cursor.iter_start() {
+            let (buf, _) = i.unwrap();
+            let id = UID::from_be_bytes(buf.try_into().unwrap());
+            set.insert(id);
+        }
+        set
+    }
+
+    #[test]
+    fn test_collect_garbage() {
+        utils::taint_with_label(Buckle::top());
+        let mut fs = FS::new(&*DBENV);
+        let _ = fs.collect_garbage();
+    }
+
+    // #[test]
+    fn pretty_print_objects() {
+        let lmdbenv = &*DBENV;
+        let db = lmdbenv.open_db(None).unwrap();
+        let txn = lmdbenv.begin_ro_txn().unwrap();
+        let mut cursor = txn.open_ro_cursor(db).unwrap();
+        for i in cursor.iter_start() {
+            let (a, b) = i.unwrap();
+            let id = u64::from_be_bytes(a.try_into().unwrap());
+            let content_string = String::from_utf8(b.to_vec()).unwrap();
+            let content = serde_json::from_str::<serde_json::Value>(&content_string)
+                .and_then(|c| serde_json::to_string_pretty(&c))
+                .unwrap_or_else(|_| content_string);
+            println!("{}, {}", id, content)
+        }
+        // let fs = FS::new(&*DBENV);
+        // let root = fs.root();
+        // println!("fs list: {:?}", fs.list(root));
+    }
+
+    // #[test]
+    // fn test_something() {
+        // let set = get_objects();
+        // println!("{:?}", set);
+    // }
 }
