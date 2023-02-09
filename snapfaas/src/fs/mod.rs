@@ -705,7 +705,7 @@ impl<S: BackingStore> FS<S> {
         }
     }
 
-    pub fn collect_garbage(&mut self) -> Result<(), LabelError> {
+    pub fn collect_garbage(&mut self) -> Result<usize, LabelError> {
         use std::convert::TryInto;
         let object_list = self.storage.get_keys().unwrap_or_default().iter()
             .filter_map(|&b| b.try_into().ok())
@@ -738,16 +738,15 @@ impl<S: BackingStore> FS<S> {
             }
         }
 
+        assert!(visited.iter().map(|o| objects.contains(o)).all(|x| x));
+
         let diff = objects.difference(&visited).collect::<HashSet<_>>();
-        for obj in diff.into_iter() {
+        for obj in diff.iter() {
             self.storage.del(&obj.to_be_bytes());
         }
+        log::debug!("deleted: {:?}", diff);
 
-        println!("objects: {:?}", objects);
-        println!("visited: {:?}", visited);
-        println!("difference: {:?}", objects.difference(&visited).collect::<HashSet<_>>());
-
-        Ok(())
+        Ok(diff.len())
     }
 
 }
@@ -1151,39 +1150,29 @@ pub mod utils {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::labeled_fs::DBENV;
     use lmdb::Cursor;
     use std::convert::TryInto;
-    use std::collections::HashSet;
-
-    fn get_objects() -> HashSet<UID> {
-        let lmdbenv = &*DBENV;
-        let db = lmdbenv.open_db(None).unwrap();
-        let txn = lmdbenv.begin_ro_txn().unwrap();
-        let mut cursor = txn.open_ro_cursor(db).unwrap();
-
-        let mut set = HashSet::new();
-        for i in cursor.iter_start() {
-            let (buf, _) = i.unwrap();
-            let id = UID::from_be_bytes(buf.try_into().unwrap());
-            set.insert(id);
-        }
-        set
-    }
+    use crate::labeled_fs::DBENV;
 
     #[test]
     fn test_collect_garbage() {
         utils::taint_with_label(Buckle::top());
         let mut fs = FS::new(&*DBENV);
-        let _ = fs.collect_garbage();
+
+        let _ = fs.create_file(Buckle::public());
+        let _ = fs.create_directory(Buckle::public());
+        let _ = fs.create_faceted_directory();
+        let num_deleted = fs.collect_garbage().unwrap();
+
+        assert_eq!(num_deleted, 3);
     }
 
-    // #[test]
-    fn pretty_print_objects() {
+    fn _pretty_print_objects() {
         let lmdbenv = &*DBENV;
         let db = lmdbenv.open_db(None).unwrap();
         let txn = lmdbenv.begin_ro_txn().unwrap();
         let mut cursor = txn.open_ro_cursor(db).unwrap();
+        let mut count = 0;
         for i in cursor.iter_start() {
             let (a, b) = i.unwrap();
             let id = u64::from_be_bytes(a.try_into().unwrap());
@@ -1191,16 +1180,9 @@ mod test {
             let content = serde_json::from_str::<serde_json::Value>(&content_string)
                 .and_then(|c| serde_json::to_string_pretty(&c))
                 .unwrap_or_else(|_| content_string);
-            println!("{}, {}", id, content)
+            println!("{}, {}", id, content);
+            count += 1;
         }
-        // let fs = FS::new(&*DBENV);
-        // let root = fs.root();
-        // println!("fs list: {:?}", fs.list(root));
+        println!("num objects {:?}", count);
     }
-
-    // #[test]
-    // fn test_something() {
-        // let set = get_objects();
-        // println!("{:?}", set);
-    // }
 }

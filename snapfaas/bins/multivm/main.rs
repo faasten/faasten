@@ -22,6 +22,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
 use std::net::SocketAddr;
+use std::{thread, time};
 
 fn main() {
     env_logger::init();
@@ -108,6 +109,16 @@ fn main() {
     let pool = new_workerpool(manager.total_mem()/128, sched_addr.clone(), manager_sender.clone());
     // kick off the resource manager
     let manager_handle = manager.run();
+
+    thread::spawn(|| {
+        loop {
+            thread::sleep(time::Duration::from_secs(5));
+            fs::utils::taint_with_label(labeled::buckle::Buckle::top());
+            let mut fs = fs::FS::new(&*snapfaas::labeled_fs::DBENV);
+            let n = fs.collect_garbage().unwrap();
+            log::debug!("garbage collected {}", n)
+        }
+    });
 
     // register signal handler
     set_ctrlc_handler(pool, sched_addr.clone(), manager_sender, Some(manager_handle));
