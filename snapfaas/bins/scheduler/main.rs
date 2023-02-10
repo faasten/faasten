@@ -1,7 +1,8 @@
 use clap::{App, Arg, crate_authors, crate_version};
 use std::sync::{Arc, Mutex};
 use std::net::SocketAddr;
-use std::thread;
+use std::{thread, time};
+use snapfaas::fs;
 use snapfaas::sched::{
     schedule_sync,
     rpc::Scheduler,
@@ -40,6 +41,17 @@ fn main() {
                 .help("Address on which Faasten listen for RPCs that requests for tasks"),
         )
         .get_matches();
+
+    // Start garbage collector
+    thread::spawn(|| {
+        loop {
+            thread::sleep(time::Duration::from_secs(5));
+            fs::utils::taint_with_label(labeled::buckle::Buckle::top());
+            let mut fs = fs::FS::new(&*snapfaas::labeled_fs::DBENV);
+            let collected = fs.collect_garbage().unwrap();
+            log::debug!("garbage collected {}", collected.len())
+        }
+    });
 
     // Intialize remote scheduler
     let sched_addr = matches

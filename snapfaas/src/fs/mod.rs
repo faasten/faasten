@@ -705,7 +705,7 @@ impl<S: BackingStore> FS<S> {
         }
     }
 
-    pub fn collect_garbage(&mut self) -> Result<usize, LabelError> {
+    pub fn collect_garbage(&mut self) -> Result<Vec<u64>, LabelError> {
         use std::convert::TryInto;
         let object_list = self.storage.get_keys().unwrap_or_default().iter()
             .filter_map(|&b| b.try_into().ok())
@@ -740,13 +740,12 @@ impl<S: BackingStore> FS<S> {
 
         assert!(visited.iter().map(|o| objects.contains(o)).all(|x| x));
 
-        let diff = objects.difference(&visited).collect::<HashSet<_>>();
+        let diff = objects.difference(&visited).map(|&x| x).collect::<Vec<_>>();
         for obj in diff.iter() {
             self.storage.del(&obj.to_be_bytes());
         }
-        log::debug!("deleted: {:?}", diff);
 
-        Ok(diff.len())
+        Ok(diff)
     }
 
 }
@@ -1150,39 +1149,25 @@ pub mod utils {
 #[cfg(test)]
 mod test {
     use super::*;
-    use lmdb::Cursor;
-    use std::convert::TryInto;
     use crate::labeled_fs::DBENV;
 
     #[test]
-    fn test_collect_garbage() {
+    fn test_collect_garbage() -> Result<(), LabelError> {
         utils::taint_with_label(Buckle::top());
         let mut fs = FS::new(&*DBENV);
 
-        let _ = fs.create_file(Buckle::public());
-        let _ = fs.create_directory(Buckle::public());
-        let _ = fs.create_faceted_directory();
-        let num_deleted = fs.collect_garbage().unwrap();
+        let objects = vec![
+            fs.create_file(Buckle::public()).object_id,
+            fs.create_directory(Buckle::public()).object_id,
+            fs.create_faceted_directory().object_id,
+        ];
+        let deleted = fs.collect_garbage()?;
 
-        assert_eq!(num_deleted, 3);
-    }
+        assert!(
+            [objects.clone(), deleted.clone()]
+            .concat().iter().map(|x| objects.contains(x) && deleted.contains(x)).all(|x| x)
+        );
 
-    fn _pretty_print_objects() {
-        let lmdbenv = &*DBENV;
-        let db = lmdbenv.open_db(None).unwrap();
-        let txn = lmdbenv.begin_ro_txn().unwrap();
-        let mut cursor = txn.open_ro_cursor(db).unwrap();
-        let mut count = 0;
-        for i in cursor.iter_start() {
-            let (a, b) = i.unwrap();
-            let id = u64::from_be_bytes(a.try_into().unwrap());
-            let content_string = String::from_utf8(b.to_vec()).unwrap();
-            let content = serde_json::from_str::<serde_json::Value>(&content_string)
-                .and_then(|c| serde_json::to_string_pretty(&c))
-                .unwrap_or_else(|_| content_string);
-            println!("{}, {}", id, content);
-            count += 1;
-        }
-        println!("num objects {:?}", count);
+        Ok(())
     }
 }
