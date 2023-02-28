@@ -169,6 +169,13 @@ class Syscall():
         response= self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
+    def invoke_service(self, service, route, body):
+        bodyJson = json.dumps(body)
+        req = syscalls_pb2.Syscall(invokeService = syscalls_pb2.InvokeService(serv = convert_path(service), route = route, body = bodyJson))
+        self._send(req)
+        response = self._recv(syscalls_pb2.ServiceResponse())
+        return response
+
     ###  amed data object syscalls ###
     def fs_list(self, path: str):
         """Returns a JSON object"""

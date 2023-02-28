@@ -72,6 +72,15 @@ pub fn buckle_to_pblabel(label: &Buckle) -> syscalls::Buckle {
     }
 }
 
+fn format_url(base: &str, args: &[String]) -> Result<String, SyscallProcessorError> {
+    let pat = "{}";
+    if base.matches(pat).count() == args.len() {
+        Ok(args.iter().fold(base.to_owned(), |acc, v| acc.replacen(pat, v, 1)))
+    } else {
+        Err(SyscallProcessorError::BadUrlArgs)
+    }
+}
+
 #[derive(Debug)]
 pub enum SyscallChannelError {
     Read,
@@ -93,6 +102,7 @@ pub enum SyscallProcessorError {
     Http(reqwest::Error),
     HttpAuth,
     BadStrPath,
+    BadUrlArgs,
 }
 
 impl From<SyscallChannelError> for SyscallProcessorError {
@@ -192,6 +202,28 @@ impl SyscallProcessor {
         }
     }
 
+    fn http_send(
+        &self,
+        service_info: &fs::ServiceInfo,
+        url_args: &[String],
+        body: Option<String>
+    ) -> Result<reqwest::blocking::Response, SyscallProcessorError> {
+        let method = service_info.verb.clone().into();
+        let url = format_url(&service_info.url, url_args)?;
+        let headers = service_info.headers
+            .iter()
+            .map(|(a, b)| (
+                reqwest::header::HeaderName::from_bytes(a.as_bytes()).unwrap(),
+                reqwest::header::HeaderValue::from_bytes(b).unwrap()
+            ))
+            .collect::<reqwest::header::HeaderMap>();
+        let mut request = self.http_client.request(method, url).headers(headers);
+        if let Some(body) = body {
+            request = request.body(body);
+        }
+        request.send().map_err(|e| SyscallProcessorError::Http(e))
+    }
+
     pub fn run(
         mut self,
         env: &mut SyscallGlobalEnv,
@@ -279,6 +311,31 @@ impl SyscallProcessor {
                     };
                     s.send(result.encode_to_vec())?;
                 }
+                Some(SC::InvokeService(req)) => {
+                    let service = fs::utils::invoke_service(&env.fs, req.serv).ok();
+                    let resp = match service {
+                        Some(s) => {
+                            fs::utils::taint_with_label(s.label.clone());
+                            Some(self.http_send(&s, &req.url_args, None)?)
+                        }
+                        None => None
+                    };
+                    let result = match resp {
+                        None => {
+                            syscalls::ServiceResponse {
+                                data: "Fail to invoke the external service".as_bytes().to_vec(),
+                                status: 0,
+                            }
+                        }
+                        Some(resp) => {
+                            syscalls::ServiceResponse {
+                                status: resp.status().as_u16() as u32,
+                                data: resp.bytes().map_err(|e| SyscallProcessorError::Http(e))?.to_vec(),
+                            }
+                        }
+                    };
+                    s.send(result.encode_to_vec())?;
+                },
                 Some(SC::FsDelete(del)) => {
                     let value = fs::path::Path::parse(&del.path).ok().and_then(|p| {
                         p.file_name().and_then(|name| {
