@@ -72,6 +72,15 @@ pub fn buckle_to_pblabel(label: &Buckle) -> syscalls::Buckle {
     }
 }
 
+fn format_url(base: &str, args: &[String]) -> Result<String, SyscallProcessorError> {
+    let pat = "{}";
+    if base.matches(pat).count() == args.len() {
+        Ok(args.iter().fold(base.to_owned(), |acc, v| acc.replacen(pat, v, 1)))
+    } else {
+        Err(SyscallProcessorError::BadUrlArgs)
+    }
+}
+
 #[derive(Debug)]
 pub enum SyscallChannelError {
     Read,
@@ -306,7 +315,11 @@ impl SyscallProcessor {
                     let resp = match service {
                         Some(s) => {
                             fs::utils::taint_with_label(s.label.clone());
+<<<<<<< HEAD
                             Some(self.http_send(&s, req.body)?)
+=======
+                            Some(self.http_send(&s, &req.url_args, None)?)
+>>>>>>> 020e356 (wip)
                         }
                         None => None
                     };

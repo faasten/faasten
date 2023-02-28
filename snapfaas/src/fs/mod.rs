@@ -628,6 +628,33 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
+    pub fn invoke_service(&self, service: &Service) -> Result<ServiceInfo, ServiceError> {
+        CURRENT_LABEL.with(|current_label| {
+            PRIVILEGE.with(|opriv| {
+                STAT.with(|stat| {
+                    // implicit endorsement
+                    utils::endorse_with(&*opriv.borrow());
+                    let now = Instant::now();
+                    if current_label.borrow().integrity.implies(&service.invoking) &&
+                       (Component::dc_true() & opriv.borrow().clone()).implies(&current_label.borrow().secrecy) {
+                        stat.borrow_mut().label_tracking += now.elapsed();
+                        match self.storage.get(&service.object_id.to_be_bytes()) {
+                            Some(bs) => {
+                                let info = serde_json::from_slice(bs.as_slice()).unwrap();
+                                Ok(info)
+                            }
+                            None => Err(ServiceError::Corrupted)
+                        }
+                    } else {
+                        // TODO need label tracking?
+                        Err(ServiceError::CannotInvoke)
+                    }
+                })
+            })
+        })
+    }
+
+>>>>>>> 020e356 (wip)
     pub fn list(&self, dir: Directory) -> Result<HashMap<String, DirEntry>, LabelError> {
         CURRENT_LABEL.with(|current_label| {
             STAT.with(|stat| {
@@ -1820,6 +1847,32 @@ pub mod utils {
                 res
             })
         })
+    }
+
+    pub fn create_service<S: Clone + BackingStore, P: Into<self::path::Path>>(
+        fs: &FS<S>, base_dir: P, name: String, policy: Buckle, service_info: ServiceInfo) -> Result<(), Error> {
+        // raise the integrity to true
+        match read_path(&fs, base_dir) {
+            Ok(entry) => match entry {
+                DirEntry::Directory(dir) => {
+                    let newservice = fs.create_service(policy.secrecy, policy.integrity, service_info);
+                    endorse_with_full();
+                    fs.link(&dir, name, DirEntry::Service(newservice)).map(|_| ()).map_err(|e| Error::from(e))
+                },
+                DirEntry::FacetedDirectory(fdir) => {
+                    let newservice = fs.create_service(policy.secrecy, policy.integrity, service_info);
+                    endorse_with_full();
+                    fs.faceted_link(&fdir, None, name, DirEntry::Service(newservice)).map(|_| ()).map_err(|e| Error::from(e))
+                },
+                _ => Err(Error::BadPath),
+            },
+            Err(Error::FacetedDir(fdir, facet)) => {
+                let newservice = fs.create_service(policy.secrecy, policy.integrity, service_info);
+                endorse_with_full();
+                fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Service(newservice)).map(|_| ()).map_err(|e| Error::from(e))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub fn taint_with_secrecy(secrecy: Component) {
