@@ -138,28 +138,28 @@ class Syscall():
     def github_rest_get(self, route, toblob=False):
         req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.GET, route = route, body = None, toblob=toblob))
         self._send(req)
-        response= self._recv(syscalls_pb2.GithubRestResponse())
+        response = self._recv(syscalls_pb2.GithubRestResponse())
         return response
 
     def github_rest_post(self, route, body, toblob=False):
         bodyJson = json.dumps(body)
         req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.POST, route = route, body = bodyJson, toblob=toblob))
         self._send(req)
-        response= self._recv(syscalls_pb2.GithubRestResponse())
+        response = self._recv(syscalls_pb2.GithubRestResponse())
         return response
 
     def github_rest_put(self, route, body, toblob=False):
         bodyJson = json.dumps(body)
         req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.PUT, route = route, body = bodyJson, toblob=toblob))
         self._send(req)
-        response= self._recv(syscalls_pb2.GithubRestResponse())
+        response = self._recv(syscalls_pb2.GithubRestResponse())
         return response
 
     def github_rest_delete(self, route, body, toblob=False):
         bodyJson = json.dumps(body)
         req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.DELETE, route = route, body = bodyJson, toblob=toblob))
         self._send(req)
-        response= self._recv(syscalls_pb2.GithubRestResponse())
+        response = self._recv(syscalls_pb2.GithubRestResponse())
         return response
     ### end of github APIs ###
 
