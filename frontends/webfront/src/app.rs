@@ -7,37 +7,41 @@ use std::time::SystemTime;
 use std::io::Read;
 use std::net::TcpStream;
 
+use labeled::buckle;
 use reqwest::blocking::Client;
-use rouille::ResponseBody;
+use rouille::post_input;
 use serde::{Deserialize, Serialize};
-use rouille::{Request, Response};
+use rouille::{Request, Response, ResponseBody, input::post::BufferedFile};
 use jwt::{PKeyWithDigest, SignWithKey, VerifyWithKey};
 use openssl::pkey::{self, PKey};
-use lmdb::{Transaction};
+use lmdb::Transaction;
+use log::error;
 
 use serde_json::Value;
 use snapfaas::blobstore::Blobstore;
+use snapfaas::fs;
+use snapfaas::fs::FS;
 use snapfaas::request;
+use snapfaas::sched;
+use snapfaas::syscall_server::buckle_to_pblabel;
+use snapfaas::syscall_server::component_to_pbcomponent;
+use snapfaas::syscalls;
 
-struct SnapFaasManager {
-    address: String,
+struct FaastenScheduler {
+    sched_address: String,
 }
 
-impl r2d2::ManageConnection for SnapFaasManager {
+impl r2d2::ManageConnection for FaastenScheduler {
     type Connection = TcpStream;
     type Error = std::io::Error;
 
     fn connect(&self) -> Result<Self::Connection, Self::Error> {
-        Ok(TcpStream::connect(&self.address)?)
+        Ok(TcpStream::connect(&self.sched_address)?)
     }
 
     fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
-        let req = request::Request {
-            gate: String::from("ping"),
-            payload: serde_json::Value::Null,
-        };
-        request::write_u8(&req.to_vec(), conn)?;
-        request::read_u8(conn)?;
+        use std::io::{ErrorKind, Error};
+        sched::rpc::ping(conn).map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))?;
         Ok(())
     }
 
@@ -69,14 +73,14 @@ pub struct App {
     default_db: Arc<lmdb::Database>,
     blobstore: Arc<Mutex<Blobstore>>,
     base_url: String,
-    conn: r2d2::Pool<SnapFaasManager>,
+    conn: r2d2::Pool<FaastenScheduler>,
 }
 
 impl App {
-    pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment, blobstore: Blobstore, base_url: String, snapfaas_address: String) -> App {
+    pub fn new(gh_creds: GithubOAuthCredentials, pkey: PKey<pkey::Private>, pubkey: PKey<pkey::Public>, dbenv: lmdb::Environment, blobstore: Blobstore, base_url: String, sched_address: String) -> App {
         let dbenv = Arc::new(dbenv);
         let default_db = Arc::new(dbenv.open_db(None).unwrap());
-        let conn = r2d2::Pool::builder().max_size(10).build(SnapFaasManager { address: snapfaas_address }).expect("pool");
+        let conn = r2d2::Pool::builder().max_size(10).build(FaastenScheduler { sched_address }).expect("pool");
         let blobstore = Arc::new(Mutex::new(blobstore));
         App {
             conn,
@@ -136,9 +140,7 @@ impl App {
             Ok(claims.sub)
         }
     }
-}
 
-impl App {
     pub fn handle(&mut self, request: &Request) -> Response {
         if request.method().to_uppercase().as_str() == "OPTIONS" {
             return Response::empty_204()
@@ -195,43 +197,90 @@ impl App {
             (POST) (/invoke/{function_name}) => {
                 self.invoke(request, function_name)
             },
-            (POST) (/gate) => {
-                self.gate(request)
+            (GET) (/faasten/ping) => {
+                Ok(Response::text("Pong.").with_status_code(200))
             },
-            _ => Ok(Response::empty_404())
+            (POST) (/faasten/invoke/{gate_path}) => {
+                self.faasten_init(request, gate_path)
+            },
+            _ => {
+                error!("404: {} {}", request.method(), request.raw_url());
+                Ok(Response::empty_404())
+            }
         ).unwrap_or_else(|e| e).with_additional_header("Access-Control-Allow-Origin", "*")
     }
 
-    fn gate(&self, request: &Request) -> Result<Response, Response> {
-        let login = self.verify_jwt(request)?;
+    // "init" code for any function invocation. It is responsible for resolving the passed-in
+    // gate path in a secure way. That is, it makes sure to set the privilege and the clearance
+    // for a logged in user or a public user. Moreover, it tracks the label for the file system
+    // traversal and set LabeledInvoke.label to the new label after the traversal.
+    fn faasten_init(&self, request: &Request, gate_path: String) -> Result<Response, Response> {
+        let login = self.verify_jwt(request).ok();
 
         let conn = &mut self.conn.get().map_err(|_|
             Response::json(&serde_json::json!({
-                "error": "failed to get snapfaas connection"
-            })).with_status_code(500))?;
-        let input_json: Value = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
-
-        let req = request::Request {
-            gate: "sys_gate".to_string(),
-            payload: serde_json::json!({
-                "payload": input_json,
-                "login": login,
-            }),
-        };
-        request::write_u8(&req.to_vec(), conn).map_err(|_|
-            Response::json(&serde_json::json!({
-                "error": "failed to send request"
+                "error": "failed to get scheduler connection"
             })).with_status_code(500))?;
 
-        let resp_buf = request::read_u8(conn).map_err(|_|
-            Response::json(&serde_json::json!({
-                "error": "failed to read response"
-            })).with_status_code(500))?;
-        let rsp: request::Response = serde_json::from_slice(&resp_buf).unwrap();
-        match rsp.status {
-            request::RequestStatus::SentToVM(response) => Ok(Response::text(response)),
-            _ => Err(Response::json(&serde_json::json!({"error": format!("{:?}", rsp.status)}))),
+        let input_post_form = post_input!(request, {
+            file: Option<BufferedFile>, payload: String, label: String
+        }).map_err(|e|
+            Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400)
+        )?;
+
+        let label = buckle::Buckle::parse(&input_post_form.label)
+            .map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() }))
+                .with_status_code(400))?;
+
+        use syscalls::{PathComponent, path_component::Component};
+        let mut sc_path = Vec::new();
+        for c in gate_path.split(":") {
+            if c.starts_with("@") {
+                let facet = buckle::Buckle::parse(c.strip_prefix("@").unwrap())
+                    .map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() }))
+                        .with_status_code(400))?;
+                let facet = buckle_to_pblabel(&facet);
+                sc_path.push(PathComponent{ component: Some(Component::Facet(facet)) });
+            } else {
+                sc_path.push(PathComponent{ component: Some(Component::Dscrp(c.to_string())) });
+            }
         }
+        let faasten_fs = FS::new(&*snapfaas::labeled_fs::DBENV);
+
+        snapfaas::fs::utils::clear_label();
+        snapfaas::fs::utils::taint_with_label(label);
+        let (privilege, clearance) = match login {
+            Some(login) =>
+                (buckle::Buckle::parse(&("T,".to_string()+&login)).unwrap().integrity,
+                 buckle::Buckle::parse(&(login+",T")).unwrap()),
+            None =>
+                (buckle::Buckle::parse("T,T").unwrap().integrity,
+                 buckle::Buckle::public())
+        };
+        snapfaas::fs::utils::set_my_privilge(privilege);
+        snapfaas::fs::utils::set_clearance(clearance);
+
+        let (name, gate_privilege) = snapfaas::fs::utils::invoke(&faasten_fs, &sc_path).map_err(
+            |e| Response::json(&serde_json::json!({"error": format!("{:?}", e)}))
+            .with_status_code(400))?;
+        let gate_privilege = component_to_pbcomponent(&gate_privilege);
+        let label = fs::utils::get_current_label();
+        let label = buckle_to_pblabel(&label);
+        let req = sched::message::LabeledInvoke {
+            name, label: Some(label), gate_privilege, payload: input_post_form.payload, sync: true
+        };
+
+        sched::rpc::labeled_invoke(conn, req).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to submit invocation to the scheduler",
+            })).with_status_code(500))?;
+
+        // wait for the return
+        let ret = sched::message::read_u8(conn).map_err(|_|
+            Response::json(&serde_json::json!({
+                "error": "failed to read the task return",
+            })).with_status_code(500))?;
+        Ok(Response::from_data("application/octet-stream", ret))
     }
 
     fn whoami(&self, request: &Request) -> Result<Response, Response> {

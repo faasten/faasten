@@ -1,3 +1,4 @@
+use std::net::TcpStream;
 use std::result::Result;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,7 +12,7 @@ use log::{error, debug};
 use crate::configs::{ResourceManagerConfig, FunctionConfig};
 use crate::vm::Vm;
 use crate::message::Message;
-use crate::sched::rpc::{Scheduler, ResourceInfo};
+use crate::sched::{self, rpc::ResourceInfo};
 
 #[derive(Debug)]
 pub enum Error {
@@ -36,7 +37,7 @@ pub struct ResourceManager {
     pub total_num_vms: usize, // total number of vms ever created
     total_mem: usize,
     pub free_mem: usize,
-    sched_addr: String,
+    sched_conn: TcpStream,
 }
 
 impl ResourceManager {
@@ -58,7 +59,7 @@ impl ResourceManager {
             total_num_vms: 0,
             total_mem,
             free_mem: total_mem,
-            sched_addr,
+            sched_conn: TcpStream::connect(sched_addr).expect("failed to connect to the scheduler"),
         },
         sender)
     }
@@ -97,7 +98,6 @@ impl ResourceManager {
     /// Kicks off the single thread resource manager
     pub fn run(mut self) -> JoinHandle<()> {
         std::thread::spawn(move || {
-            let mut sched_rpc = Scheduler::new(self.sched_addr.clone());
             loop {
                 match self.receiver.recv() {
                     Ok(msg) => {
@@ -116,7 +116,7 @@ impl ResourceManager {
                             }
                             Message::Shutdown => {
                                 debug!("local resource manager shutdown received");
-                                let _ = sched_rpc.drop_resource();
+                                let _ = sched::rpc::drop_resource(&mut self.sched_conn);
                                 return;
                             }
                             _ => (),
@@ -126,7 +126,7 @@ impl ResourceManager {
                             total_mem: self.total_mem(),
                             free_mem: self.free_mem(),
                         };
-                        let _ = sched_rpc.update_resource(info);
+                        let _ = sched::rpc::update_resource(&mut self.sched_conn, info);
                     }
                     Err(e) => {
                         panic!("ResourceManager cannot read requests: {:?}", e);
@@ -206,7 +206,7 @@ impl ResourceManager {
             self.free_mem -= function_config.memory;
 
             debug!("Allocating new VM. ID: {:?}, App: {:?}", id, function_name);
-            Ok(Vm::new(id, self.config.firerunner_path.clone(), function_name.to_string(), function_config, self.config.allow_network, crate::fs::FS::new(&*crate::labeled_fs::DBENV)))
+            Ok(Vm::new(id, self.config.firerunner_path.clone(), function_name.to_string(), function_config, self.config.allow_network))
         } else {
             Err(Error::LowMemory(self.free_mem))
         }

@@ -53,8 +53,3 @@ pub fn read_response(stream: &mut TcpStream) -> Result<Response, Error> {
     let buf = _read_u8(stream, true)?;
     Response::decode(&buf[..]).map_err(|e| Error::Rpc(e))
 }
-
-/// Wrapper function that parses bytes to labeled invoke message
-pub fn parse_u8_labeled_invoke(buf: Vec<u8>) -> Result<LabeledInvoke, Error> {
-    LabeledInvoke::decode(&buf[..]).map_err(|e| Error::Rpc(e))
-}

@@ -1,17 +1,21 @@
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
+use labeled::buckle::Buckle;
+use snapfaas::blobstore::Blobstore;
+use snapfaas::fs::FS;
+use snapfaas::labeled_fs::DBENV;
+use snapfaas::syscall_server::SyscallGlobalEnv;
 /// This binary is used to launch a single instance of firerunner
 /// It reads a request from stdin, launches a VM based on cmdline inputs, sends
 /// the request to VM, waits for VM's response and finally prints the response
 /// to stdout, kills the VM and exits.
 use snapfaas::vm::Vm;
-use snapfaas::unlink_unix_sockets;
+use snapfaas::{unlink_unix_sockets, syscall_server};
 use snapfaas::configs::FunctionConfig;
 use std::io::BufRead;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Instant;
-use log;
-use serde_json;
+use log::{warn, debug, error};
 
 use clap::{App, Arg};
 
@@ -188,7 +192,7 @@ fn main() {
 
     if cmd_arguments.is_present("enable network") {
         // warn if tap0 is missing the program will hang
-        log::warn!("Network turned on. Tap device `tap0` must be present.");
+        warn!("Network turned on. Tap device `tap0` must be present.");
     }
 
     // Create a FunctionConfig value based on cmdline inputs
@@ -222,44 +226,43 @@ fn main() {
 
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
-    let mut vm =  Vm::new(id, firerunner, "myapp".to_string(), vm_app_config, allow_network, snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV));
+    let mut vm =  Vm::new(id, firerunner, "singlevm-test-app".to_string(), vm_app_config, allow_network);
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
     let _ = std::fs::remove_file(&vm_listener_path);
-    let vm_listener = UnixListener::bind(vm_listener_path).expect("Failed to bind to unix listener");
+    let vm_listener = UnixListener::bind(vm_listener_path).expect("bind to the UNIX listener");
+    let vm_listener = tokio::net::UnixListener::from_std(vm_listener).expect("convert to tokio UNIX listener");
     let force_exit = cmd_arguments.is_present("force_exit");
-    if let Err(e) = vm.launch(vm_listener, CID, force_exit, Some(odirect)) {
-        log::error!("unable to launch the VM: {:?}", e);
+    if let Err(e) = vm.launch(&vm_listener, CID, force_exit, Some(odirect)) {
+        error!("VM launch failed: {:?}", e);
         snapfaas::unlink_unix_sockets();
     }
     let t2 = Instant::now();
 
-    log::debug!("VM ready in: {} us", t2.duration_since(t1).as_micros());
+    debug!("VM ready in: {} us", t2.duration_since(t1).as_micros());
 
     // create a vector of Request values from stdin
-    let mut requests: Vec<serde_json::Value> = Vec::new();
+    let mut requests = Vec::new();
     let stdin = std::io::stdin();
     for line in std::io::BufReader::new(stdin).lines().map(|l| l.unwrap()) {
-        match serde_json::from_str(&line) {
-            Ok(j) => {
-                requests.push(j);
-            }
-            Err(e) => {
-                eprintln!("invalid requests: {:?}", e);
-                drop(vm);
-                unlink_unix_sockets();
-                std::process::exit(1);
-            }
-        }
+        requests.push(line);
     }
     let num_req = requests.len();
     let mut num_rsp = 0;
+
+    let mut env = SyscallGlobalEnv {
+        sched_conn: None,
+        db: DBENV.open_db(None).expect("open default db"),
+        fs: FS::new(&*DBENV),
+        blobstore: Blobstore::default(),
+    };
 
     // Synchronously send the request to vm and wait for a response
     let dump_working_set = true && cmd_arguments.is_present("dump working set");
     for req in requests {
         let t1 = Instant::now();
-        log::debug!("request: {:?}", req);
-        match vm.process_req(None, req.to_string()) {
+        debug!("request: {:?}", req);
+        let processor = syscall_server::SyscallProcessor::new(Buckle::public(), Buckle::public().integrity);
+        match processor.run(&mut env, req, &mut vm) {
             Ok(rsp) => {
                 let t2 = Instant::now();
                 println!("request returned in: {} us", t2.duration_since(t1).as_micros());

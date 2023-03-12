@@ -11,13 +11,15 @@ message GetTask {
 
 message FinishTask {
     string taskId = 1;
-    string result = 2;
+    TaskReturn result = 2;
 }
 
 message LabeledInvoke {
-    syscalls.Invoke    invoke           = 1;
+    string             name             = 1;
     syscalls.Buckle    label            = 2;
-    syscalls.Component invokerPrivilege = 3;
+    syscalls.Component gatePrivilege    = 3;
+    string             payload          = 4;
+    bool               sync             = 5;
 }
 
 message UpdateResource {
@@ -36,6 +38,8 @@ message ProcessTask {
 
 message Terminate {}
 message Fail {}
+message Ping {}
+message Pong {}
 // End of response messages
 
 message Request {
@@ -49,6 +53,7 @@ message Request {
         DropResource   dropResource   = 5;
         // Debug
         TerminateAll   terminateAll   = 6;
+        Ping           ping           = 7;
     }
 }
 
@@ -59,6 +64,23 @@ message Response {
         Terminate   terminate   = 2;
         // Debug
         Fail        fail        = 3;
+        TaskReturn  success     = 4;
+        Pong        pong        = 5;
     }
 }
 
+enum ReturnCode {
+    Dropped = 0;
+    FunctionNotExist = 1;
+    ResourceExhausted = 2;
+    LaunchFailed = 3;
+    ProcessRequestFailed = 4;
+    GateNotExist = 5;
+    Success = 6;
+    QueueFull = 7;
+}
+
+message TaskReturn {
+    ReturnCode code = 1;
+    optional string payload = 2;
+}

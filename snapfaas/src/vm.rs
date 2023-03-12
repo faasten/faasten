@@ -1,69 +1,23 @@
 //! Host-side VM handle that transfer data in and out of the VM through VSOCK socket and
 //! implements syscall API
-use std::env;
+
 use std::net::Shutdown;
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::UnixStream;
 use std::process::Stdio;
 use std::string::String;
-use std::io::{Seek, Write};
-use std::collections::{HashMap, HashSet};
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::io::{Read, Write};
 
 use log::{debug, error};
+use prost::Message;
 use tokio::process::{Child, Command};
+use labeled::buckle::Buckle;
 
 use crate::configs::FunctionConfig;
-use crate::{blobstore, syscalls};
-use crate::labeled_fs::DBENV;
-use crate::fs;
-use crate::sched::rpc::Scheduler;
-use crate::sched::message;
+use crate::syscalls;
+use crate::syscall_server::{SyscallChannel, SyscallChannelError};
+use crate::syscalls::syscall::Syscall as SC;
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
-const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
-const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
-const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
-const USER_AGENT: &str = "snapfaas";
-
-use labeled::buckle::{Clause, Component, Buckle};
-
-pub fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Component {
-    match component {
-        None => Component::DCFalse,
-        Some(set) => Component::DCFormula(set.clauses.iter()
-            .map(|c| Clause(c.principals.iter().map(|p| p.tokens.iter().cloned().collect()).collect()))
-            .collect()),
-    }
-}
-
-pub fn pblabel_to_buckle(label: &syscalls::Buckle) -> Buckle {
-    Buckle {
-        secrecy: pbcomponent_to_component(&label.secrecy),
-        integrity: pbcomponent_to_component(&label.integrity),
-    }
-}
-
-pub fn component_to_pbcomponent(component: &Component) -> Option<syscalls::Component> {
-    match component {
-        Component::DCFalse => None,
-        Component::DCFormula(set) => Some(syscalls::Component {
-            clauses: set
-                .iter()
-                .map(|clause| syscalls::Clause {
-                    principals: clause.0.iter().map(|vp| syscalls::TokenList { tokens: vp.clone() }).collect(),
-                })
-                .collect(),
-        }),
-    }
-}
-
-pub fn buckle_to_pblabel(label: &Buckle) -> syscalls::Buckle {
-    syscalls::Buckle {
-        secrecy: component_to_pbcomponent(&label.secrecy),
-        integrity: component_to_pbcomponent(&label.integrity),
-    }
-}
 
 #[derive(Debug)]
 pub enum Error {
@@ -98,10 +52,9 @@ pub struct OdirectOption {
 }
 
 #[derive(Debug)]
-struct VmHandle {
+pub struct VmHandle {
     conn: UnixStream,
     //currently every VM instance opens a connection to the REST server
-    rest_client: reqwest::blocking::Client,
     #[allow(dead_code)]
     // This field is never used, but we need to it make sure the Child isn't dropped and, thus,
     // killed, before the VmHandle is dropped.
@@ -117,12 +70,7 @@ pub struct Vm {
     function_config: FunctionConfig,
     pub label: Buckle,
     //privilege: Component,
-    handle: Option<VmHandle>,
-    blobstore: blobstore::Blobstore,
-    create_blobs: HashMap<u64, blobstore::NewBlob>,
-    blobs: HashMap<u64, blobstore::Blob>,
-    max_blob_id: u64,
-    fs: fs::FS<&'static lmdb::Environment>,
+    pub handle: Option<VmHandle>,
 }
 
 impl Vm {
@@ -133,7 +81,6 @@ impl Vm {
         function_name: String,
         function_config: FunctionConfig,
         allow_network: bool,
-        fs: fs::FS<&'static lmdb::Environment>,
     ) -> Self {
         Vm {
             id,
@@ -147,28 +94,21 @@ impl Vm {
             label: Buckle::new(true, true),
             //privilege: Component::formula([[function_name]]),
             handle: None,
-            blobstore: Default::default(),
-            create_blobs: Default::default(),
-            blobs: Default::default(),
-            max_blob_id: 0,
-            fs,
         }
-    }
-
-    /// Return true if the Vm instance is already launched, otherwise false.
-    pub fn is_launched(&self) -> bool {
-        self.handle.is_some()
     }
 
     /// Launch the current Vm instance.
     /// When this function returns, the VM has finished booting and is ready to accept requests.
     pub fn launch(
         &mut self,
-        vm_listener: UnixListener,
+        vm_listener: &tokio::net::UnixListener,
         cid: u32,
         force_exit: bool,
         odirect: Option<OdirectOption>,
     ) -> Result<(), Error> {
+        if self.handle.is_some() {
+            return Ok(());
+        }
         let function_config = &self.function_config;
         let mem_str = function_config.memory.to_string();
         let vcpu_str = function_config.vcpus.to_string();
@@ -259,7 +199,6 @@ impl Vm {
                 std::process::exit(status);
             }
 
-            let vm_listener = tokio::net::UnixListener::from_std(vm_listener).expect("convert from UnixListener std");
             let conn = tokio::select! {
                 res = vm_listener.accept() => {
                     res.unwrap().0.into_std().unwrap()
@@ -275,11 +214,8 @@ impl Vm {
             x
         })?;
 
-        let rest_client = reqwest::blocking::Client::new();
-
         let handle = VmHandle {
             conn,
-            rest_client,
             vm_process,
         };
 
@@ -301,491 +237,39 @@ impl Vm {
         self.function_config.memory
     }
 
-    fn send_into_vm(&mut self, sys_req: Vec<u8>) -> Result<(), Error> {
+}
+
+impl SyscallChannel for Vm {
+    fn send(&mut self, bytes: Vec<u8>) -> Result<(), SyscallChannelError> {
         let mut conn = &self.handle.as_ref().unwrap().conn;
-        conn.write_all(&(sys_req.len() as u32).to_be_bytes()).map_err(|e| Error::VsockWrite(e))?;
-        conn.write_all(sys_req.as_ref()).map_err(|e| Error::VsockWrite(e))
+        conn.write_all(&(bytes.len() as u32).to_be_bytes()).map_err(|e| {
+            error!("{:?}", e);
+            SyscallChannelError::Write
+        })?;
+        conn.write_all(bytes.as_ref()).map_err(|e| {
+            error!("{:?}", e);
+            SyscallChannelError::Write
+        })
     }
 
-    /// Send request to vm and wait for its response
-    pub fn process_req(&mut self, invoke_handle: Option<Rc<RefCell<Scheduler>>>, payload: String) -> Result<String, Error> {
-        use prost::Message;
-
-        let sys_req = syscalls::Request {
-            payload,
-        }
-        .encode_to_vec();
-
-        self.send_into_vm(sys_req)?;
-
-        self.process_syscalls(invoke_handle)
-    }
-
-    /// Send a HTTP GET request no matter if an authentication token is present
-    fn http_get(&self, sc_req: &syscalls::GithubRest) -> Result<reqwest::blocking::Response, Error> {
-        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
-        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
-        url.set_path(&sc_req.route);
-        let rest_client = &self.handle.as_ref().unwrap().rest_client;
-        let mut req = rest_client.get(url)
-            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
-            .header(reqwest::header::USER_AGENT, USER_AGENT);
-        req = match env::var_os(GITHUB_AUTH_TOKEN) {
-            Some(t_osstr) => {
-                match t_osstr.into_string() {
-                    Ok(t_str) => req.bearer_auth(t_str),
-                    Err(_) => req,
-                }
-            },
-            None => req
-        };
-        req.send().map_err(|e| Error::HttpReq(e))
-    }
-
-    /// Send a HTTP POST request only if an authentication token is present
-    fn http_post(&self, sc_req: &syscalls::GithubRest, method: reqwest::Method) -> Result<reqwest::blocking::Response, Error> {
-        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
-        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
-        url.set_path(&sc_req.route);
-        match env::var_os(GITHUB_AUTH_TOKEN) {
-            Some(t_osstr) => {
-                match t_osstr.into_string() {
-                    Ok(t_str) => {
-                        let rest_client = &self.handle.as_ref().unwrap().rest_client;
-                        rest_client.request(method, url)
-                            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
-                            .header(reqwest::header::USER_AGENT, USER_AGENT)
-                            .body(std::string::String::from(sc_req.body.as_ref().unwrap()))
-                            .bearer_auth(t_str)
-                            .send().map_err(|e| Error::HttpReq(e))
-                    },
-                    Err(_) => Err(Error::AuthTokenInvalid),
-                }
-            }
-            None => Err(Error::AuthTokenNotExist),
-        }
-    }
-
-    fn sched_invoke(&self, invoke_handle: Option<Rc<RefCell<Scheduler>>>, labeled_invoke: message::LabeledInvoke) -> bool {
-        use time::precise_time_ns;
-        if let Some(invoke_handle) = invoke_handle {
-            use crate::metrics::RequestTimestamps;
-            let _timestamps = RequestTimestamps {
-                at_vmm: precise_time_ns(),
-                ..Default::default()
-            };
-            invoke_handle.borrow_mut().labeled_invoke(labeled_invoke).is_ok()
-        } else {
-            debug!("No invoke handle, ignoring invoke syscall.");
-            false
-        }
-    }
-
-    fn process_syscalls(&mut self, invoke_handle: Option<Rc<RefCell<Scheduler>>>) -> Result<String, Error> {
-        use lmdb::{Transaction, WriteFlags};
-        use prost::Message;
-        use std::io::Read;
-        use syscalls::syscall::Syscall as SC;
-        use syscalls::Syscall;
-
-
-        let default_db = DBENV.open_db(None);
-        if default_db.is_err() {
-            return Err(Error::DB(default_db.unwrap_err()));
-        }
-
-        let default_db = default_db.unwrap();
-        loop {
-            let buf = {
-                let mut lenbuf = [0;4];
-                let mut conn = &self.handle.as_ref().unwrap().conn;
-                conn.read_exact(&mut lenbuf).map_err(|e| Error::VsockRead(e))?;
-                let size = u32::from_be_bytes(lenbuf);
-                let mut buf = vec![0u8; size as usize];
-                conn.read_exact(&mut buf).map_err(|e| Error::VsockRead(e))?;
-                buf
-            };
-            match Syscall::decode(buf.as_ref()).map_err(|e| Error::Rpc(e))?.syscall {
-                Some(SC::Response(r)) => {
-                    debug!("function response: {}", r.payload);
-                    return Ok(r.payload);
-                }
-                Some(SC::FsDelete(req)) => {
-                    let result = syscalls::WriteKeyResponse {
-                        success: fs::utils::delete(&self.fs, &req.base_dir, req.name).is_ok(),
-                    }
-                    .encode_to_vec();
-                    self.send_into_vm(result)?;
-                }
-                Some(SC::BuckleParse(s)) => {
-                    let result = syscalls::DeclassifyResponse {
-                        label: Buckle::parse(&s).ok().map(|l| buckle_to_pblabel(&l)),
-                    }
-                    .encode_to_vec();
-
-                    self.send_into_vm(result)?;
-                }
-                Some(SC::SubPrivilege(suffix)) => {
-                    // omnipotent privilege: dc_false + suffix = dc_false
-                    // empty privilege: dc_true + suffix = dc_true
-                    let mut my_priv = component_to_pbcomponent(&fs::utils::my_privilege());
-                    if let Some(clauses) = my_priv.as_mut() {
-                        if let Some(clause) = clauses.clauses.first_mut() {
-                            clause.principals.first_mut().unwrap().tokens.extend(suffix.tokens);
-                        }
-                    }
-                    let result = syscalls::Buckle {
-                        secrecy: my_priv,
-                        integrity: None,
-                    }
-                    .encode_to_vec();
-
-                    self.send_into_vm(result)?;
-                }
-                Some(SC::Invoke(req)) => {
-                    let labeled = message::LabeledInvoke {
-                        invoke: Some(syscalls::Invoke { gate: req.gate, payload: req.payload }),
-                        label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
-                        invoker_privilege: component_to_pbcomponent(&fs::utils::my_privilege()),
-                    };
-                    let invoke_handle_dup = invoke_handle.as_ref().map(|e| Rc::clone(e));
-                    let success = self.sched_invoke(invoke_handle_dup, labeled);
-                    let result = syscalls::WriteKeyResponse { success };
-                    self.send_into_vm(result.encode_to_vec())?;
-                },
-                Some(SC::DupGate(req)) => {
-                    let value = fs::utils::read_path(&self.fs, &req.orig).ok().and_then(|entry| { match entry {
-                            fs::DirEntry::Gate(gate) => {
-                                let policy = pblabel_to_buckle(&req.policy.unwrap());
-                                fs::utils::create_gate(&self.fs, &req.base_dir, req.name, policy, gate.image).ok()
-                            },
-                            _ => None,
-                        }
-                    });
-                    let result = syscalls::WriteKeyResponse {
-                        success: value.is_some()
-                    }
-                    .encode_to_vec();
-                    self.send_into_vm(result)?;
-                },
-                Some(SC::ReadKey(rk)) => {
-                    let txn = DBENV.begin_ro_txn().unwrap();
-                    let result = syscalls::ReadKeyResponse {
-                        value: txn.get(default_db, &rk.key).ok().map(Vec::from),
-                    }
-                    .encode_to_vec();
-                    let _ = txn.commit();
-
-                    self.send_into_vm(result)?;
-                },
-                Some(SC::WriteKey(wk)) => {
-                    let mut txn = DBENV.begin_rw_txn().unwrap();
-                    let result = syscalls::WriteKeyResponse {
-                        success: txn
-                            .put(default_db, &wk.key, &wk.value, WriteFlags::empty())
-                            .is_ok(),
-                    }
-                    .encode_to_vec();
-                    let _ = txn.commit();
-
-                    self.send_into_vm(result)?;
-                },
-                Some(SC::ReadDir(req)) => {
-                    use lmdb::Cursor;
-                    let mut keys: HashSet<Vec<u8>> = HashSet::new();
-
-                    let txn = DBENV.begin_ro_txn().unwrap();
-                    {
-                        let mut dir = req.dir;
-                        if !dir.ends_with(b"/") {
-                            dir.push(b'/');
-                        }
-                        let mut cursor = txn.open_ro_cursor(default_db).or(Err(Error::RootfsNotExist))?.iter_from(&dir);
-                        while let Some(Ok((key, _))) = cursor.next() {
-                            if !key.starts_with(&dir) {
-                                break
-                            }
-                            if let Some(entry) = key.split_at(dir.len()).1.split_inclusive(|c| *c == b'/').next() {
-                                if !entry.is_empty() {
-                                    keys.insert(entry.into());
-                                }
-                            }
-                        }
-                    }
-                    let _ = txn.commit();
-
-                    let result = syscalls::ReadDirResponse {
-                        keys: keys.drain().collect(),
-                    }.encode_to_vec();
-                    self.send_into_vm(result)?;
-                },
-                Some(SC::FsRead(req)) => {
-                    let value = fs::utils::read(&self.fs, &req.path).ok();
-                    let result = syscalls::ReadKeyResponse {
-                        value
-                    }.encode_to_vec();
-
-                    self.send_into_vm(result)?;
-                },
-                Some(SC::FsList(req)) => {
-                    let value = fs::utils::list(&self.fs, &req.path).ok()
-                        .map(|m| syscalls::EntryNameArr { names: m.keys().cloned().collect() });
-                    let result = syscalls::FsListResponse { value };
-                    self.send_into_vm(result.encode_to_vec())?;
-                },
-                Some(SC::FsFacetedList(req)) => {
-                    let value = fs::utils::faceted_list(&self.fs, &req.path).ok()
-                        .map(|facets| {
-                            syscalls::FsFacetedListInner{
-                                facets: facets.iter().map(|(k, m)|
-                                            (k.clone(), syscalls::EntryNameArr{ names: m.keys().cloned().collect() })
-                                        ).collect::<HashMap<String, syscalls::EntryNameArr>>()
-                            }
-                        });
-                    let result = syscalls::FsFacetedListResponse {
-                        value
-                    }
-                    .encode_to_vec();
-                    self.send_into_vm(result)?;
-                },
-                Some(SC::FsWrite(req)) => {
-                    let value = fs::utils::write(&mut self.fs, &req.path, req.data).ok();
-                    let result = syscalls::WriteKeyResponse {
-                        success: value.is_some()
-                    }
-                    .encode_to_vec();
-
-                    self.send_into_vm(result)?;
-                },
-                Some(SC::FsCreateFacetedDir(req)) => {
-                    let value = fs::utils::create_faceted(&self.fs, &req.base_dir, req.name).ok();
-                    let result = syscalls::WriteKeyResponse {
-                        success: value.is_some(),
-                    }
-                    .encode_to_vec();
-                    self.send_into_vm(result)?;
-                }
-                Some(SC::FsCreateDir(req)) => {
-                    let label = pblabel_to_buckle(&req.label.clone().expect("label"));
-                    let value = fs::utils::create_directory(&self.fs, &req.base_dir, req.name, label).ok();
-                    let result = syscalls::WriteKeyResponse {
-                        success: value.is_some()
-                    }
-                    .encode_to_vec();
-
-                    self.send_into_vm(result)?;
-                },
-                Some(SC::FsCreateFile(req)) => {
-                    let label = pblabel_to_buckle(&req.label.clone().expect("label"));
-                    let value = fs::utils::create_file(&self.fs, &req.base_dir, req.name, label).ok();
-                    let result = syscalls::WriteKeyResponse {
-                        success: value.is_some()
-                    }
-                    .encode_to_vec();
-
-                    self.send_into_vm(result)?;
-                },
-                Some(SC::GithubRest(req)) => {
-                    let resp = match syscalls::HttpVerb::from_i32(req.verb) {
-                        Some(syscalls::HttpVerb::Get) => {
-                            Some(self.http_get(&req)?)
-                        },
-                        Some(syscalls::HttpVerb::Post) => {
-                            Some(self.http_post(&req, reqwest::Method::POST)?)
-                        },
-                        Some(syscalls::HttpVerb::Put) => {
-                            Some(self.http_post(&req, reqwest::Method::PUT)?)
-                        },
-                        Some(syscalls::HttpVerb::Delete) => {
-                            Some(self.http_post(&req, reqwest::Method::DELETE)?)
-                        },
-                        None => {
-                           None
-                        }
-                    };
-                    let result = match resp {
-                        None => syscalls::GithubRestResponse {
-                            data: format!("`{:?}` not supported", req.verb).as_bytes().to_vec(),
-                            status: 0,
-                        },
-                        Some(mut resp) => {
-                            if req.toblob && resp.status().is_success() {
-                                let mut file = self.blobstore.create()?;
-                                let mut buf = [0; 4096];
-                                while let Ok(len) = resp.read(&mut buf) {
-                                    if len == 0 {
-                                        break;
-                                    }
-                                    let _ = file.write_all(&buf[0..len]);
-                                }
-                                let result = self.blobstore.save(file)?;
-                                syscalls::GithubRestResponse {
-                                    status: resp.status().as_u16() as u32,
-                                    data: Vec::from(result.name),
-                                }
-                            } else {
-                                syscalls::GithubRestResponse {
-                                    status: resp.status().as_u16() as u32,
-                                    data: resp.bytes().map_err(|e| Error::HttpReq(e))?.to_vec(),
-                                }
-                            }
-                        },
-                    }.encode_to_vec();
-
-                    self.send_into_vm(result)?;
-                },
-                Some(SC::GetCurrentLabel(_)) => {
-                    let result = buckle_to_pblabel(&fs::utils::get_current_label());
-
-                    self.send_into_vm(result.encode_to_vec())?;
-                }
-                Some(SC::TaintWithLabel(label)) => {
-                    let label = pblabel_to_buckle(&label);
-                    let result = buckle_to_pblabel(&fs::utils::taint_with_label(label));
-
-                    self.send_into_vm(result.encode_to_vec())?;
-                }
-                Some(SC::Declassify(target)) => {
-                    let target = pbcomponent_to_component(&Some(target));
-                    let result = syscalls::DeclassifyResponse{
-                        label: fs::utils::declassify(target).map(|l| buckle_to_pblabel(&l)).ok(),
-                    }
-                    .encode_to_vec();
-
-                    self.send_into_vm(result)?;
-                },
-                Some(SC::CreateBlob(_cb)) => {
-                    if let Ok(newblob) = self.blobstore.create().map_err(|_e| Error::AppfsNotExist) {
-                        self.max_blob_id += 1;
-                        self.create_blobs.insert(self.max_blob_id, newblob);
-
-                        let result = syscalls::BlobResponse {
-                            success: true,
-                            fd: self.max_blob_id,
-                            data: Vec::new(),
-                        };
-                        self.send_into_vm(result.encode_to_vec())?;
-                    } else {
-                        let result = syscalls::BlobResponse {
-                            success: false,
-                            fd: 0,
-                            data: Vec::new(),
-                        };
-                        self.send_into_vm(result.encode_to_vec())?;
-                    }
-                },
-                Some(SC::WriteBlob(wb)) => {
-                    let result = if let Some(newblob) = self.create_blobs.get_mut(&wb.fd) {
-                        let data = wb.data.as_ref();
-                        if newblob.write_all(data).is_ok() {
-                            syscalls::BlobResponse {
-                                success: true,
-                                fd: wb.fd,
-                                data: Vec::new(),
-                            }
-                        } else {
-                            syscalls::BlobResponse {
-                                success: false,
-                                fd: wb.fd,
-                                data: Vec::from("Failed to write"),
-                            }
-                        }
-                    } else {
-                        syscalls::BlobResponse {
-                            success: false,
-                            fd: wb.fd,
-                            data: Vec::from("Blob doesn't exist"),
-                        }
-                    };
-                    self.send_into_vm(result.encode_to_vec())?;
-                },
-                Some(SC::FinalizeBlob(fb)) => {
-                    let result = if let Some(mut newblob) = self.create_blobs.remove(&fb.fd) {
-                        let blob = newblob.write_all(&fb.data).and_then(|_| self.blobstore.save(newblob))?;
-                        syscalls::BlobResponse {
-                            success: true,
-                            fd: fb.fd,
-                            data: Vec::from(blob.name),
-                        }
-                    } else {
-                        syscalls::BlobResponse {
-                            success: false,
-                            fd: fb.fd,
-                            data: Vec::from("Blob doesn't exist"),
-                        }
-                    };
-                    self.send_into_vm(result.encode_to_vec())?;
-                },
-                Some(SC::OpenBlob(ob)) => {
-                    let result = if let Ok(file) = self.blobstore.open(ob.name) {
-                        self.max_blob_id += 1;
-                        self.blobs.insert(self.max_blob_id, file);
-                        syscalls::BlobResponse {
-                            success: true,
-                            fd: self.max_blob_id,
-                            data: Vec::new(),
-                        }
-                    } else {
-                        syscalls::BlobResponse {
-                            success: false,
-                            fd: 0,
-                            data: Vec::new(),
-                        }
-                    };
-                    self.send_into_vm(result.encode_to_vec())?;
-                },
-                Some(SC::ReadBlob(rb)) => {
-                    let result = if let Some(file) = self.blobs.get_mut(&rb.fd) {
-                        let mut buf = Vec::from([0; 4096]);
-                        let limit = std::cmp::min(rb.length.unwrap_or(4096), 4096) as usize;
-                        if let Some(offset) = rb.offset {
-                            file.seek(std::io::SeekFrom::Start(offset))?;
-                        }
-                        if let Ok(len) = file.read(&mut buf[0..limit]) {
-                            buf.truncate(len);
-                            syscalls::BlobResponse {
-                                success: true,
-                                fd: rb.fd,
-                                data: buf,
-                            }
-                        } else {
-                            syscalls::BlobResponse {
-                                success: false,
-                                fd: rb.fd,
-                                data: Vec::new(),
-                            }
-                        }
-                    } else {
-                            syscalls::BlobResponse {
-                                success: false,
-                                fd: rb.fd,
-                                data: Vec::new(),
-                            }
-                    };
-                    self.send_into_vm(result.encode_to_vec())?;
-                },
-                Some(SC::CloseBlob(cb)) => {
-                    let result = if self.blobs.remove(&cb.fd).is_some() {
-                        syscalls::BlobResponse {
-                            success: true,
-                            fd: cb.fd,
-                            data: Vec::new(),
-                        }
-                    } else {
-                        syscalls::BlobResponse {
-                            success: false,
-                            fd: cb.fd,
-                            data: Vec::new(),
-                        }
-                    };
-                    self.send_into_vm(result.encode_to_vec())?;
-                },
-                None => {
-                    // Should never happen, so just ignore??
-                    error!("received an unknown syscall");
-                },
-            }
-        }
+    fn wait(&mut self) -> Result<Option<SC>, SyscallChannelError> {
+        let mut lenbuf = [0;4];
+        let mut conn = &self.handle.as_ref().unwrap().conn;
+        conn.read_exact(&mut lenbuf).map_err(|e| {
+            error!("{:?}", e);
+            SyscallChannelError::Read
+        })?;
+        let size = u32::from_be_bytes(lenbuf);
+        let mut buf = vec![0u8; size as usize];
+        conn.read_exact(&mut buf).map_err(|e| {
+            error!("{:?}", e);
+            SyscallChannelError::Read
+        })?;
+        let ret = syscalls::Syscall::decode(buf.as_ref()).map_err(|e| {
+            error!("{:?}", e);
+            SyscallChannelError::Decode
+        })?.syscall;
+        Ok(ret)
     }
 }
 

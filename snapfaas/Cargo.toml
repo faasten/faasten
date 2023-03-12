@@ -20,9 +20,9 @@ path = "bins/multivm/main.rs"
 name = "scheduler"
 path = "bins/scheduler/main.rs"
 
-[[bin]]
-name = "sfclient"
-path = "bins/sfclient/main.rs"
+#[[bin]]
+#name = "sfclient"
+#path = "bins/sfclient/main.rs"
 
 [[bin]]
 name = "sfdb"
@@ -62,7 +62,7 @@ sys_util = { git = "https://github.com/princeton-sns/firecracker", rev = "5b64f6
 net_util = { git = "https://github.com/princeton-sns/firecracker", rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f" }
 time = "0.1"
 signal-hook = "0.1.13"
-crossbeam-channel = "0.5.5"
+crossbeam = "0.8.2"
 futures = "0.1.18"
 glob =  "*"
 tokio = { version = "1.14.0", features = [ "rt", "macros",  "process", "net" ] }
@@ -72,6 +72,7 @@ sha2 = "0.10.1"
 hex = "0.4.3"
 serde_with = { version = "2.1.0", features = ["json"] }
 uuid = { version = "1.2.2", features = ["v4", "fast-rng", "macro-diagnostics"] }
+threadpool = "1.8.1"
 
 [build-dependencies]
 prost-build = "0.9.0"

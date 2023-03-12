@@ -4,14 +4,18 @@
 use lmdb::{Transaction, WriteFlags};
 use log::info;
 use serde::{Serialize, Deserialize};
-use std::{collections::HashMap, cell::RefCell, time::{Duration, Instant}};
 use labeled::{buckle::{Clause, Buckle, Component, Principal}, Label};
 use serde_with::serde_as;
 
+use std::{collections::HashMap, cell::RefCell, time::{Duration, Instant}};
+
+use crate::syscall_server::pblabel_to_buckle;
+
 pub use errors::*;
 
-thread_local!(static CURRENT_LABEL: RefCell<Buckle> = RefCell::new(Buckle::public()));
-thread_local!(static PRIVILEGE: RefCell<Component> = RefCell::new(Component::dc_true()));
+thread_local!(pub static CURRENT_LABEL: RefCell<Buckle> = RefCell::new(Buckle::public()));
+thread_local!(pub static PRIVILEGE: RefCell<Component> = RefCell::new(Component::dc_true()));
+thread_local!(pub static CLEARANCE: RefCell<Buckle> = RefCell::new(Buckle::top()));
 thread_local!(static STAT: RefCell<Metrics> = RefCell::new(Metrics::default()));
 
 type UID = u64;
@@ -434,25 +438,6 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
-    pub fn invoke_gate(&self, gate: &Gate) -> Result<Gate, GateError> {
-        CURRENT_LABEL.with(|current_label| {
-            PRIVILEGE.with(|opriv| {
-                STAT.with(|stat| {
-                    // implicit endorsement
-                    utils::endorse_with(&*opriv.borrow());
-                    // check integrity
-                    let now = Instant::now();
-                    if current_label.borrow().integrity.implies(&gate.invoking) {
-                        stat.borrow_mut().label_tracking += now.elapsed();
-                        Ok(gate.clone())
-                    } else {
-                        Err(GateError::CannotInvoke)
-                    }
-                })
-            })
-        })
-    }
-
     pub fn list(&self, dir: Directory) -> Result<HashMap<String, DirEntry>, LabelError> {
         CURRENT_LABEL.with(|current_label| {
             STAT.with(|stat| {
@@ -762,7 +747,7 @@ pub mod utils {
                     super::DirEntry::FacetedDirectory(fdir) => {
                         match comp.component.as_ref() {
                             Some(PC::Facet(f)) => {
-                                let facet = crate::vm::pblabel_to_buckle(f);
+                                let facet = pblabel_to_buckle(f);
                                 // implicitly raising the label
                                 taint_with_label(facet.clone());
                                 fs.open_facet(&fdir, &facet).map(|d| DirEntry::Directory(d)).map_err(|e| Error::from(e))
@@ -786,7 +771,7 @@ pub mod utils {
                 super::DirEntry::FacetedDirectory(fdir) => {
                     match last.component.as_ref() {
                         Some(PC::Facet(f)) => {
-                            let facet = crate::vm::pblabel_to_buckle(f);
+                            let facet = pblabel_to_buckle(f);
                             // implicitly raising the label
                             taint_with_label(facet.clone());
                             match fs.open_facet(&fdir, &facet) {
@@ -958,6 +943,31 @@ pub mod utils {
         }
     }
 
+    pub fn invoke<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<(String, Component), Error> {
+        match read_path(&fs, path) {
+            Ok(DirEntry::Gate(gate)) => {
+                CURRENT_LABEL.with(|current_label| {
+                    PRIVILEGE.with(|opriv| {
+                        STAT.with(|stat| {
+                            // implicit endorsement
+                            endorse_with(&*opriv.borrow());
+                            // check integrity
+                            let now = Instant::now();
+                            if current_label.borrow().integrity.implies(&gate.invoking) {
+                                stat.borrow_mut().label_tracking += now.elapsed();
+                                Ok((gate.image, gate.privilege))
+                            } else {
+                                Err(Error::from(GateError::CannotInvoke))
+                            }
+                        })
+                    })
+                })
+            },
+            Ok(_) => Err(Error::BadPath),
+            Err(e) => Err(Error::from(e)),
+        }
+    }
+
     pub fn taint_with_secrecy(secrecy: Component) {
         STAT.with(|stat| {
             let now = Instant::now();
@@ -1036,6 +1046,16 @@ pub mod utils {
             let now = Instant::now();
             PRIVILEGE.with(|opriv| {
                 *opriv.borrow_mut() = newpriv;
+            });
+            stat.borrow_mut().label_tracking += now.elapsed();
+        })
+    }
+
+    pub fn set_clearance(c: Buckle) {
+        STAT.with(|stat| {
+            let now = Instant::now();
+            CLEARANCE.with(|thisc| {
+                *thisc.borrow_mut() = c; 
             });
             stat.borrow_mut().label_tracking += now.elapsed();
         })

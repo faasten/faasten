@@ -5,7 +5,6 @@ pub mod worker;
 pub mod message;
 pub mod configs;
 pub mod resource_manager;
-pub mod vm;
 pub mod syscalls;
 pub mod metrics;
 pub mod firecracker_wrapper;
@@ -13,6 +12,8 @@ pub mod blobstore;
 pub mod labeled_fs;
 pub mod fs;
 pub mod sched;
+pub mod vm;
+pub mod syscall_server;
 
 use std::string::String;
 use std::io::{BufReader, BufRead, Error, ErrorKind, Result};

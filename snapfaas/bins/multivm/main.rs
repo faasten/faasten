@@ -18,10 +18,9 @@ use snapfaas::worker::Worker;
 use snapfaas::sched;
 
 use core::panic;
-use std::sync::mpsc;
 use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpStream};
 
 fn main() {
     env_logger::init();
@@ -105,45 +104,51 @@ fn main() {
     manager.set_total_mem(total_mem);
 
     // create the worker pool
-    let pool = new_workerpool(manager.total_mem()/128, sched_addr.clone(), manager_sender.clone());
+    let pool_size = manager.total_mem()/128;
+    let pool = threadpool::ThreadPool::new(pool_size);
+    for id in 0..pool_size as u32 {
+        let sched_addr_dup = sched_addr.clone();
+        let manager_sender_dup = manager_sender.clone();
+        pool.execute(move || {
+            Worker::new(id, sched_addr_dup, manager_sender_dup)
+                .wait_and_process();
+        });
+    }
+
     // kick off the resource manager
     let manager_handle = manager.run();
 
     // register signal handler
-    set_ctrlc_handler(pool, sched_addr.clone(), manager_sender, Some(manager_handle));
+    set_ctrlc_handler(sched_addr.clone(), manager_sender.clone(), Some(manager_handle));
 
     // hold on
-    let (_, rx) = mpsc::channel::<usize>();
-    loop { let _ = rx.recv(); }
+    pool.join();
 }
 
-fn new_workerpool(
-    pool_size: usize, sched_addr: String, manager_sender: Sender<Message>
-) -> Vec<Worker> {
-    let mut pool = Vec::with_capacity(pool_size);
-    for i in 0..pool_size {
-        let cid = i as u32 + 100;
-        pool.push(Worker::new(
-            sched_addr.clone(),
-            manager_sender.clone(),
-            cid,
-        ));
-    }
-    pool
-}
+//fn new_workerpool(
+//    pool_size: usize, sched_addr: String, manager_sender: Sender<Message>
+//) -> Vec<Worker> {
+//    let mut pool = Vec::with_capacity(pool_size);
+//    for i in 0..pool_size {
+//        let cid = i as u32 + 100;
+//        pool.push(Worker::new(
+//            sched_addr.clone(),
+//            manager_sender.clone(),
+//            cid,
+//        ));
+//    }
+//    pool
+//}
 
 fn set_ctrlc_handler(
-    mut pool: Vec<Worker>, sched_addr: String,
-    manager_sender: Sender<Message>, mut manager_handle: Option<JoinHandle<()>>
+    sched_addr: String,
+    manager_sender: Sender<Message>,
+    mut manager_handle: Option<JoinHandle<()>>,
 ) {
     ctrlc::set_handler(move || {
-        println!("ctrlc handler");
         warn!("{}", "Handling Ctrl-C. Shutting down...");
-        if let Ok(mut sched) = sched::rpc::Scheduler::try_new(sched_addr.clone()) {
-            let _ = sched.drop_resource();
-        }
-        while let Some(worker) = pool.pop() {
-            worker.join().expect("failed to join worker thread");
+        if let Ok(mut sched) = TcpStream::connect(sched_addr.clone()) {
+            let _ = sched::rpc::drop_resource(&mut sched);
         }
         snapfaas::unlink_unix_sockets();
         manager_sender.send(Message::Shutdown).expect("failed to shut down resource manager");

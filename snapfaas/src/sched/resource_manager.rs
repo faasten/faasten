@@ -7,7 +7,7 @@ use std::sync::mpsc::Sender;
 use uuid::Uuid;
 
 use super::rpc::ResourceInfo;
-use super::Task;
+use super::{Task, message};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Node(IpAddr);
@@ -58,7 +58,7 @@ pub struct ResourceManager {
     // the hashmap, which is why we need another struct to store info
     pub idle: HashMap<Node, Vec<Worker>>,
     // For sync invoke
-    pub wait_list: HashMap<Uuid, Sender<String>>,
+    pub wait_list: HashMap<Uuid, Sender<message::TaskReturn>>,
 }
 
 impl ResourceManager {
