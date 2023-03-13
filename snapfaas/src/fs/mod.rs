@@ -730,12 +730,11 @@ pub mod utils {
         }
     }
 
-    pub fn read_path<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<DirEntry, Error> {
+    pub fn _read_path<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>, clearance_checker: fn() -> bool) -> Result<DirEntry, Error> {
         use syscalls::path_component::Component as PC;
-        taint_with_label(Buckle::public());
         if let Some((last, path)) = path.split_last() {
             let direntry = path.iter().try_fold(fs.root().into(), |de, comp| -> Result<DirEntry, Error> {
-                match de {
+                let res = match de {
                     super::DirEntry::Directory(dir) => {
                         // implicitly raising the label
                         taint_with_label(dir.label.clone());
@@ -756,10 +755,14 @@ pub mod utils {
                         }
                     },
                     super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
+                };
+                if res.is_ok() && !clearance_checker() {
+                    return Err(Error::LabelError(LabelError::CannotRead));
                 }
+                res
             })?;
             // corner case: the last component is an unallocated facet.
-            match direntry {
+            let res = match direntry {
                 super::DirEntry::Directory(dir) => {
                     // implicitly raising the label
                     taint_with_label(dir.label.clone());
@@ -784,11 +787,23 @@ pub mod utils {
                     }
                 },
                 super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
+            };
+            if res.is_ok() && !clearance_checker() {
+                return Err(Error::LabelError(LabelError::CannotRead));
             }
+            res
         } else {
             // corner case: empty vector is the root's path
             Ok(fs.root().into())
         }
+    }
+
+    pub fn read_path<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<DirEntry, Error> {
+        _read_path(fs, path, noop)
+    }
+
+    pub fn read_path_check_clearance<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<DirEntry, Error> {
+        _read_path(fs, path, check_clearance)
     }
 
     pub fn list<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<HashMap<String, DirEntry>, Error> {
@@ -968,6 +983,48 @@ pub mod utils {
         }
     }
 
+    pub fn invoke_clearance_check<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<(String, Component), Error> {
+        match read_path_check_clearance(&fs, path) {
+            Ok(DirEntry::Gate(gate)) => {
+                CURRENT_LABEL.with(|current_label| {
+                    PRIVILEGE.with(|opriv| {
+                        STAT.with(|stat| {
+                            // implicit endorsement
+                            endorse_with(&*opriv.borrow());
+                            // check integrity
+                            let now = Instant::now();
+                            if current_label.borrow().integrity.implies(&gate.invoking) {
+                                stat.borrow_mut().label_tracking += now.elapsed();
+                                Ok((gate.image, gate.privilege))
+                            } else {
+                                Err(Error::from(GateError::CannotInvoke))
+                            }
+                        })
+                    })
+                })
+            },
+            Ok(_) => Err(Error::BadPath),
+            Err(e) => Err(Error::from(e)),
+        }
+    }
+
+    pub fn check_clearance() -> bool {
+        STAT.with(|stat| {
+            let now = Instant::now();
+            let res = CURRENT_LABEL.with(|current_label| {
+                CLEARANCE.with(|clearance| {
+                    current_label.borrow().can_flow_to(&clearance.borrow())
+                })
+            });
+            stat.borrow_mut().label_tracking += now.elapsed();
+            res
+        })
+    }
+
+    pub fn noop() -> bool {
+        true
+    }
+
     pub fn taint_with_secrecy(secrecy: Component) {
         STAT.with(|stat| {
             let now = Instant::now();
@@ -1055,7 +1112,7 @@ pub mod utils {
         STAT.with(|stat| {
             let now = Instant::now();
             CLEARANCE.with(|thisc| {
-                *thisc.borrow_mut() = c; 
+                *thisc.borrow_mut() = c;
             });
             stat.borrow_mut().label_tracking += now.elapsed();
         })

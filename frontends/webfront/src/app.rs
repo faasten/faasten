@@ -260,7 +260,7 @@ impl App {
         snapfaas::fs::utils::set_my_privilge(privilege);
         snapfaas::fs::utils::set_clearance(clearance);
 
-        let (name, gate_privilege) = snapfaas::fs::utils::invoke(&faasten_fs, &sc_path).map_err(
+        let (name, gate_privilege) = snapfaas::fs::utils::invoke_clearance_check(&faasten_fs, &sc_path).map_err(
             |e| Response::json(&serde_json::json!({"error": format!("{:?}", e)}))
             .with_status_code(400))?;
         let gate_privilege = component_to_pbcomponent(&gate_privilege);
