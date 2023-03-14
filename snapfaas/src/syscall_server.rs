@@ -229,14 +229,8 @@ impl SyscallProcessor {
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::DupGate(req)) => {
-                    let value = fs::utils::read_path(&env.fs, &req.orig).ok().and_then(|entry| { match entry {
-                            fs::DirEntry::Gate(gate) => {
-                                let policy = pblabel_to_buckle(&req.policy.unwrap());
-                                fs::utils::create_gate(&env.fs, &req.base_dir, req.name, policy, gate.image).ok()
-                            },
-                            _ => None,
-                        }
-                    });
+                    let policy = pblabel_to_buckle(&req.policy.unwrap());
+                    let value = fs::utils::dup_gate(&env.fs, &req.orig, &req.base_dir, req.name, policy).ok();
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some()
                     };

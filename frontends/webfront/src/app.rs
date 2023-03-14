@@ -17,7 +17,6 @@ use openssl::pkey::{self, PKey};
 use lmdb::Transaction;
 use log::error;
 
-use serde_json::Value;
 use snapfaas::blobstore::Blobstore;
 use snapfaas::fs;
 use snapfaas::fs::FS;
@@ -121,7 +120,6 @@ impl App {
         false
     }
 
-
     fn verify_jwt(&self, request: &Request) -> Result<String, Response> {
         let jwt = request.header("Authorization").and_then(|header| header.split(" ").last()).ok_or(Response::empty_400())?;
         let key = PKeyWithDigest {
@@ -222,21 +220,26 @@ impl App {
                 "error": "failed to get scheduler connection"
             })).with_status_code(500))?;
 
+        // process the input:
+        // 1. generate labeled_invoke from the input
+        // 2. if file presents, store it to the blobstore.
         let input_post_form = post_input!(request, {
             file: Option<BufferedFile>, payload: String, label: String
         }).map_err(|e|
             Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400)
         )?;
 
+        // parse the label
         let label = buckle::Buckle::parse(&input_post_form.label)
             .map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() }))
                 .with_status_code(400))?;
 
+        // parse the gate path
         use syscalls::{PathComponent, path_component::Component};
         let mut sc_path = Vec::new();
         for c in gate_path.split(":") {
-            if c.starts_with("@") {
-                let facet = buckle::Buckle::parse(c.strip_prefix("@").unwrap())
+            if c.starts_with("^") {
+                let facet = buckle::Buckle::parse(c.strip_prefix("^").unwrap())
                     .map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() }))
                         .with_status_code(400))?;
                 let facet = buckle_to_pblabel(&facet);
@@ -245,7 +248,11 @@ impl App {
                 sc_path.push(PathComponent{ component: Some(Component::Dscrp(c.to_string())) });
             }
         }
-        let faasten_fs = FS::new(&*snapfaas::labeled_fs::DBENV);
+
+        // resolve the gate path
+        // FIXME this storage setup requires this gateway and worker machines to have access to
+        // the same database file.
+        let faasten_fs = FS::new(&*self.dbenv);
 
         snapfaas::fs::utils::clear_label();
         snapfaas::fs::utils::taint_with_label(label);
@@ -259,17 +266,39 @@ impl App {
         };
         snapfaas::fs::utils::set_my_privilge(privilege);
         snapfaas::fs::utils::set_clearance(clearance);
-
         let (name, gate_privilege) = snapfaas::fs::utils::invoke_clearance_check(&faasten_fs, &sc_path).map_err(
             |e| Response::json(&serde_json::json!({"error": format!("{:?}", e)}))
             .with_status_code(400))?;
         let gate_privilege = component_to_pbcomponent(&gate_privilege);
         let label = fs::utils::get_current_label();
         let label = buckle_to_pblabel(&label);
-        let req = sched::message::LabeledInvoke {
-            name, label: Some(label), gate_privilege, payload: input_post_form.payload, sync: true
+
+        let val: serde_json::Value = serde_json::from_str(&input_post_form.payload).map_err(|e|
+            Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(400))?;
+        let mut payload = serde_json::json!({"input": val});
+        // store file into the blobstore
+        if let Some(f) = input_post_form.file {
+            let mut blobstore = self.blobstore.lock().map_err(|e|
+                Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
+            )?;
+            let mut newblob = blobstore.create().map_err(|e|
+                Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
+            )?;
+            newblob.write_all(f.data.as_ref()).map_err(|e|
+                Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
+            )?;
+            let name = blobstore.save(newblob).map_err(|e|
+                Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
+            )?.name;
+            payload.as_object_mut().unwrap().insert("input-blob".to_string(), serde_json::Value::String(name));
         };
 
+        // generate the labeled_invoke
+        let req = sched::message::LabeledInvoke {
+            name, label: Some(label), gate_privilege, payload: payload.to_string(), sync: true
+        };
+
+        // submit the labeled_invoke to the scheduler
         sched::rpc::labeled_invoke(conn, req).map_err(|_|
             Response::json(&serde_json::json!({
                 "error": "failed to submit invocation to the scheduler",
@@ -313,7 +342,7 @@ impl App {
             Response::json(&serde_json::json!({
                 "error": "failed to get snapfaas connection"
             })).with_status_code(500))?;
-        let input_json: Value = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
+        let input_json: serde_json::Value = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
 
         let txn = self.dbenv.begin_ro_txn().unwrap();
         let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
@@ -582,13 +611,28 @@ impl App {
             alg: "ES256".to_string(),
             iat: now,
             exp: now + 10 * 60,
-            sub,
+            sub: sub.clone(),
         };
         let key = PKeyWithDigest {
             key: self.pkey.clone(),
             digest: openssl::hash::MessageDigest::sha256(),
         };
         let token = claims.sign_with_key(&key).unwrap();
+
+        // generate the per-user fsutil gate.
+        let root_fsutil = vec![
+            syscalls::PathComponent { component: Some(syscalls::path_component::Component::Dscrp("fsutil".to_string())) }
+        ];
+        let user_facet = buckle::Buckle::parse(&format!("{0},{0}", sub)).unwrap();
+        let user_facet_pb = buckle_to_pblabel(&user_facet);
+        let user_facet_dir_path = vec![
+            syscalls::PathComponent { component: Some(syscalls::path_component::Component::Dscrp("home".to_string())) },
+            syscalls::PathComponent { component: Some(syscalls::path_component::Component::Facet(user_facet_pb)) },
+        ];
+        let faasten_fs = FS::new(&*self.dbenv);
+        fs::utils::dup_gate(&faasten_fs, &root_fsutil, &user_facet_dir_path, "fsutil".to_string(), user_facet)
+            .map_err(|_| Response::text("failed to create the user-specific storage function"))?;
+
         Ok(Response::html(format!(include_str!("authenticated_cas.html"), token)))
     }
 

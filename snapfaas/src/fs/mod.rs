@@ -270,7 +270,7 @@ impl FacetedDirectoryInner {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Gate {
     pub privilege: Component,
-    invoking: Component,
+    weakest_privilege_required: Component,
     // TODO: for now, use the configurations function-name:host-fs-path
     pub image: String,
     object_id: UID,
@@ -389,7 +389,7 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
-    pub fn create_gate(&self, dpriv: Component, invoking: Component, image: String) -> Result<Gate, GateError> {
+    pub fn create_gate(&self, dpriv: Component, weakest_privilege_required: Component, image: String) -> Result<Gate, GateError> {
         PRIVILEGE.with(|opriv| {
             STAT.with(|stat| {
                 let now = Instant::now();
@@ -402,33 +402,8 @@ impl<S: BackingStore> FS<S> {
                     }
                     Ok(Gate{
                         privilege: dpriv,
-                        invoking,
+                        weakest_privilege_required,
                         image,
-                        object_id: uid
-                    })
-                } else {
-                    Err(GateError::CannotDelegate)
-                }
-            })
-        })
-    }
-
-    pub fn dup_gate(&self, policy: Buckle, gate: &Gate) -> Result<Gate, GateError> {
-        PRIVILEGE.with(|opriv| {
-            STAT.with(|stat| {
-                let dpriv = policy.secrecy;
-                let now = Instant::now();
-                if opriv.borrow().implies(&dpriv) {
-                    stat.borrow_mut().label_tracking += now.elapsed();
-                    let mut uid: UID = rand::random();
-                    while !self.storage.add(&uid.to_be_bytes(), &[]) {
-                        uid = rand::random();
-                        stat.borrow_mut().create_retry += 1;
-                    }
-                    Ok(Gate{
-                        privilege: dpriv,
-                        invoking: policy.integrity,
-                        image: gate.image.clone(),
                         object_id: uid
                     })
                 } else {
@@ -845,7 +820,6 @@ pub mod utils {
     }
 
     pub fn delete<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String) -> Result<(), Error> {
-        // raise the integrity to true
         match read_path(&fs, base_dir) {
             Ok(DirEntry::Directory(dir)) => {
                 endorse_with_owned();
@@ -861,7 +835,6 @@ pub mod utils {
     }
 
     pub fn create_gate<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, policy: Buckle, image: String) -> Result<(), Error> {
-        // raise the integrity to true
         match read_path(&fs, base_dir) {
             Ok(DirEntry::Directory(dir)) => {
                 let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::from(e))?;
@@ -883,8 +856,18 @@ pub mod utils {
         }
     }
 
+    pub fn dup_gate<S: BackingStore + Clone>(fs: &FS<S>, orig: &Vec<syscalls::PathComponent>, base_dir: &Vec<syscalls::PathComponent>, name: String, policy: Buckle) -> Result<(), Error> {
+        read_path(fs, orig).and_then(|entry| {
+            match entry {
+                DirEntry::Gate(gate) => {
+                    create_gate(fs, base_dir, name, policy, gate.image)
+                },
+                _ => Err(Error::BadPath),
+            }
+        })
+    }
+
     pub fn create_directory<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, label: Buckle) -> Result<(), Error> {
-        // raise the integrity to true
         match read_path(&fs, base_dir) {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
@@ -909,7 +892,6 @@ pub mod utils {
     }
 
     pub fn create_file<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, label: Buckle) -> Result<(), Error> {
-        // raise the integrity to true
         match read_path(&fs, base_dir) {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
@@ -934,7 +916,6 @@ pub mod utils {
     }
 
     pub fn create_faceted<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String) -> Result<(), Error> {
-        // raise the integrity to true
         match read_path(&fs, base_dir) {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
@@ -968,7 +949,7 @@ pub mod utils {
                             endorse_with(&*opriv.borrow());
                             // check integrity
                             let now = Instant::now();
-                            if current_label.borrow().integrity.implies(&gate.invoking) {
+                            if current_label.borrow().integrity.implies(&gate.weakest_privilege_required) {
                                 stat.borrow_mut().label_tracking += now.elapsed();
                                 Ok((gate.image, gate.privilege))
                             } else {
@@ -993,7 +974,7 @@ pub mod utils {
                             endorse_with(&*opriv.borrow());
                             // check integrity
                             let now = Instant::now();
-                            if current_label.borrow().integrity.implies(&gate.invoking) {
+                            if current_label.borrow().integrity.implies(&gate.weakest_privilege_required) {
                                 stat.borrow_mut().label_tracking += now.elapsed();
                                 Ok((gate.image, gate.privilege))
                             } else {
