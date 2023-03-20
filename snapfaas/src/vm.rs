@@ -63,38 +63,15 @@ pub struct VmHandle {
 
 #[derive(Debug)]
 pub struct Vm {
-    id: usize,
-    firerunner: String,
-    allow_network: bool,
-    function_name: String,
-    function_config: FunctionConfig,
+    pub id: usize,
+    pub function: super::fs::Function,
     pub label: Buckle,
-    //privilege: Component,
     pub handle: Option<VmHandle>,
 }
 
 impl Vm {
-    /// Create a new Vm instance with its handle uninitialized
-    pub fn new(
-        id: usize,
-        firerunner: String,
-        function_name: String,
-        function_config: FunctionConfig,
-        allow_network: bool,
-    ) -> Self {
-        Vm {
-            id,
-            allow_network,
-            firerunner,
-            function_name: function_name.clone(),
-            function_config,
-            // We should also probably have a clearance to mitigate side channel attacks, but
-            // meh for now...
-            /// Starting label with public secrecy and integrity has app-name
-            label: Buckle::new(true, true),
-            //privilege: Component::formula([[function_name]]),
-            handle: None,
-        }
+    pub fn new(id: usize, function: super::fs::Function) -> Self {
+        Self { id, function, label: Buckle::public(), handle: None }
     }
 
     /// Launch the current Vm instance.
@@ -104,14 +81,15 @@ impl Vm {
         vm_listener: &tokio::net::UnixListener,
         cid: u32,
         force_exit: bool,
+        function_config: FunctionConfig,
         odirect: Option<OdirectOption>,
     ) -> Result<(), Error> {
         if self.handle.is_some() {
             return Ok(());
         }
-        let function_config = &self.function_config;
         let mem_str = function_config.memory.to_string();
-        let vcpu_str = function_config.vcpus.to_string();
+        // FIXME num_vcpu should scale with memory size.
+        let vcpu_str = 1usize.to_string();
         let cid_str = cid.to_string();
         let id_str = self.id.to_string();
         let mut args = vec![
@@ -157,7 +135,7 @@ impl Vm {
         // network config should be of the format <TAP-Name>/<MAC Address>
         let tap_name = format!("tap{}", cid-100);
         let mac_addr = format!("{}:{:02X}:{:02X}", MACPREFIX, ((cid-100)&0xff00)>>8, (cid-100)&0xff);
-        if function_config.network && self.allow_network {
+        if function_config.network {
             args.extend_from_slice(&["--tap_name", &tap_name]);
             args.extend_from_slice(&["--mac", &mac_addr]);
         }
@@ -181,7 +159,7 @@ impl Vm {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_io().build().unwrap();
         let (conn, vm_process) = runtime.block_on(async {
             debug!("args: {:?}", args);
-            let mut vm_process = Command::new(&self.firerunner).args(args).kill_on_drop(true)
+            let mut vm_process = Command::new("firerunner").args(args).kill_on_drop(true)
                 .stdin(Stdio::null())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -223,20 +201,6 @@ impl Vm {
 
         Ok(())
     }
-
-    pub fn function_name(&self) -> String {
-        self.function_name.clone()
-    }
-
-    pub fn id(&self) -> usize {
-        self.id
-    }
-
-    /// Return function memory size in MB
-    pub fn memory(&self) -> usize {
-        self.function_config.memory
-    }
-
 }
 
 impl SyscallChannel for Vm {

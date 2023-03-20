@@ -1,82 +1,59 @@
 use std::net::TcpStream;
-use std::result::Result;
+//use std::result::Result;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
-use std::sync::mpsc;
-use std::sync::mpsc::{Receiver, Sender};
-use std::thread::JoinHandle;
+//use std::sync::mpsc;
+//use std::sync::mpsc::{Receiver, Sender};
 
-use log::{error, debug};
+use log::error;
+//use serde::{Deserialize, Serialize};
 
-use crate::configs::{ResourceManagerConfig, FunctionConfig};
+use crate::fs::Function;
 use crate::vm::Vm;
-use crate::message::Message;
 use crate::sched::{self, rpc::ResourceInfo};
 
-#[derive(Debug)]
-pub enum Error {
-    LowMemory(usize),
-    NoEvictCandidate,
-    InsufficientEvict,
-    NoIdleVm,
-    FunctionNotExist,
-}
-
-#[derive(Debug)]
-pub struct VmList {
-    num_vms: AtomicUsize,
-    list: Mutex<Vec<Vm>>,
-}
+//#[derive(Debug)]
+//pub enum Message {
+//    Shutdown,
+//    GetVm(CacheKey, Sender<Result<Option<Vm>, Error>>),
+//    ReleaseVm(Vm),
+//    DeleteVm(Vm),
+//    NewVm(usize, Sender<Result<usize, Error>>),
+//}
 
 #[derive(Debug)]
 pub struct ResourceManager {
-    config: ResourceManagerConfig,
-    idle: HashMap<String, VmList>, // from function name to a vector of VMs
-    receiver: Receiver<Message>,
-    pub total_num_vms: usize, // total number of vms ever created
+    cache: HashMap<Function, Vec<Vm>>,
+    //receiver: Receiver<Message>,
+    total_num_vms: usize, // total number of vms ever created
     total_mem: usize,
-    pub free_mem: usize,
+    free_mem: usize,
     sched_conn: TcpStream,
 }
 
 impl ResourceManager {
     /// create and return a ResourceManager value
     /// The ResourceManager value encapsulates the idle lists and function configs
-    pub fn new(config: ResourceManagerConfig, sched_addr: String) -> (Self, Sender<Message>) {
-        let mut idle = HashMap::<String, VmList>::new();
-        for (name, _) in &config.functions {
-            idle.insert(name.clone(), VmList::new());
-        }
+    pub fn new(sched_addr: String) -> Self {
         // set default total memory to free memory on the machine
         let total_mem = crate::get_machine_memory();
-        let (sender, receiver) = mpsc::channel();
+        Self {
+           cache: Default::default(),
+           total_num_vms: 0,
+           total_mem,
+           free_mem: total_mem,
+           sched_conn: TcpStream::connect(sched_addr).expect("failed to connect to the scheduler"),
+        }
+        //let (sender, receiver) = mpsc::channel();
 
-        (ResourceManager {
-            config,
-            idle,
-            receiver,
-            total_num_vms: 0,
-            total_mem,
-            free_mem: total_mem,
-            sched_conn: TcpStream::connect(sched_addr).expect("failed to connect to the scheduler"),
-        },
-        sender)
-    }
-
-    pub fn total_mem(&self) -> usize {
-        self.total_mem
-    }
-
-    pub fn free_mem(&self) -> usize {
-        self.free_mem
-    }
-
-    pub fn get_vm_stats(&self) -> HashMap<String, usize> {
-        self.idle
-            .iter()
-            .map(|(f, v)| (f.clone(), v.len()))
-            .collect()
+        //(ResourceManager {
+        //    cache: Default::default(),
+        //    receiver,
+        //    total_num_vms: 0,
+        //    total_mem,
+        //    free_mem: total_mem,
+        //    sched_conn: TcpStream::connect(sched_addr).expect("failed to connect to the scheduler"),
+        //},
+        //sender)
     }
 
     /// This function should only be called once before resource manager kicks off. Not supporting
@@ -95,212 +72,185 @@ impl ResourceManager {
         self.free_mem = mem;
     }
 
-    /// Kicks off the single thread resource manager
-    pub fn run(mut self) -> JoinHandle<()> {
-        std::thread::spawn(move || {
-            loop {
-                match self.receiver.recv() {
-                    Ok(msg) => {
-                        match msg {
-                            Message::GetVm(function, vm_sender) => {
-                                vm_sender.send(self.acquire_vm(&function)).expect("Failed to send VM");
-                            },
-                            Message::NewVm(function, vm_sender) => {
-                                vm_sender.send(self.allocate(&function)).expect("Failed to send VM");
-                            }
-                            Message::ReleaseVm(vm) => {
-                                self.release(vm);
-                            },
-                            Message::DeleteVm(vm) => {
-                                self.delete(vm);
-                            }
-                            Message::Shutdown => {
-                                debug!("local resource manager shutdown received");
-                                let _ = sched::rpc::drop_resource(&mut self.sched_conn);
-                                return;
-                            }
-                            _ => (),
-                        }
-                        let info = ResourceInfo {
-                            stats: self.get_vm_stats(),
-                            total_mem: self.total_mem(),
-                            free_mem: self.free_mem(),
-                        };
-                        let _ = sched::rpc::update_resource(&mut self.sched_conn, info);
-                    }
-                    Err(e) => {
-                        panic!("ResourceManager cannot read requests: {:?}", e);
-                    }
-                }
-            }
-        })
+    pub fn total_mem_in_mb(&self) -> usize {
+        self.total_mem
     }
+
+    ///// Kicks off the single thread resource manager
+    //pub fn run(mut self) -> JoinHandle<()> {
+    //    std::thread::spawn(move || {
+    //        loop {
+    //            match self.receiver.recv() {
+    //                Ok(msg) => {
+    //                    match msg {
+    //                        Message::GetVm(key, vm_sender) => {
+    //                            vm_sender.send(self.acquire_resource(&key)).expect("Failed to send VM");
+    //                        },
+    //                        Message::NewVm(memsize, vm_sender) => {
+    //                            vm_sender.send(self.try_allocate_memory(memsize)).expect("Failed to send VM");
+    //                        }
+    //                        Message::ReleaseVm(vm) => {
+    //                            self.release(vm);
+    //                        },
+    //                        Message::DeleteVm(vm) => {
+    //                            self.delete(vm);
+    //                        }
+    //                        Message::Shutdown => {
+    //                            debug!("local resource manager shutdown received");
+    //                            let _ = sched::rpc::drop_resource(&mut self.sched_conn);
+    //                            return;
+    //                        }
+    //                        _ => (),
+    //                    }
+    //                }
+    //                Err(e) => {
+    //                    panic!("ResourceManager cannot read requests: {:?}", e);
+    //                }
+    //            }
+    //        }
+    //    })
+    //}
 
     // Try to acquire an idle VM, otherwise try to allocate a new unlaunched VM.
     // If there's not enough resources on the machine to
     // allocate a new Vm, it will try to evict an idle Vm from another
     // function's idle list, and then allocate a new unlaunched VM.
-    fn acquire_vm(
-        &mut self,
-        function_name: &str,
-    )-> Result<Vm, Error> {
-        let func_memory = self.get_function_config(function_name)?.memory;
-        self.get_idle_vm(function_name)
-            .or_else(|e| {
-                match e {
-                    // No Idle vm for this function. Try to allocate a new vm.
-                    Error::NoIdleVm => {
-                        self.allocate(function_name)
-                    }
-                    _ => Err(e)
-                }
-            })
-            .or_else(|e| {
-                match e {
-                    // Not enough free memory to allocate. Try eviction
-                    Error::LowMemory(_) => {
-                        if self.evict(func_memory) {
-                            self.allocate(function_name)
-                        } else {
-                            Err(Error::InsufficientEvict)
-                        }
-                    }
-                    // Just return all other errors
-                    _ => Err(e)
-                }
-            })
+    pub fn get_cached_vm(&mut self, f: &Function) -> Option<Vm> {
+        let ret = self.cache.get_mut(f).map_or(None, |l| l.pop());
+        self.update_scheduler();
+        ret
     }
 
-    // Try to find an idle vm from the function's idle list
-    fn get_idle_vm(&self, function_name: &str) -> Result<Vm, Error> {
-        if let Some(idle_list) = self.idle.get(function_name) {
-            return idle_list.pop().ok_or(Error::NoIdleVm);
-        }
-        Err(Error::FunctionNotExist)
-    }
-
-    // Push the vm onto its function's idle list
-    fn release(&self, vm: Vm) {
-        self.idle.get(&vm.function_name()).unwrap().push(vm); // unwrap should always work
-    }
-
-    fn delete(&mut self, vm:Vm) {
-        self.free_mem += vm.memory();
-        drop(vm); // being explicit
-    }
-
-    // Try to allocate a new vm for a function that is ready to boot.
-    // allocate() first checks if there's enough free resources by looking at `free_mem`. If there
-    // is, it proactively "reserve" requisite memory by decrementing `free_mem`.
-    //
-    // Allocation fail under 1 condition:
-    // when there's not enough resources on the machine (Err(Error::LowMemory))
-    fn allocate(
-        &mut self,
-        function_name: &str,
-    ) -> Result<Vm, Error> {
-        let function_config = self.get_function_config(function_name)?.clone();
-        if self.free_mem >= function_config.memory {
-            self.total_num_vms += 1;
-            let id = self.total_num_vms;
-            self.free_mem -= function_config.memory;
-
-            debug!("Allocating new VM. ID: {:?}, App: {:?}", id, function_name);
-            Ok(Vm::new(id, self.config.firerunner_path.clone(), function_name.to_string(), function_config, self.config.allow_network))
+    pub fn new_vm(&mut self, f: Function) -> Option<Vm> {
+        let ret = if self.try_allocate_memory(f.memory) {
+            Some(Vm::new(self.total_num_vms, f))
         } else {
-            Err(Error::LowMemory(self.free_mem))
+            None
+        };
+        self.update_scheduler();
+        ret
+    }
+
+    // Push the VM into the VM cache
+    pub fn release(&mut self, vm: Vm) {
+        if let Some(l) = self.cache.get_mut(&vm.function) {
+            l.push(vm);
+        } else {
+            let k = vm.function.clone();
+            let l = vec![vm];
+            let _ = self.cache.insert(k, l);
+        }
+        self.update_scheduler();
+    }
+
+    pub fn delete(&mut self, vm: Vm) {
+        self.free_mem += vm.function.memory;
+        drop(vm); // being explicit
+        self.update_scheduler();
+    }
+
+    fn update_scheduler(&mut self) {
+        let stats = self.cache.iter().map(|(k, v)| (k.clone(), v.len())).collect();
+        let info = ResourceInfo {
+            stats,
+            total_mem: self.total_mem,
+            free_mem: self.free_mem,
+        };
+        let _ = sched::rpc::update_resource(&mut self.sched_conn, info);
+    }
+
+    /// proactively "reserve" requisite memory by decrementing `free_mem`.
+    fn try_allocate_memory(
+        &mut self,
+        memory: usize,
+    ) -> bool {
+        if self.free_mem >= memory || self.dummy_evict(memory) {
+            self.free_mem -= memory;
+            self.total_num_vms += 1;
+            true
+        } else {
+            false
         }
     }
 
     // Evict one or more vms to free `mem` MB of memory.
     // The function only return false when the `mem` MB is larger than the total available memory,
     // which is expected to never happen in a production system.
-    fn evict(&mut self, mem: usize) -> bool {
+    fn dummy_evict(&mut self, mem: usize) -> bool {
         if self.total_mem < mem {
             return false;
         }
-
         let mut freed: usize = 0;
         while freed < mem {
-            for key in self.idle.keys() {
-                let vmlist = self.idle.get(key).unwrap();
-
-                // instead of evicting from the first non-empty list in the map,
+            for l in self.cache.values_mut() {
+                // TODO instead of evicting from the first non-empty list in the map,
                 // collect some function popularity data and evict based on that.
                 // This is where some policies can be implemented.
-                if let Some(vm) = vmlist.try_pop() {
-                    freed += vm.memory();
-                    self.free_mem += vm.memory();
+                if let Some(vm) = l.pop() {
+                    freed += vm.function.memory;
+                    self.free_mem += vm.function.memory;
                     drop(vm); // being explicit
                 }
             }
         }
-
         true
-    }
-
-    fn get_function_config(&self, function_name: &str) -> Result<&FunctionConfig, Error> {
-        self.config.functions.get(function_name).ok_or(Error::FunctionNotExist)
     }
 }
 
 impl Drop for ResourceManager {
     fn drop(&mut self) {
-        for key in self.idle.keys() {
-            let vmlist = self.idle.get(key).unwrap();
-            vmlist.list.lock().map(|mut l| {
-                for vm in l.iter_mut() {
-                    drop(vm); // Just being explicit here, not strictly necessary
-                }
-            }).expect("poisoned lock");
-        }
-    }
-}
-
-impl VmList {
-    pub fn new() -> VmList {
-        VmList {
-            num_vms: AtomicUsize::new(0),
-            list: Mutex::new(vec![]),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.num_vms.load(Ordering::Relaxed)
-    }
-
-    /// Pop a vm from self.list if the list is not empty.
-    /// This function blocks if it cannot grab the lock on self.list.
-    pub fn pop(&self) -> Option<Vm> {
-        match self.list.lock().expect("poisoned lock on idle list").pop() {
-            Some(v) => {
-                self.num_vms.fetch_sub(1, Ordering::Relaxed);
-                return Some(v);
+        for l in self.cache.values_mut() {
+            for vm in l.iter_mut() {
+                drop(vm); // Just being explicit here, not strictly necessary
             }
-            None => return None,
         }
-    }
-
-    /// try to grab the mutex on self.list. If try_lock() fails, just return
-    /// None instead of blocking.
-    pub fn try_pop(&self) -> Option<Vm> {
-        match self.list.try_lock() {
-            Ok(mut locked_list) => match locked_list.pop() {
-                Some(vm) => {
-                    self.num_vms.fetch_sub(1, Ordering::Relaxed);
-                    return Some(vm);
-                }
-                None => return None,
-            },
-            Err(_) => return None,
-        }
-    }
-
-    pub fn push(&self, val: Vm) {
-        self.list
-            .lock()
-            .expect("poisoned lock on idle list")
-            .push(val);
-        self.num_vms.fetch_add(1, Ordering::Relaxed);
     }
 }
+
+//impl VmList {
+//    pub fn new() -> VmList {
+//        VmList {
+//            num_vms: AtomicUsize::new(0),
+//            list: Mutex::new(vec![]),
+//        }
+//    }
+//
+//    pub fn len(&self) -> usize {
+//        self.num_vms.load(Ordering::Relaxed)
+//    }
+//
+//    /// Pop a vm from self.list if the list is not empty.
+//    /// This function blocks if it cannot grab the lock on self.list.
+//    pub fn pop(&self) -> Option<Vm> {
+//        match self.list.lock().expect("poisoned lock on idle list").pop() {
+//            Some(v) => {
+//                self.num_vms.fetch_sub(1, Ordering::Relaxed);
+//                return Some(v);
+//            }
+//            None => return None,
+//        }
+//    }
+//
+//    /// try to grab the mutex on self.list. If try_lock() fails, just return
+//    /// None instead of blocking.
+//    pub fn try_pop(&self) -> Option<Vm> {
+//        match self.list.try_lock() {
+//            Ok(mut locked_list) => match locked_list.pop() {
+//                Some(vm) => {
+//                    self.num_vms.fetch_sub(1, Ordering::Relaxed);
+//                    return Some(vm);
+//                }
+//                None => return None,
+//            },
+//            Err(_) => return None,
+//        }
+//    }
+//
+//    pub fn push(&self, val: Vm) {
+//        self.list
+//            .lock()
+//            .expect("poisoned lock on idle list")
+//            .push(val);
+//        self.num_vms.fetch_add(1, Ordering::Relaxed);
+//    }
+//}

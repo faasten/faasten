@@ -14,8 +14,13 @@ message FinishTask {
     TaskReturn result = 2;
 }
 
+message UnlabeledInvoke {
+    syscalls.Function function = 1;
+    string payload = 2;
+}
+
 message LabeledInvoke {
-    string             name             = 1;
+    syscalls.Function function         = 1;
     syscalls.Buckle    label            = 2;
     syscalls.Component gatePrivilege    = 3;
     string             payload          = 4;
@@ -36,6 +41,11 @@ message ProcessTask {
     LabeledInvoke labeledInvoke = 2;
 }
 
+message ProcessTaskInsecure {
+    string taskId = 1;
+    UnlabeledInvoke unlabeledInvoke = 2;
+}
+
 message Terminate {}
 message Fail {}
 message Ping {}
@@ -54,6 +64,7 @@ message Request {
         // Debug
         TerminateAll   terminateAll   = 6;
         Ping           ping           = 7;
+        UnlabeledInvoke unlabeledInvoke = 8;
     }
 }
 
@@ -66,18 +77,18 @@ message Response {
         Fail        fail        = 3;
         TaskReturn  success     = 4;
         Pong        pong        = 5;
+        // Worker
+        ProcessTaskInsecure processTaskInsecure = 6;
     }
 }
 
 enum ReturnCode {
-    Dropped = 0;
-    FunctionNotExist = 1;
-    ResourceExhausted = 2;
-    LaunchFailed = 3;
-    ProcessRequestFailed = 4;
-    GateNotExist = 5;
-    Success = 6;
-    QueueFull = 7;
+    ResourceExhausted = 0;
+    LaunchFailed = 1;
+    ProcessRequestFailed = 2;
+    GateNotExist = 3;
+    Success = 4;
+    QueueFull = 5;
 }
 
 message TaskReturn {

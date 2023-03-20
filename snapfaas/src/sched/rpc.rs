@@ -5,6 +5,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use serde::{Serialize, Deserialize};
 
+use crate::fs::Function;
+
 use super::Error;
 use super::message;
 use super::message::{Request, Response, TaskReturn};
@@ -57,6 +59,16 @@ pub fn labeled_invoke(stream: &mut TcpStream, labeled_invoke: message::LabeledIn
     Ok(())
 }
 
+/// This method is for workers to invoke a function
+pub fn unlabeled_invoke(stream: &mut TcpStream, unlabeled_invoke: message::UnlabeledInvoke) -> Result<(), Error> {
+    let req = Request {
+        kind: Some(ReqKind::UnlabeledInvoke(unlabeled_invoke))
+    };
+    message::write(stream, &req)?;
+    let _ = message::read_response(stream)?;
+    Ok(())
+}
+
 /// This method is to terminate all workers (for debug)
 pub fn terminate_all(stream: &mut TcpStream) -> Result<(), Error> {
     let req = Request {
@@ -91,7 +103,7 @@ pub fn drop_resource(stream: &mut TcpStream) -> Result<(), Error> {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResourceInfo {
-    pub stats: HashMap<String, usize>,
+    pub stats: HashMap<Function, usize>,
     pub total_mem: usize,
     pub free_mem: usize,
 }

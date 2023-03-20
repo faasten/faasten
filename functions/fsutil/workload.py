@@ -1,10 +1,15 @@
 import json
 
 def handle(req, syscall):
-    args = req['args']
-    op = args['op']
+    args = req['input']['args']
+    op = args['input']['op']
+    blob = args['input-blob']
+    ret = {}
     if op == 'create-gate':
-        if 
+        ret['success'] = syscall.create_gate_str(args['orig'], args['path'], args['policy'], req['input-blob'])
+    else:
+        ret['success'] = False
+        ret['error'] = 'unknown op'
     #if op == 'createdir':
     #    success = syscall.fs_createdir(args['path']) is not None
     #elif op == 'createfile':
@@ -20,4 +25,4 @@ def handle(req, syscall):
     #    success = syscall.fs_delete(['home', user_facet, 'file1'])
     #else:
     #    return {'error': 'unsupported op.'}
-    return {'success': success}
+    return ret 

@@ -20,7 +20,7 @@ use log::error;
 use snapfaas::blobstore::Blobstore;
 use snapfaas::fs;
 use snapfaas::fs::FS;
-use snapfaas::request;
+use snapfaas::fs::Function;
 use snapfaas::sched;
 use snapfaas::syscall_server::buckle_to_pblabel;
 use snapfaas::syscall_server::component_to_pbcomponent;
@@ -186,12 +186,12 @@ impl App {
             (POST) (/put_blob) => {
                 self.put_blob(request)
             },
-            (GET) (/assignments) => {
-                self.assignments(request)
-            },
-            (POST) (/assignments) => {
-                self.start_assignment(request)
-            },
+            //(GET) (/assignments) => {
+            //    self.assignments(request)
+            //},
+            //(POST) (/assignments) => {
+            //    self.start_assignment(request)
+            //},
             (POST) (/invoke/{function_name}) => {
                 self.invoke(request, function_name)
             },
@@ -266,18 +266,19 @@ impl App {
         };
         snapfaas::fs::utils::set_my_privilge(privilege);
         snapfaas::fs::utils::set_clearance(clearance);
-        let (name, gate_privilege) = snapfaas::fs::utils::invoke_clearance_check(&faasten_fs, &sc_path).map_err(
+        let (f, gate_privilege) = snapfaas::fs::utils::invoke_clearance_check(&faasten_fs, &sc_path).map_err(
             |e| Response::json(&serde_json::json!({"error": format!("{:?}", e)}))
             .with_status_code(400))?;
         let gate_privilege = component_to_pbcomponent(&gate_privilege);
         let label = fs::utils::get_current_label();
         let label = buckle_to_pblabel(&label);
 
+        // prepare payload
         let val: serde_json::Value = serde_json::from_str(&input_post_form.payload).map_err(|e|
             Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(400))?;
         let mut payload = serde_json::json!({"input": val});
-        // store file into the blobstore
         if let Some(f) = input_post_form.file {
+            // store file into the blobstore
             let mut blobstore = self.blobstore.lock().map_err(|e|
                 Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
             )?;
@@ -295,7 +296,7 @@ impl App {
 
         // generate the labeled_invoke
         let req = sched::message::LabeledInvoke {
-            name, label: Some(label), gate_privilege, payload: payload.to_string(), sync: true
+            function: Some(f.into()), label: Some(label), gate_privilege, payload: payload.to_string(), sync: true
         };
 
         // submit the labeled_invoke to the scheduler
@@ -324,16 +325,16 @@ impl App {
         Ok(Response::json(&User { login, github }))
     }
 
-    fn assignments(&self, request: &Request) -> Result<Response, Response> {
-        self.verify_jwt(request)?;
+    //fn assignments(&self, request: &Request) -> Result<Response, Response> {
+    //    self.verify_jwt(request)?;
 
-        let txn = self.dbenv.begin_ro_txn().unwrap();
-        let results = txn.get(*self.default_db, &"cos316/assignments").ok()
-                .map(String::from_utf8_lossy);
-        let res = Response::json(&results);
-        txn.commit().expect("commit");
-        Ok(res)
-    }
+    //    let txn = self.dbenv.begin_ro_txn().unwrap();
+    //    let results = txn.get(*self.default_db, &"cos316/assignments").ok()
+    //            .map(String::from_utf8_lossy);
+    //    let res = Response::json(&results);
+    //    txn.commit().expect("commit");
+    //    Ok(res)
+    //}
 
     fn invoke(&self, request: &Request, function_name: String) -> Result<Response, Response> {
         let login = self.verify_jwt(request)?;
@@ -345,94 +346,94 @@ impl App {
         let input_json: serde_json::Value = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
 
         let txn = self.dbenv.begin_ro_txn().unwrap();
-        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+        let f: Option<Function> = txn.get(*self.default_db, &function_name).ok().map(|x| serde_json::from_slice(x).ok()).flatten();
         txn.commit().expect("commit");
-        if !(admins.contains(&login) || ["start_assignment", "add_to_repo", "delete_repo", "cos326_find_ungraded", "cos326_find_not_submitted"].contains(&function_name.as_str())) {
-            return Err(Response::json(&serde_json::json!({ "error": "user not authorized to make request" })).with_status_code(401))
+
+        if f.is_none() {
+            return Err(Response::json(&serde_json::json!({
+                "error": "failed to resolve the function"
+            })).with_status_code(400))?;
         }
 
-        let req = request::Request {
-            gate: function_name,
+        let req = sched::message::UnlabeledInvoke {
+            function: Some(f.unwrap().into()),
             payload: serde_json::json!({
                 "payload": input_json,
                 "login": login,
-            }),
+            }).to_string(),
         };
-        request::write_u8(&req.to_vec(), conn).map_err(|_|
+        sched::rpc::unlabeled_invoke(conn, req).map_err(|_|
             Response::json(&serde_json::json!({
-                "error": "failed to send request"
+                "error": "failed to call unlabeled_invoke",
             })).with_status_code(500))?;
 
-        let resp_buf = request::read_u8(conn).map_err(|_|
+        // wait for the return
+        let ret = sched::message::read_u8(conn).map_err(|_|
             Response::json(&serde_json::json!({
-                "error": "failed to read response"
+                "error": "failed to read the task return",
             })).with_status_code(500))?;
-        let rsp: request::Response = serde_json::from_slice(&resp_buf).unwrap();
-        match rsp.status {
-            request::RequestStatus::SentToVM(response) => Ok(Response::text(response)),
-            _ => Err(Response::json(&serde_json::json!({"error": format!("{:?}", rsp.status)}))),
-        }
+        Ok(Response::from_data("application/octet-stream", ret))
     }
 
-    fn start_assignment(&self, request: &Request) -> Result<Response, Response> {
-        let login = self.verify_jwt(request)?;
+    //fn start_assignment(&self, request: &Request) -> Result<Response, Response> {
+    //    let login = self.verify_jwt(request)?;
 
-        let conn = &mut self.conn.get().map_err(|_|
-            Response::json(&serde_json::json!({
-                "error": "failed to get snapfaas connection"
-            })).with_status_code(500))?;
-        #[derive(Debug, Serialize, Deserialize)]
-        struct Input {
-            assignment: String,
-            users: Vec<String>,
-            course: String,
-        }
-        let input_json: Input = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
+    //    let conn = &mut self.conn.get().map_err(|_|
+    //        Response::json(&serde_json::json!({
+    //            "error": "failed to get snapfaas connection"
+    //        })).with_status_code(500))?;
+    //    #[derive(Debug, Serialize, Deserialize)]
+    //    struct Input {
+    //        assignment: String,
+    //        users: Vec<String>,
+    //        course: String,
+    //    }
+    //    let input_json: Input = rouille::input::json_input(request).map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400))?;
 
-        let txn = self.dbenv.begin_ro_txn().unwrap();
-        let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
-        if !(input_json.users.contains(&login) || admins.contains(&login)) {
-            return Err(Response::json(&serde_json::json!({ "error": "user not authorized to make request" })).with_status_code(401))
-        }
+    //    let txn = self.dbenv.begin_ro_txn().unwrap();
+    //    let admins: Vec<String> = txn.get(*self.default_db, &"users/admins").ok().map(|x| serde_json::from_slice(x).ok()).flatten().unwrap_or(vec![]);
+    //    if !(input_json.users.contains(&login) || admins.contains(&login)) {
+    //        return Err(Response::json(&serde_json::json!({ "error": "user not authorized to make request" })).with_status_code(401))
+    //    }
 
-        let mut gh_handles = vec![];
-        for user in input_json.users.iter() {
-            let gh_handle = txn.get(*self.default_db, &format!("users/github/for/user/{}", user).as_str()).or(
-                Err(
-                    Response::json(&serde_json::json!({ "error": format!("no github handle for \"{}\"", user) })).with_status_code(400)
-                )
-            )?;
-            gh_handles.push(String::from_utf8_lossy(gh_handle).to_string());
-        }
-        txn.commit().expect("commit");
+    //    let mut gh_handles = vec![];
+    //    for user in input_json.users.iter() {
+    //        let gh_handle = txn.get(*self.default_db, &format!("users/github/for/user/{}", user).as_str()).or(
+    //            Err(
+    //                Response::json(&serde_json::json!({ "error": format!("no github handle for \"{}\"", user) })).with_status_code(400)
+    //            )
+    //        )?;
+    //        gh_handles.push(String::from_utf8_lossy(gh_handle).to_string());
+    //    }
+    //    txn.commit().expect("commit");
 
-        let req = request::Request {
-            gate: "start_assignment".to_string(),
-            payload: serde_json::json!({
-                "assignment": input_json.assignment,
-                "users": input_json.users,
-                "course": input_json.course,
-                "gh_handles": gh_handles,
+    //    let req = request::Request {
+    //        gate: "start_assignment".to_string(),
+    //        payload: serde_json::json!({
+    //            "assignment": input_json.assignment,
+    //            "users": input_json.users,
+    //            "course": input_json.course,
+    //            "gh_handles": gh_handles,
 
-                "payload": input_json,
-                "login": login
-            }),
-        };
-        request::write_u8(&req.to_vec(), conn).map_err(|_|
-            Response::json(&serde_json::json!({
-                "error": "failed to send request"
-            })).with_status_code(500))?;
+    //            "payload": input_json,
+    //            "login": login
+    //        }),
+    //    };
+    //    request::write_u8(&req.to_vec(), conn).map_err(|_|
+    //        Response::json(&serde_json::json!({
+    //            "error": "failed to send request"
+    //        })).with_status_code(500))?;
 
-        let resp_buf = request::read_u8(conn).map_err(|_|
-            Response::json(&serde_json::json!({
-                "error": "failed to read response"
-            })).with_status_code(500))?;
-        let rsp: request::Response = serde_json::from_slice(&resp_buf).unwrap();
-        match rsp.status {
-            request::RequestStatus::SentToVM(response) => Ok(Response::text(response)),
-            _ => Err(Response::json(&serde_json::json!({"error": format!("{:?}", rsp.status)}))),
-        }
-    }
+    //    let resp_buf = request::read_u8(conn).map_err(|_|
+    //        Response::json(&serde_json::json!({
+    //            "error": "failed to read response"
+    //        })).with_status_code(500))?;
+    //    let rsp: request::Response = serde_json::from_slice(&resp_buf).unwrap();
+    //    match rsp.status {
+    //        request::RequestStatus::SentToVM(response) => Ok(Response::text(response)),
+    //        _ => Err(Response::json(&serde_json::json!({"error": format!("{:?}", rsp.status)}))),
+    //    }
+    //}
 
     fn get(&self, request: &Request) -> Result<Response, Response> {
         let login = self.verify_jwt(request)?;

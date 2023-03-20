@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use uuid::Uuid;
 
+use crate::fs::Function;
+
 use super::rpc::ResourceInfo;
 use super::{Task, message};
 
@@ -53,7 +55,7 @@ pub struct ResourceManager {
     // TODO Garbage collection
     pub info: HashMap<Node, NodeInfo>,
     // Locations of cached VMs for a function
-    pub cached: HashMap<String, Vec<(Node, usize)>>,
+    pub cached: HashMap<Function, Vec<(Node, usize)>>,
     // If no idle workers, we simply remove the entry out of
     // the hashmap, which is why we need another struct to store info
     pub idle: HashMap<Node, Vec<Worker>>,
@@ -80,10 +82,10 @@ impl ResourceManager {
         }
     }
 
-    pub fn find_idle(&mut self, function: &String) -> Option<Worker> {
+    pub fn find_idle(&mut self, f: &Function) -> Option<Worker> {
         let info = &self.info;
         let node = self.cached
-                    .get_mut(function)
+                    .get_mut(f)
                     .and_then(|v| {
                         let fst = v
                             .iter_mut()
@@ -162,8 +164,8 @@ impl ResourceManager {
         nodeinfo.free_mem = info.free_mem;
 
         // Update number of cached VMs per funciton
-        for (f, num_cached) in info.stats.into_iter() {
-            let nodes = self.cached.get_mut(&f);
+        for (k, num_cached) in info.stats {
+            let nodes = self.cached.get_mut(&k);
             match nodes {
                 Some(nodes) => {
                     let n = nodes
@@ -178,9 +180,9 @@ impl ResourceManager {
                 }
                 None => {
                     if num_cached > 0 {
-                        let f = f.clone();
+                        let k = k.clone();
                         let v = vec![(node.clone(), num_cached)];
-                        let _ = self.cached.insert(f, v);
+                        let _ = self.cached.insert(k, v);
                     }
                 }
             }

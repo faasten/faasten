@@ -36,6 +36,10 @@ path = "bins/sfdb/main.rs"
 name = "sfblob"
 path = "bins/sfblob/main.rs"
 
+[[bin]]
+name = "prepare_fs"
+path = "bins/prepare_fs/main.rs"
+
 [lib]
 
 [dependencies]

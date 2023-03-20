@@ -73,6 +73,15 @@ impl RpcServer {
                                 };
                                 let _ = message::write(&mut stream, &res);
                             }
+                            Task::InvokeInsecure(uuid, unlabeled_invoke) => {
+                                let res = message::Response {
+                                    kind: Some(ResKind::ProcessTaskInsecure(message::ProcessTaskInsecure {
+                                        task_id: uuid.to_string(),
+                                        unlabeled_invoke: Some(unlabeled_invoke)
+                                    })),
+                                };
+                                let _ = message::write(&mut stream, &res);
+                            }
                             Task::Terminate => {
                                 let res = Response {
                                     kind: Some(ResKind::Terminate(message::Terminate {})),

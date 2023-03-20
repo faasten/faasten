@@ -2,8 +2,21 @@ syntax = "proto3";
 
 package snapfaas.syscalls;
 
-message Invoke {
+// function's presentation on the wire
+message Function {
+    uint64 memory = 1;
+    string app_image = 2;
+    string runtime_image = 3;
+    string kernel = 4;
+}
+
+message InvokeGate {
   repeated PathComponent gate = 1;
+  string payload = 2;
+}
+
+message InvokeFunction {
+  string function = 1;
   string payload = 2;
 }
 
@@ -194,6 +207,13 @@ message FSCreateFacetedDir {
   string name = 2;
 }
 
+message CreateGateStr {
+  string baseDir = 1;
+  string name = 2;
+  Function function = 3;
+  string policy = 4;
+}
+
 message Syscall {
   oneof syscall {
     Response response = 1;
@@ -202,7 +222,7 @@ message Syscall {
     GetCurrentLabel getCurrentLabel = 4;
     Buckle taintWithLabel = 5;
     GithubRest githubRest = 6;
-    Invoke invoke = 7;
+    InvokeGate invokeGate = 7;
     FSRead fsRead = 8;
     FSWrite fsWrite = 9;
     FSCreateDir fsCreateDir = 10;
@@ -222,5 +242,7 @@ message Syscall {
     TokenList subPrivilege = 24;
     string buckleParse = 25;
     FSDelete fsDelete = 26;
+    CreateGateStr createGateStr = 27;
+    InvokeFunction invokeFunction = 28;
   }
 }

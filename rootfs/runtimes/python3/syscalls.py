@@ -128,9 +128,18 @@ class Syscall():
         base, name, ok = split_path(path)
         if not ok:
             return False
-        request = syscalls_pb2.Syscall(dupGate = syscalls_pb2.DupGate(orig = convert_path(orig), baseDir = convert_path(base), name = name, policy = policy))
+        req = syscalls_pb2.Syscall(dupGate = syscalls_pb2.DupGate(orig = convert_path(orig), baseDir = convert_path(base), name = name, policy = policy))
         self._send(req)
-        response = self._recv(syscalls_pb2.Buckle())
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+    def create_gate_str(self, path, image, policy):
+        base, _, name = path.rpartition(':')
+        if name == '':
+            return False
+        req = syscalls_pb2.Syscall(createGateStr=syscalls_pb2.CreateGateStr(baseDir=base, name=name, image=image, policy=policy))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
     ### github APIs ###

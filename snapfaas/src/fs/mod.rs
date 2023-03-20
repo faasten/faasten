@@ -2,16 +2,17 @@
 
 
 use lmdb::{Transaction, WriteFlags};
-use log::info;
 use serde::{Serialize, Deserialize};
 use labeled::{buckle::{Clause, Buckle, Component, Principal}, Label};
 use serde_with::serde_as;
 
 use std::{collections::HashMap, cell::RefCell, time::{Duration, Instant}};
 
-use crate::syscall_server::pblabel_to_buckle;
+use crate::{syscall_server::pblabel_to_buckle, configs::FunctionConfig};
 
 pub use errors::*;
+
+use self::utils::check_delegation;
 
 thread_local!(pub static CURRENT_LABEL: RefCell<Buckle> = RefCell::new(Buckle::public()));
 thread_local!(pub static PRIVILEGE: RefCell<Component> = RefCell::new(Component::dc_true()));
@@ -148,6 +149,12 @@ pub struct FacetedDirectory {
     object_id: UID
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Blob {
+    label: Buckle,
+    blob_name: String,
+}
+
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct FacetedDirectoryInner {
@@ -267,12 +274,53 @@ impl FacetedDirectoryInner {
     }
 }
 
+#[derive(Default, Clone, Debug, Deserialize, Serialize, Hash, PartialEq, Eq)]
+pub struct Function {
+    // TODO support snapshots
+    pub memory: usize,
+    pub app_image: String,
+    pub runtime_image: String,
+    pub kernel: String,
+}
+
+// used by singlevm. singlevm allows more complicated configurations than multivm.
+impl From<FunctionConfig> for Function {
+    fn from(cfg: FunctionConfig) -> Self {
+        Self {
+            memory: cfg.memory,
+            app_image: cfg.appfs.unwrap_or_default(),
+            runtime_image: cfg.runtimefs,
+            kernel: cfg.kernel,
+        }
+    }
+}
+
+impl From<crate::syscalls::Function> for Function {
+    fn from(pbf: crate::syscalls::Function) -> Self {
+        Self {
+            memory: pbf.memory as usize,
+            app_image: pbf.app_image,
+            runtime_image: pbf.runtime_image,
+            kernel: pbf.kernel,
+        }
+    }
+}
+
+impl From<Function> for crate::syscalls::Function {
+    fn from(f: Function) -> Self {
+       Self {
+           memory: f.memory as u64,
+           app_image: f.app_image,
+           runtime_image: f.runtime_image,
+           kernel: f.kernel,
+       }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Gate {
     pub privilege: Component,
     weakest_privilege_required: Component,
-    // TODO: for now, use the configurations function-name:host-fs-path
-    pub image: String,
     object_id: UID,
 }
 
@@ -282,6 +330,7 @@ pub enum DirEntry {
     File(File),
     FacetedDirectory(FacetedDirectory),
     Gate(Gate),
+    Blob(Blob),
 }
 
 mod errors {
@@ -327,18 +376,17 @@ impl<S> FS<S> {
 }
 
 impl<S: BackingStore> FS<S> {
-    pub fn initialize(&self) {
+    /// true, the root is newly created; false, the root already exists
+    pub fn initialize(&self) -> bool {
         let dir_contents = serde_json::ser::to_vec(&HashMap::<String, DirEntry>::new()).unwrap();
         let uid: UID = 0;
-        if !self.storage.add(&uid.to_be_bytes(), &dir_contents) {
-            info!("Existing root directory found.")
-        }
+        self.storage.add(&uid.to_be_bytes(), &dir_contents)
     }
 
     pub fn root(&self) -> Directory {
-        let sys_principal = Vec::<String>::new();
+        let root_principal = Vec::<String>::new();
         Directory {
-            label: Buckle::new(true, [Clause::new_from_vec(vec![sys_principal])]),
+            label: Buckle::new(true, [Clause::new_from_vec(vec![root_principal])]),
             object_id: 0
         }
     }
@@ -389,27 +437,22 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
-    pub fn create_gate(&self, dpriv: Component, weakest_privilege_required: Component, image: String) -> Result<Gate, GateError> {
-        PRIVILEGE.with(|opriv| {
-            STAT.with(|stat| {
-                let now = Instant::now();
-                if opriv.borrow().implies(&dpriv) {
-                    stat.borrow_mut().label_tracking += now.elapsed();
-                    let mut uid: UID = rand::random();
-                    while !self.storage.add(&uid.to_be_bytes(), &[]) {
-                        uid = rand::random();
-                        stat.borrow_mut().create_retry += 1;
-                    }
-                    Ok(Gate{
-                        privilege: dpriv,
-                        weakest_privilege_required,
-                        image,
-                        object_id: uid
-                    })
-                } else {
-                    Err(GateError::CannotDelegate)
+    pub fn create_gate(&self, dpriv: Component, wpr: Component, f: Function) -> Result<Gate, GateError> {
+        STAT.with(|stat| {
+            if check_delegation(&dpriv) {
+                let mut uid: UID = rand::random();
+                while !self.storage.add(&uid.to_be_bytes(), &serde_json::to_vec(&f).unwrap_or_default()) {
+                    uid = rand::random();
+                    stat.borrow_mut().create_retry += 1;
                 }
-            })
+                Ok(Gate{
+                    privilege: dpriv,
+                    weakest_privilege_required: wpr,
+                    object_id: uid,
+                })
+            } else {
+                Err(GateError::CannotDelegate)
+            }
         })
     }
 
@@ -574,7 +617,8 @@ impl<S: BackingStore> FS<S> {
                                 Err(rd) => raw_fdir = rd,
                             }
                         },
-                        Err(_) => panic!("unexpected error."),
+                        Err(FacetError::LabelError(le)) => return Err(LinkError::LabelError(le)),
+                        Err(e) => panic!("fatal: {:?}", e),
                     }
                 }
             })
@@ -595,7 +639,8 @@ impl<S: BackingStore> FS<S> {
                 match fdir_contents.open_facet(facet) {
                     Ok(dir) => return Ok(self.unlink(&dir, name.clone())?),
                     Err(FacetError::Unallocated) => return Err(UnlinkError::DoesNotExists),
-                    Err(_) => panic!("unexpected error."),
+                    Err(FacetError::LabelError(le)) => return Err(UnlinkError::LabelError(le)),
+                    Err(e) => panic!("fatal: {:?}", e),
                 }
             })
         })
@@ -611,7 +656,7 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
-    pub fn write(&mut self, file: &File, data: &Vec<u8>) -> Result<(), LabelError> {
+    pub fn write(&self, file: &File, data: &Vec<u8>) -> Result<(), LabelError> {
         CURRENT_LABEL.with(|current_label| {
             if current_label.borrow().can_flow_to(&file.label) {
                 Ok(self.storage.put(&file.object_id.to_be_bytes(), data))
@@ -621,6 +666,16 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
+    pub fn invoke(&self, gate: &Gate) -> Result<Function, GateError> {
+        CURRENT_LABEL.with(|current_label| {
+            if current_label.borrow().integrity.implies(&gate.weakest_privilege_required) {
+                let raw_gate = self.storage.get(&gate.object_id.to_be_bytes());
+                Ok(raw_gate.map_or(Function::default(), |v| serde_json::from_slice(&v).unwrap_or(Function::default())))
+            } else {
+                Err(GateError::CannotInvoke)
+            }
+        })
+    }
 }
 
 impl Directory {
@@ -729,7 +784,7 @@ pub mod utils {
                             _ => Err(Error::BadPath),
                         }
                     },
-                    super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
+                    super::DirEntry::Blob(_) | super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
                 };
                 if res.is_ok() && !clearance_checker() {
                     return Err(Error::LabelError(LabelError::CannotRead));
@@ -761,7 +816,7 @@ pub mod utils {
                         _ => Err(Error::BadPath),
                     }
                 },
-                super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
+                super::DirEntry::Blob(_) | super::DirEntry::Gate(_) | super::DirEntry::File(_) => Err(Error::BadPath)
             };
             if res.is_ok() && !clearance_checker() {
                 return Err(Error::LabelError(LabelError::CannotRead));
@@ -808,10 +863,10 @@ pub mod utils {
         }
     }
 
-    pub fn write<S: Clone + BackingStore>(fs: &mut FS<S>, path: &Vec<syscalls::PathComponent>, data: Vec<u8>) -> Result<(), Error> {
+    pub fn write<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>, data: Vec<u8>) -> Result<(), Error> {
         match read_path(fs, path) {
             Ok(DirEntry::File(file)) => {
-                endorse_with_owned();
+                endorse_with_full();
                 fs.write(&file, &data).map_err(|e| Error::from(e))
             },
             Ok(_) => Err(Error::BadPath),
@@ -822,11 +877,11 @@ pub mod utils {
     pub fn delete<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String) -> Result<(), Error> {
         match read_path(&fs, base_dir) {
             Ok(DirEntry::Directory(dir)) => {
-                endorse_with_owned();
+                endorse_with_full();
                 fs.unlink(&dir, name).map(|_| ()).map_err(|e| Error::from(e))
             }
             Ok(DirEntry::FacetedDirectory(fdir)) => {
-                endorse_with_owned();
+                endorse_with_full();
                 fs.faceted_unlink(&fdir, name).map(|_| ()).map_err(|e| Error::from(e))
             }
             Ok(_) => Err(Error::BadPath),
@@ -834,21 +889,21 @@ pub mod utils {
         }
     }
 
-    pub fn create_gate<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, policy: Buckle, image: String) -> Result<(), Error> {
+    pub fn create_gate<S: Clone + BackingStore>(fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>, name: String, policy: Buckle, f: Function) -> Result<(), Error> {
         match read_path(&fs, base_dir) {
             Ok(DirEntry::Directory(dir)) => {
-                let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::from(e))?;
-                endorse_with_owned();
+                let gate = fs.create_gate(policy.secrecy, policy.integrity, f).map_err(|e| Error::from(e))?;
+                endorse_with_full();
                 fs.link(&dir, name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e))
             },
             Ok(DirEntry::FacetedDirectory(fdir)) => {
-                endorse_with_owned();
-                let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::from(e))?;
+                endorse_with_full();
+                let gate = fs.create_gate(policy.secrecy, policy.integrity, f).map_err(|e| Error::from(e))?;
                 fs.faceted_link(&fdir, None, name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e))
             },
             Err(Error::FacetedDir(fdir, facet)) => {
-                let gate = fs.create_gate(policy.secrecy, policy.integrity, image).map_err(|e| Error::GateError(e))?;
-                endorse_with_owned();
+                let gate = fs.create_gate(policy.secrecy, policy.integrity, f).map_err(|e| Error::GateError(e))?;
+                endorse_with_full();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Gate(gate)).map(|_| ()).map_err(|e| Error::from(e))
             }
             Ok(_) => Err(Error::BadPath),
@@ -857,10 +912,28 @@ pub mod utils {
     }
 
     pub fn dup_gate<S: BackingStore + Clone>(fs: &FS<S>, orig: &Vec<syscalls::PathComponent>, base_dir: &Vec<syscalls::PathComponent>, name: String, policy: Buckle) -> Result<(), Error> {
+        let dpriv = policy.secrecy;
+        let wpr = policy.integrity;
+        if !check_delegation(&dpriv) {
+            return Err(Error::from(GateError::CannotDelegate));
+        }
         read_path(fs, orig).and_then(|entry| {
             match entry {
-                DirEntry::Gate(gate) => {
-                    create_gate(fs, base_dir, name, policy, gate.image)
+                DirEntry::Gate(orig) => {
+                    read_path(fs, base_dir).and_then(|entry| {
+                        match entry {
+                            DirEntry::Directory(dir) => {
+                                let gate = Gate {
+                                    privilege: dpriv,
+                                    weakest_privilege_required: wpr,
+                                    object_id: orig.object_id,
+                                };
+                                fs.link(&dir, name, DirEntry::Gate(gate)).map(|_| ())
+                                    .map_err(|e| Error::from(e))
+                            }
+                            _ => Err(Error::BadPath),
+                        }
+                    })
                 },
                 _ => Err(Error::BadPath),
             }
@@ -872,19 +945,19 @@ pub mod utils {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
                     let newdir = fs.create_directory(label);
-                    endorse_with_owned();
+                    endorse_with_full();
                     fs.link(&dir, name, DirEntry::Directory(newdir)).map(|_| ()).map_err(|e| Error::from(e))
                 },
                 DirEntry::FacetedDirectory(fdir) => {
                     let newdir = fs.create_directory(label);
-                    endorse_with_owned();
+                    endorse_with_full();
                     fs.faceted_link(&fdir, None, name, DirEntry::Directory(newdir)).map(|_| ()).map_err(|e| Error::from(e))
                 },
                 _ => Err(Error::BadPath),
             },
             Err(Error::FacetedDir(fdir, facet)) => {
                 let newdir = fs.create_directory(label);
-                endorse_with_owned();
+                endorse_with_full();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Directory(newdir)).map(|_| ()).map_err(|e| Error::from(e))
             }
             Err(e) => Err(e),
@@ -896,20 +969,50 @@ pub mod utils {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
                     let newfile = fs.create_file(label);
-                    endorse_with_owned();
+                    endorse_with_full();
                     fs.link(&dir, name, DirEntry::File(newfile)).map(|_| ()).map_err(|e| Error::from(e))
                 },
                 DirEntry::FacetedDirectory(fdir) => {
                     let newfile = fs.create_file(label);
-                    endorse_with_owned();
+                    endorse_with_full();
                     fs.faceted_link(&fdir, None, name, DirEntry::File(newfile)).map(|_| ()).map_err(|e| Error::from(e))
                 },
                 _ => Err(Error::BadPath),
             },
             Err(Error::FacetedDir(fdir, facet)) => {
                 let newfile = fs.create_file(label);
-                endorse_with_owned();
+                endorse_with_full();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::File(newfile)).map(|_| ()).map_err(|e| Error::from(e))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn create_blob<S: Clone + BackingStore>(
+        fs: &FS<S>, base_dir: &Vec<syscalls::PathComponent>,
+        name: String, label: Buckle, blob_name: String
+    ) -> Result<(), Error> {
+        match read_path(&fs, base_dir) {
+            Ok(entry) => match entry {
+                DirEntry::Directory(dir) => {
+                    let newblob = Blob{ blob_name, label };
+                    endorse_with_full();
+                    fs.link(&dir, name, DirEntry::Blob(newblob))
+                        .map(|_| ()).map_err(|e| Error::from(e))
+                },
+                DirEntry::FacetedDirectory(fdir) => {
+                    let newblob = Blob{ blob_name, label };
+                    endorse_with_full();
+                    fs.faceted_link(&fdir, None, name, DirEntry::Blob(newblob))
+                        .map(|_| ()).map_err(|e| Error::from(e))
+                },
+                _ => Err(Error::BadPath),
+            },
+            Err(Error::FacetedDir(fdir, facet)) => {
+                let newblob = Blob{ label, blob_name };
+                endorse_with_full();
+                fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Blob(newblob))
+                    .map(|_| ()).map_err(|e| Error::from(e))
             }
             Err(e) => Err(e),
         }
@@ -920,69 +1023,43 @@ pub mod utils {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
                     let newfdir = fs.create_faceted_directory();
-                    endorse_with_owned();
+                    endorse_with_full();
                     fs.link(&dir, name, DirEntry::FacetedDirectory(newfdir)).map(|_| ()).map_err(|e| Error::from(e))
                 },
                 DirEntry::FacetedDirectory(fdir) => {
                     let newfdir = fs.create_faceted_directory();
-                    endorse_with_owned();
+                    endorse_with_full();
                     fs.faceted_link(&fdir, None, name, DirEntry::FacetedDirectory(newfdir)).map(|_| ()).map_err(|e| Error::from(e))
                 },
                 _ => Err(Error::BadPath),
             },
             Err(Error::FacetedDir(fdir, facet)) => {
                 let newfdir = fs.create_faceted_directory();
-                endorse_with_owned();
+                endorse_with_full();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::FacetedDirectory(newfdir)).map(|_| ()).map_err(|e| Error::from(e))
             }
             Err(e) => Err(e),
         }
     }
 
-    pub fn invoke<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<(String, Component), Error> {
+    pub fn invoke<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<(Function, Component), Error> {
         match read_path(&fs, path) {
             Ok(DirEntry::Gate(gate)) => {
-                CURRENT_LABEL.with(|current_label| {
-                    PRIVILEGE.with(|opriv| {
-                        STAT.with(|stat| {
-                            // implicit endorsement
-                            endorse_with(&*opriv.borrow());
-                            // check integrity
-                            let now = Instant::now();
-                            if current_label.borrow().integrity.implies(&gate.weakest_privilege_required) {
-                                stat.borrow_mut().label_tracking += now.elapsed();
-                                Ok((gate.image, gate.privilege))
-                            } else {
-                                Err(Error::from(GateError::CannotInvoke))
-                            }
-                        })
-                    })
-                })
+                // implicit endorsement
+                endorse_with_full();
+                fs.invoke(&gate).map(|f| (f, gate.privilege)).map_err(|e| Error::from(e))
             },
             Ok(_) => Err(Error::BadPath),
             Err(e) => Err(Error::from(e)),
         }
     }
 
-    pub fn invoke_clearance_check<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<(String, Component), Error> {
+    pub fn invoke_clearance_check<S: Clone + BackingStore>(fs: &FS<S>, path: &Vec<syscalls::PathComponent>) -> Result<(Function, Component), Error> {
         match read_path_check_clearance(&fs, path) {
             Ok(DirEntry::Gate(gate)) => {
-                CURRENT_LABEL.with(|current_label| {
-                    PRIVILEGE.with(|opriv| {
-                        STAT.with(|stat| {
-                            // implicit endorsement
-                            endorse_with(&*opriv.borrow());
-                            // check integrity
-                            let now = Instant::now();
-                            if current_label.borrow().integrity.implies(&gate.weakest_privilege_required) {
-                                stat.borrow_mut().label_tracking += now.elapsed();
-                                Ok((gate.image, gate.privilege))
-                            } else {
-                                Err(Error::from(GateError::CannotInvoke))
-                            }
-                        })
-                    })
-                })
+                // implicit endorsement
+                endorse_with_full();
+                fs.invoke(&gate).map(|f| (f, gate.privilege)).map_err(|e| Error::from(e))
             },
             Ok(_) => Err(Error::BadPath),
             Err(e) => Err(Error::from(e)),
@@ -1006,6 +1083,17 @@ pub mod utils {
         true
     }
 
+    pub fn check_delegation(delegated: &Component) -> bool {
+        STAT.with(|stat| {
+            PRIVILEGE.with(|p| {
+                let now = Instant::now();
+                let res = p.borrow().implies(delegated);
+                stat.borrow_mut().label_tracking += now.elapsed();
+                res
+            })
+        })
+    }
+
     pub fn taint_with_secrecy(secrecy: Component) {
         STAT.with(|stat| {
             let now = Instant::now();
@@ -1017,7 +1105,7 @@ pub mod utils {
         })
     }
 
-    pub fn endorse_with_owned() {
+    pub fn endorse_with_full() {
         STAT.with(|stat| {
             let now = Instant::now();
             PRIVILEGE.with(|opriv| {

@@ -3,13 +3,13 @@ use std::net::TcpStream;
 use std::collections::{HashMap, HashSet};
 use std::io::{Seek, Read, Write};
 
-use labeled::buckle::{Buckle, Component, Clause};
+use labeled::buckle::{Buckle, Component, Clause, self};
 use log::{warn, error, debug};
 use lmdb::{WriteFlags, Transaction};
 
 use crate::syscalls::{self, syscall::Syscall as SC};
 use crate::sched::{self, message::{TaskReturn, ReturnCode}};
-use crate::fs::{self, FS};
+use crate::fs::{self, FS, Function};
 use crate::blobstore::{self, Blobstore};
 use crate::labeled_fs::DBENV;
 
@@ -55,6 +55,30 @@ pub fn buckle_to_pblabel(label: &Buckle) -> syscalls::Buckle {
     }
 }
 
+pub fn str_to_syscall_path(s: &str) -> Result<Vec<syscalls::PathComponent>, SyscallProcessorError> {
+    // remove leading `:' if any
+    let s = s.trim_start_matches(":");
+    s.split(":").try_fold(Vec::new(), |mut path, c| {
+        if c.starts_with("^") {
+            let c = c.strip_prefix("^").unwrap();
+            match buckle::Buckle::parse(c) {
+                Ok(f) => {
+                    let f = buckle_to_pblabel(&f);
+                    let c = syscalls::PathComponent {
+                        component: Some(syscalls::path_component::Component::Facet(f)),
+                    };
+                    path.push(c);
+                    Ok(path)
+                }
+                Err(_) => Err(SyscallProcessorError::BadStrPath),
+            }
+        } else {
+            path.push(syscalls::PathComponent { component: Some(syscalls::path_component::Component::Dscrp(c.to_string())) });
+            Ok(path)
+        }
+    })
+}
+
 #[derive(Debug)]
 pub enum SyscallChannelError {
     Read,
@@ -75,6 +99,7 @@ pub enum SyscallProcessorError {
     Database,
     Http(reqwest::Error),
     HttpAuth,
+    BadStrPath,
 }
 
 impl From<SyscallChannelError> for SyscallProcessorError {
@@ -101,12 +126,21 @@ pub struct SyscallProcessor {
 impl SyscallProcessor {
     pub fn new(label: Buckle, privilege: Component) -> Self {
         {
-            // setup label & privilege
+            // set up label & privilege
             fs::utils::clear_label();
             fs::utils::taint_with_label(label);
             fs::utils::set_my_privilge(privilege);
         }
 
+        Self {
+            create_blobs: Default::default(),
+            blobs: Default::default(),
+            max_blob_id: 0,
+            http_client: reqwest::blocking::Client::new(),
+        }
+    }
+
+    pub fn new_insecure() -> Self {
         Self {
             create_blobs: Default::default(),
             blobs: Default::default(),
@@ -172,7 +206,7 @@ impl SyscallProcessor {
                         payload: Some(r.payload),
                     });
                 }
-                Some(SC::Invoke(i)) => {
+                Some(SC::InvokeGate(i)) => {
                     let result = match env.sched_conn.as_mut() {
                         None => {
                             warn!("No scheduler presents. Syscall invoke is noop.");
@@ -182,16 +216,46 @@ impl SyscallProcessor {
                             let ret = fs::utils::invoke(&env.fs, &i.gate).ok();
                             let result = syscalls::WriteKeyResponse { success: ret.is_some() };
                             if ret.is_some() {
-                                let ret = ret.unwrap();
+                                let (f, p) = ret.unwrap();
                                 let label = fs::utils::get_current_label();
                                 let sched_invoke = sched::message::LabeledInvoke {
-                                    name: ret.0,
+                                    function: Some(f.into()),
                                     payload: i.payload,
-                                    gate_privilege: component_to_pbcomponent(&ret.1),
+                                    gate_privilege: component_to_pbcomponent(&p),
                                     label: Some(buckle_to_pblabel(&label)),
                                     sync: false,
                                 };
                                 sched::rpc::labeled_invoke(sched_conn, sched_invoke).map_err(|e| {
+                                    error!("{:?}", e);
+                                    SyscallProcessorError::UnreachableScheduler
+                                })?;
+                            }
+                            result
+                        }
+                    };
+                    s.send(result.encode_to_vec())?;
+                }
+                Some(SC::InvokeFunction(i)) => {
+                    let result = match env.sched_conn.as_mut() {
+                        None => {
+                            warn!("No scheduler presents. Syscall invoke is noop.");
+                            syscalls::WriteKeyResponse { success: false }
+                        }
+                        Some(sched_conn) => {
+                            // read key i.function
+                            let txn = DBENV.begin_ro_txn().unwrap();
+                            let val = txn.get(env.db, &i.function).ok();
+                            let result = syscalls::WriteKeyResponse { success: val.is_some() };
+                            if let Some(val) = val {
+                                let f: Function = serde_json::from_slice(val).map_err(|e| {
+                                        error!("{}", e.to_string());
+                                        SyscallProcessorError::BadStrPath
+                                    })?;
+                                let sched_invoke = sched::message::UnlabeledInvoke {
+                                    function: Some(f.into()),
+                                    payload: i.payload,
+                                };
+                                sched::rpc::unlabeled_invoke(sched_conn, sched_invoke).map_err(|e| {
                                     error!("{:?}", e);
                                     SyscallProcessorError::UnreachableScheduler
                                 })?;
@@ -236,6 +300,22 @@ impl SyscallProcessor {
                     };
                     s.send(result.encode_to_vec())?;
                 },
+                Some(SC::CreateGateStr(cgs)) => {
+                    let mut success = false;
+                    if let Ok(base_dir) = str_to_syscall_path(&cgs.base_dir) {
+                        if let Ok(policy) = buckle::Buckle::parse(&cgs.policy) {
+                            if fs::utils::create_gate(&env.fs, &base_dir, cgs.name, policy, cgs.function.unwrap().into()).is_ok() {
+                                success = true;
+                            }
+                        } else {
+                            error!("CreateGateStr: bad policy");
+                        }
+                    } else {
+                        error!("CreateGateStr: bad base_dir str path");
+                    }
+                    let result = syscalls::WriteKeyResponse{ success };
+                    s.send(result.encode_to_vec())?;
+                }
                 Some(SC::ReadKey(rk)) => {
                     let txn = DBENV.begin_ro_txn().unwrap();
                     let result = syscalls::ReadKeyResponse {

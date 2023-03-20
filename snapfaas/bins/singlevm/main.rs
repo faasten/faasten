@@ -22,7 +22,6 @@ use clap::{App, Arg};
 const CID: u32 = 100;
 // If firerunner path is not set by the user, the program will assume firerunner is on the
 // environment variable PATH.
-const DEFAULT_FIRERUNNER: &str = "firerunner";
 
 fn main() {
     env_logger::init();
@@ -123,13 +122,13 @@ fn main() {
                 .required(false)
                 .help("enable newtork through tap device `tap0`")
         )
-        .arg(
-            Arg::with_name("firerunner")
-                .long("firerunner")
-                .value_name("PATH_TO_FIRERUNNER")
-                .default_value(DEFAULT_FIRERUNNER)
-                .help("path to the firerunner binary")
-        )
+        //.arg(
+        //    Arg::with_name("firerunner")
+        //        .long("firerunner")
+        //        .value_name("PATH_TO_FIRERUNNER")
+        //        .default_value(DEFAULT_FIRERUNNER)
+        //        .help("path to the firerunner binary")
+        //)
         .arg(
             Arg::with_name("force exit")
                 .long("force_exit")
@@ -221,18 +220,16 @@ fn main() {
         rootfs: !cmd_arguments.is_present("no odirect rootfs"),
         appfs: !cmd_arguments.is_present("no odirect appfs")
     };
-    let firerunner = cmd_arguments.value_of("firerunner").unwrap().to_string();
-    let allow_network = cmd_arguments.is_present("enable network");
 
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
-    let mut vm =  Vm::new(id, firerunner, "singlevm-test-app".to_string(), vm_app_config, allow_network);
+    let mut vm =  Vm::new(id, vm_app_config.clone().into());
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
     let _ = std::fs::remove_file(&vm_listener_path);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("bind to the UNIX listener");
     let vm_listener = tokio::net::UnixListener::from_std(vm_listener).expect("convert to tokio UNIX listener");
     let force_exit = cmd_arguments.is_present("force_exit");
-    if let Err(e) = vm.launch(&vm_listener, CID, force_exit, Some(odirect)) {
+    if let Err(e) = vm.launch(&vm_listener, CID, force_exit, vm_app_config, Some(odirect)) {
         error!("VM launch failed: {:?}", e);
         snapfaas::unlink_unix_sockets();
     }

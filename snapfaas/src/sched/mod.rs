@@ -5,7 +5,7 @@ pub mod rpc;
 
 use std::sync::mpsc::Sender;
 use uuid::Uuid;
-use message::LabeledInvoke;
+use message::{LabeledInvoke, UnlabeledInvoke};
 
 pub type RequestInfo = (message::LabeledInvoke, Sender<String>);
 
@@ -22,5 +22,6 @@ pub enum Error {
 #[derive(Debug)]
 pub enum Task {
     Invoke(Uuid, LabeledInvoke),
+    InvokeInsecure(Uuid, UnlabeledInvoke),
     Terminate,
 }

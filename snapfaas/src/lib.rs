@@ -1,12 +1,11 @@
 extern crate glob;
 
-pub mod request;
 pub mod worker;
-pub mod message;
 pub mod configs;
 pub mod resource_manager;
 pub mod syscalls;
-pub mod metrics;
+// TODO what metrics do we want?
+//pub mod metrics;
 pub mod firecracker_wrapper;
 pub mod blobstore;
 pub mod labeled_fs;
