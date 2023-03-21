@@ -76,12 +76,12 @@ fn main() -> Result<(), std::io::Error> {
                 .help("Base URL of server"),
         )
         .arg(
-            Arg::with_name("snapfaas address")
-                .long("snapfaas_address")
+            Arg::with_name("faasten scheduler address")
+                .long("scheduler")
                 .value_name("[ADDR:]PORT")
                 .takes_value(true)
                 .required(true)
-                .help("Path to snapfaas config YAML file"),
+                .help("Address of the Faasten scheduler"),
         )
         .get_matches();
 
@@ -94,7 +94,7 @@ fn main() -> Result<(), std::io::Error> {
     let public_key_bytes = std::fs::read(matches.value_of("public key").expect("public key"))?;
     let private_key_bytes = std::fs::read(matches.value_of("secret key").expect("private key"))?;
     let base_url = matches.value_of("base url").expect("base url").to_string();
-    let snapfaas_address = matches.value_of("snapfaas address").unwrap().to_string();
+    let sched_address = matches.value_of("faasten scheduler address").unwrap().to_string();
     let blobstore = Blobstore::new(matches.value_of("blob path").unwrap().into(), matches.value_of("tmp path").unwrap().into());
     let app = app::App::new(
         app::GithubOAuthCredentials {
@@ -106,7 +106,7 @@ fn main() -> Result<(), std::io::Error> {
         dbenv,
         blobstore,
         base_url,
-        snapfaas_address,
+        sched_address,
     );
     let listen_addr = matches.value_of("listen").unwrap();
     rouille::start_server(listen_addr, move |request| {
