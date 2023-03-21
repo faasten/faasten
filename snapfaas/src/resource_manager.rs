@@ -1,4 +1,4 @@
-use std::net::TcpStream;
+use std::net::{TcpStream, SocketAddr};
 //use std::result::Result;
 use std::collections::HashMap;
 //use std::sync::mpsc;
@@ -33,7 +33,7 @@ pub struct ResourceManager {
 impl ResourceManager {
     /// create and return a ResourceManager value
     /// The ResourceManager value encapsulates the idle lists and function configs
-    pub fn new(sched_addr: String) -> Self {
+    pub fn new(sched_addr: SocketAddr) -> Self {
         // set default total memory to free memory on the machine
         let total_mem = crate::get_machine_memory();
         Self {

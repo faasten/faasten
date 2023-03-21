@@ -1,7 +1,7 @@
 //! Workers proxies requests and responses between the request manager and VMs.
 //! Each worker runs in its own thread and is modeled as the following state
 //! machine:
-use std::net::TcpStream;
+use std::net::{TcpStream, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 use std::os::unix::net::UnixListener;
@@ -36,7 +36,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn new(cid: u32, sched_addr: String, localrm: Arc<Mutex<resource_manager::ResourceManager>>) -> Self {
+    pub fn new(cid: u32, sched_addr: SocketAddr, localrm: Arc<Mutex<resource_manager::ResourceManager>>) -> Self {
         let thread_id = thread::current().id();
 
         // connection to the scheduler

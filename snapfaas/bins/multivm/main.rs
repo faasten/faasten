@@ -34,9 +34,9 @@ fn main() {
                 .help("Path to controller config YAML file"),
         )
         .arg(
-            Arg::with_name("scheduler listen address")
+            Arg::with_name("scheduler address")
                 .value_name("[ADDR:]PORT")
-                .long("listen_sched")
+                .long("scheduler")
                 .short("s")
                 .takes_value(true)
                 .required(true)
@@ -56,7 +56,7 @@ fn main() {
                         .value_of("scheduler listen address")
                         .map(String::from)
                         .unwrap();
-    let _ = sched_addr.parse::<SocketAddr>().expect("invalid socket address");
+    let sched_addr = sched_addr.parse::<SocketAddr>().expect("invalid socket address");
 
     // create the local resource manager
     let mut manager = ResourceManager::new(sched_addr.clone());
@@ -104,9 +104,7 @@ fn main() {
 //    pool
 //}
 
-fn set_ctrlc_handler(
-    sched_addr: String,
-) {
+fn set_ctrlc_handler(sched_addr: SocketAddr) {
     ctrlc::set_handler(move || {
         warn!("{}", "Handling Ctrl-C. Shutting down...");
         if let Ok(mut sched) = TcpStream::connect(sched_addr.clone()) {
