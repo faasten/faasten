@@ -77,7 +77,7 @@ fn main() -> Result<(), std::io::Error> {
         )
         .arg(
             Arg::with_name("faasten scheduler address")
-                .long("scheduler")
+                .long("faasten_scheduler")
                 .value_name("[ADDR:]PORT")
                 .takes_value(true)
                 .required(true)

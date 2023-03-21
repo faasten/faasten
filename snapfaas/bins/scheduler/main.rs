@@ -12,7 +12,7 @@ fn main() {
         .arg(
             Arg::with_name("scheduler listen address")
                 .value_name("[ADDR:]PORT")
-                .long("listen_sched")
+                .long("listen")
                 .short("s")
                 .takes_value(true)
                 .required(true)
