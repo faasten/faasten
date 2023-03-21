@@ -1,5 +1,7 @@
 use clap::{App, Arg, crate_authors, crate_version};
+
 use std::sync::{Arc, Mutex};
+
 use snapfaas::sched::{rpc_server::RpcServer, resource_manager::ResourceManager};
 
 fn main() {
@@ -9,6 +11,14 @@ fn main() {
         .version(crate_version!())
         .author(crate_authors!())
         .about("Launch Faasten gateway")
+        .arg(
+            Arg::with_name("config")
+                .value_name("CONFIG YAML")
+                .long("prepare_fs")
+                .takes_value(true)
+                .required(false)
+                .help("Path to the YAML file telling where to look for kernel and runtime image"),
+        )
         .arg(
             Arg::with_name("scheduler listen address")
                 .value_name("[ADDR:]PORT")
@@ -28,6 +38,8 @@ fn main() {
                 .help("Address on which Faasten listen for RPCs that requests for tasks"),
         )
         .get_matches();
+
+    snapfaas::prepare_fs(matches.value_of("config").unwrap());
 
     let sched_addr = matches
                         .value_of("scheduler listen address")
