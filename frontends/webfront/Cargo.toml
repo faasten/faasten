@@ -16,7 +16,7 @@ chrono = "0.4.22"
 clap = "^3.2.22"
 reqwest = { version = "*", features = [ "blocking", "json", "multipart" ] }
 github-types = "0.1.1"
-rouille = "3.5.0"
+rouille = "=3.5.0"
 openssl = "*"
 jwt = { version = "0.15.0", features = [ "openssl" ]}
 lazy_static = "1.4.0"

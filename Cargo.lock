@@ -59,7 +59,7 @@ checksum = "98161a4e3e2184da77bb14f02184cdd111e83bbbcc9979dfee3c44b9a85f5602"
 [[package]]
 name = "arch"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "arch_gen",
  "byteorder",
@@ -72,7 +72,7 @@ dependencies = [
 [[package]]
 name = "arch_gen"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 
 [[package]]
 name = "ascii"
@@ -286,7 +286,7 @@ dependencies = [
 [[package]]
 name = "cpuid"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "kvm",
  "kvm-bindings",
@@ -459,7 +459,7 @@ dependencies = [
 [[package]]
 name = "devices"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "byteorder",
  "dumbo",
@@ -504,7 +504,7 @@ checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
 [[package]]
 name = "dumbo"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "bitflags",
  "byteorder",
@@ -585,7 +585,7 @@ dependencies = [
 [[package]]
 name = "fc_util"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "libc",
 ]
@@ -997,7 +997,7 @@ dependencies = [
 [[package]]
 name = "kernel"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "memory_model",
  "sys_util",
@@ -1006,7 +1006,7 @@ dependencies = [
 [[package]]
 name = "kvm"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "kvm-bindings",
  "libc",
@@ -1099,7 +1099,7 @@ dependencies = [
 [[package]]
 name = "logger"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "chrono",
  "lazy_static",
@@ -1129,7 +1129,7 @@ dependencies = [
 [[package]]
 name = "memory_model"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "libc",
  "serde",
@@ -1139,7 +1139,7 @@ dependencies = [
 [[package]]
 name = "micro_http"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 
 [[package]]
 name = "mime"
@@ -1178,7 +1178,7 @@ dependencies = [
 [[package]]
 name = "mmds"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "json-patch",
  "lazy_static",
@@ -1231,7 +1231,7 @@ dependencies = [
 [[package]]
 name = "net_gen"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "sys_util",
 ]
@@ -1239,7 +1239,7 @@ dependencies = [
 [[package]]
 name = "net_util"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "libc",
  "net_gen",
@@ -1572,7 +1572,7 @@ dependencies = [
 [[package]]
 name = "rate_limiter"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "libc",
  "logger",
@@ -1743,7 +1743,7 @@ checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
 [[package]]
 name = "seccomp"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "libc",
 ]
@@ -2049,7 +2049,7 @@ dependencies = [
 [[package]]
 name = "sys_util"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "libc",
 ]
@@ -2380,12 +2380,12 @@ checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
 [[package]]
 name = "virtio_gen"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 
 [[package]]
 name = "vmm"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "arch",
  "byteorder",
