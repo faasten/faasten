@@ -53,7 +53,7 @@ fn main() {
 
     // intialize remote scheduler
     let sched_addr = matches
-                        .value_of("scheduler listen address")
+                        .value_of("scheduler address")
                         .map(String::from)
                         .unwrap();
     let sched_addr = sched_addr.parse::<SocketAddr>().expect("invalid socket address");
