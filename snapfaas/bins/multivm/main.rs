@@ -1,4 +1,4 @@
-//! The SnapFaaS Controller
+//! FIXME update this comment The SnapFaaS Controller
 //!
 //! The Controller consists of a request manager (file or HTTP) and a pool of workers.
 //! The gateway takes in requests. The controller assigns each request a worker.
@@ -22,17 +22,17 @@ fn main() {
     env_logger::init();
 
     let matches = App::new("SnapFaaS controller")
-        .version("1.0")
-        .about("Launch and configure SnapFaaS controller")
-        .arg(
-            Arg::with_name("config")
-                .value_name("YAML")
-                .short("c")
-                .long("config")
-                .takes_value(true)
-                .required(true)
-                .help("Path to controller config YAML file"),
-        )
+        .version("0.1")
+        .about("Worker machine local manager")
+        //.arg(
+        //    Arg::with_name("config")
+        //        .value_name("YAML")
+        //        .short("c")
+        //        .long("config")
+        //        .takes_value(true)
+        //        .required(true)
+        //        .help("Path to controller config YAML file"),
+        //)
         .arg(
             Arg::with_name("scheduler address")
                 .value_name("[ADDR:]PORT")
