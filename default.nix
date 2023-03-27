@@ -6,7 +6,7 @@ pkgs.rustPlatform.buildRustPackage rec {
 
   src = ./.;
 
-  cargoSha256 = "sha256-Uqk+FD8ve37TMA6h0hnaV5aoIDrsRed2pKQLtXAtzBk=";
+  cargoSha256 = "sha256-T4Xp4zNu0MboW3UeDJbUjJyTGjRAN5BvlMPT1uxoODU=";
 
   nativeBuildInputs = [ pkgs.pkg-config pkgs.protobuf ];
   buildInputs = [ pkgs.openssl ];
