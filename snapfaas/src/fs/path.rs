@@ -41,7 +41,7 @@ impl Path {
         }
 
         let filename_re = regex::Regex::new(r"^([[:word:]]+\.)*[[:word]]+$").unwrap();
-        let label_re = regex::Regex::new(r"^<(?P<lbl>[,/\&\|\\[[:word:]]]+)>$").unwrap();
+        let label_re = regex::Regex::new(r"^<(?P<lbl>.+)>$").unwrap();
         for c in cs {
             if c == "%" {
                 components.push(Component::Facet(super::utils::get_current_label()));

@@ -26,3 +26,4 @@ snapfaas = { path = "../../snapfaas" }
 r2d2 = "0.8.9"
 labeled = { git = "https://github.com/alevy/labeled", features = ["buckle"] }
 prost = "0.9.0"
+mime = "0.3.17"
