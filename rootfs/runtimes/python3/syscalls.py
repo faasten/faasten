@@ -133,15 +133,6 @@ class Syscall():
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def create_gate_str(self, path, image, policy):
-        base, _, name = path.rpartition(':')
-        if name == '':
-            return False
-        req = syscalls_pb2.Syscall(createGateStr=syscalls_pb2.CreateGateStr(baseDir=base, name=name, image=image, policy=policy))
-        self._send(req)
-        response = self._recv(syscalls_pb2.WriteKeyResponse())
-        return response.success
-
     ### github APIs ###
     def github_rest_get(self, route, toblob=False):
         req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.GET, route = route, body = None, toblob=toblob))
@@ -282,6 +273,19 @@ class Syscall():
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
+    def fs_createblobbyname(self, path, blobname: str, label: syscalls_pb2.Buckle=None):
+        """Link `blobname` into the file system at `path`."""
+        req = syscalls_pb2.Syscall(fsLinkBlob=syscalls_pb2.FSLinkBlob(path=path, blobname=blobname, label=label))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+    def fs_creategate(self, path: str, policy: str, app: str, memory: uint, runtime: str):
+        req = syscalls_pb2.Syscall(createGate=syscalls_pb2.CreateGate(path=path, policy=policy, appImage=app, memory=memory, runtime=runtime))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
     def fs_delete(self, path):
         base, name, ok = split_path(path)
         if not ok:
@@ -294,9 +298,9 @@ class Syscall():
 
     ### end of named data object syscalls ###
 
-    ### unnamed data object syscalls #
+    ### blob data object syscalls #
     @contextmanager
-    def create_unnamed(self, size: int = None):
+    def create_blob(self, size: int = None):
         """Create a nameless data object.
 
         The implementation uses the content-addressed blob store.
@@ -314,13 +318,11 @@ class Syscall():
             self._send(req)
             response = self._recv(syscalls_pb2.BlobResponse())
         else:
-            raise CreateUnnamedError
+            raise CreateBlobError
 
     @contextmanager
-    def open_unnamed(self, name):
-        """Open an existing nameless data object read-only.
-
-        The implementation uses the content-addressed blob store.
+    def open_blob(self, name):
+        """Open a content-addressed immutable data object.
 
         Yield:
             An instance of class Blob
@@ -363,7 +365,7 @@ class Blob():
         response = self.syscall._recv(syscalls_pb2.BlobResponse())
         if response.success:
             return response.data
-        raise ReadUnnamedError
+        raise ReadBlobError
 
     def read(self, size=None):
         buf = []
@@ -383,8 +385,8 @@ class Blob():
         # size = 0
         return buf
 
-class CreateUnnamedError(Exception):
+class CreateBlobError(Exception):
     pass
 
-class ReadUnnamedError(Exception):
+class ReadBlobError(Exception):
     pass

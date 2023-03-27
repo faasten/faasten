@@ -1,17 +1,20 @@
+use std::collections::{HashMap, HashSet};
+use std::io::{Read, Seek, Write};
 ///! secure runtime that holds the handles to the VM and the global file system
 use std::net::TcpStream;
-use std::collections::{HashMap, HashSet};
-use std::io::{Seek, Read, Write};
 
-use labeled::buckle::{Buckle, Component, Clause, self};
-use log::{warn, error, debug};
-use lmdb::{WriteFlags, Transaction};
+use labeled::buckle::{self, Buckle, Clause, Component};
+use lmdb::{Transaction, WriteFlags};
+use log::{debug, error, warn};
 
-use crate::syscalls::{self, syscall::Syscall as SC};
-use crate::sched::{self, message::{TaskReturn, ReturnCode}};
-use crate::fs::{self, FS, Function};
 use crate::blobstore::{self, Blobstore};
+use crate::fs::{self, Function, FS};
 use crate::labeled_fs::DBENV;
+use crate::sched::{
+    self,
+    message::{ReturnCode, TaskReturn},
+};
+use crate::syscalls::{self, syscall::Syscall as SC};
 
 const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
 const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
@@ -21,9 +24,19 @@ const USER_AGENT: &str = "snapfaas";
 pub fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Component {
     match component {
         None => Component::DCFalse,
-        Some(set) => Component::DCFormula(set.clauses.iter()
-            .map(|c| Clause(c.principals.iter().map(|p| p.tokens.iter().cloned().collect()).collect()))
-            .collect()),
+        Some(set) => Component::DCFormula(
+            set.clauses
+                .iter()
+                .map(|c| {
+                    Clause(
+                        c.principals
+                            .iter()
+                            .map(|p| p.tokens.iter().cloned().collect())
+                            .collect(),
+                    )
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -41,7 +54,11 @@ pub fn component_to_pbcomponent(component: &Component) -> Option<syscalls::Compo
             clauses: set
                 .iter()
                 .map(|clause| syscalls::Clause {
-                    principals: clause.0.iter().map(|vp| syscalls::TokenList { tokens: vp.clone() }).collect(),
+                    principals: clause
+                        .0
+                        .iter()
+                        .map(|vp| syscalls::TokenList { tokens: vp.clone() })
+                        .collect(),
                 })
                 .collect(),
         }),
@@ -53,30 +70,6 @@ pub fn buckle_to_pblabel(label: &Buckle) -> syscalls::Buckle {
         secrecy: component_to_pbcomponent(&label.secrecy),
         integrity: component_to_pbcomponent(&label.integrity),
     }
-}
-
-pub fn str_to_syscall_path(s: &str) -> Result<Vec<syscalls::PathComponent>, SyscallProcessorError> {
-    // remove leading `:' if any
-    let s = s.trim_start_matches(":");
-    s.split(":").try_fold(Vec::new(), |mut path, c| {
-        if c.starts_with("^") {
-            let c = c.strip_prefix("^").unwrap();
-            match buckle::Buckle::parse(c) {
-                Ok(f) => {
-                    let f = buckle_to_pblabel(&f);
-                    let c = syscalls::PathComponent {
-                        component: Some(syscalls::path_component::Component::Facet(f)),
-                    };
-                    path.push(c);
-                    Ok(path)
-                }
-                Err(_) => Err(SyscallProcessorError::BadStrPath),
-            }
-        } else {
-            path.push(syscalls::PathComponent { component: Some(syscalls::path_component::Component::Dscrp(c.to_string())) });
-            Ok(path)
-        }
-    })
 }
 
 #[derive(Debug)]
@@ -124,12 +117,13 @@ pub struct SyscallProcessor {
 }
 
 impl SyscallProcessor {
-    pub fn new(label: Buckle, privilege: Component) -> Self {
+    pub fn new(label: Buckle, privilege: Component, clearance: Buckle) -> Self {
         {
             // set up label & privilege
             fs::utils::clear_label();
             fs::utils::taint_with_label(label);
             fs::utils::set_my_privilge(privilege);
+            fs::utils::set_clearance(clearance);
         }
 
         Self {
@@ -150,51 +144,62 @@ impl SyscallProcessor {
     }
 
     /// Send a HTTP GET request no matter if an authentication token is present
-    fn http_get(&self, sc_req: &syscalls::GithubRest) -> Result<reqwest::blocking::Response, SyscallProcessorError> {
+    fn http_get(
+        &self,
+        sc_req: &syscalls::GithubRest,
+    ) -> Result<reqwest::blocking::Response, SyscallProcessorError> {
         // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
         let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
         url.set_path(&sc_req.route);
-        let mut req = self.http_client.get(url)
+        let mut req = self
+            .http_client
+            .get(url)
             .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
             .header(reqwest::header::USER_AGENT, USER_AGENT);
         req = match std::env::var_os(GITHUB_AUTH_TOKEN) {
-            Some(t_osstr) => {
-                match t_osstr.into_string() {
-                    Ok(t_str) => req.bearer_auth(t_str),
-                    Err(_) => req,
-                }
+            Some(t_osstr) => match t_osstr.into_string() {
+                Ok(t_str) => req.bearer_auth(t_str),
+                Err(_) => req,
             },
-            None => req
+            None => req,
         };
         req.send().map_err(|e| SyscallProcessorError::Http(e))
     }
 
     /// Send a HTTP POST request only if an authentication token is present
-    fn http_post(&self, sc_req: &syscalls::GithubRest, method: reqwest::Method) -> Result<reqwest::blocking::Response, SyscallProcessorError> {
+    fn http_post(
+        &self,
+        sc_req: &syscalls::GithubRest,
+        method: reqwest::Method,
+    ) -> Result<reqwest::blocking::Response, SyscallProcessorError> {
         // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
         let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
         url.set_path(&sc_req.route);
         match std::env::var_os(GITHUB_AUTH_TOKEN) {
-            Some(t_osstr) => {
-                match t_osstr.into_string() {
-                    Ok(t_str) => {
-                        self.http_client.request(method, url)
-                            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
-                            .header(reqwest::header::USER_AGENT, USER_AGENT)
-                            .body(std::string::String::from(sc_req.body.as_ref().unwrap()))
-                            .bearer_auth(t_str)
-                            .send().map_err(|e| SyscallProcessorError::Http(e))
-                    },
-                    Err(_) => Err(SyscallProcessorError::HttpAuth),
-                }
-            }
+            Some(t_osstr) => match t_osstr.into_string() {
+                Ok(t_str) => self
+                    .http_client
+                    .request(method, url)
+                    .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
+                    .header(reqwest::header::USER_AGENT, USER_AGENT)
+                    .body(std::string::String::from(sc_req.body.as_ref().unwrap()))
+                    .bearer_auth(t_str)
+                    .send()
+                    .map_err(|e| SyscallProcessorError::Http(e)),
+                Err(_) => Err(SyscallProcessorError::HttpAuth),
+            },
             None => Err(SyscallProcessorError::HttpAuth),
         }
     }
 
-    pub fn run(mut self, env: &mut SyscallGlobalEnv, payload: String, s: &mut impl SyscallChannel) -> Result<TaskReturn, SyscallProcessorError> {
+    pub fn run(
+        mut self,
+        env: &mut SyscallGlobalEnv,
+        payload: String,
+        s: &mut impl SyscallChannel,
+    ) -> Result<TaskReturn, SyscallProcessorError> {
         use prost::Message;
-        s.send(syscalls::Request{ payload }.encode_to_vec())?;
+        s.send(syscalls::Request { payload }.encode_to_vec())?;
 
         loop {
             let sc = s.wait()?;
@@ -213,8 +218,10 @@ impl SyscallProcessor {
                             syscalls::WriteKeyResponse { success: false }
                         }
                         Some(sched_conn) => {
-                            let ret = fs::utils::invoke(&env.fs, &i.gate).ok();
-                            let result = syscalls::WriteKeyResponse { success: ret.is_some() };
+                            let ret = fs::utils::invoke(&env.fs, i.gate).ok();
+                            let result = syscalls::WriteKeyResponse {
+                                success: ret.is_some(),
+                            };
                             if ret.is_some() {
                                 let (f, p) = ret.unwrap();
                                 let label = fs::utils::get_current_label();
@@ -225,10 +232,12 @@ impl SyscallProcessor {
                                     label: Some(buckle_to_pblabel(&label)),
                                     sync: false,
                                 };
-                                sched::rpc::labeled_invoke(sched_conn, sched_invoke).map_err(|e| {
-                                    error!("{:?}", e);
-                                    SyscallProcessorError::UnreachableScheduler
-                                })?;
+                                sched::rpc::labeled_invoke(sched_conn, sched_invoke).map_err(
+                                    |e| {
+                                        error!("{:?}", e);
+                                        SyscallProcessorError::UnreachableScheduler
+                                    },
+                                )?;
                             }
                             result
                         }
@@ -245,20 +254,24 @@ impl SyscallProcessor {
                             // read key i.function
                             let txn = DBENV.begin_ro_txn().unwrap();
                             let val = txn.get(env.db, &i.function).ok();
-                            let result = syscalls::WriteKeyResponse { success: val.is_some() };
+                            let result = syscalls::WriteKeyResponse {
+                                success: val.is_some(),
+                            };
                             if let Some(val) = val {
                                 let f: Function = serde_json::from_slice(val).map_err(|e| {
-                                        error!("{}", e.to_string());
-                                        SyscallProcessorError::BadStrPath
-                                    })?;
+                                    error!("{}", e.to_string());
+                                    SyscallProcessorError::BadStrPath
+                                })?;
                                 let sched_invoke = sched::message::UnlabeledInvoke {
                                     function: Some(f.into()),
                                     payload: i.payload,
                                 };
-                                sched::rpc::unlabeled_invoke(sched_conn, sched_invoke).map_err(|e| {
-                                    error!("{:?}", e);
-                                    SyscallProcessorError::UnreachableScheduler
-                                })?;
+                                sched::rpc::unlabeled_invoke(sched_conn, sched_invoke).map_err(
+                                    |e| {
+                                        error!("{:?}", e);
+                                        SyscallProcessorError::UnreachableScheduler
+                                    },
+                                )?;
                             }
                             result
                         }
@@ -267,7 +280,7 @@ impl SyscallProcessor {
                 }
                 Some(SC::FsDelete(req)) => {
                     let result = syscalls::WriteKeyResponse {
-                        success: fs::utils::delete(&env.fs, &req.base_dir, req.name).is_ok(),
+                        success: fs::utils::delete(&env.fs, req.base_dir, req.name).is_ok(),
                     };
                     s.send(result.encode_to_vec())?;
                 }
@@ -283,7 +296,12 @@ impl SyscallProcessor {
                     let mut my_priv = component_to_pbcomponent(&fs::utils::my_privilege());
                     if let Some(clauses) = my_priv.as_mut() {
                         if let Some(clause) = clauses.clauses.first_mut() {
-                            clause.principals.first_mut().unwrap().tokens.extend(suffix.tokens);
+                            clause
+                                .principals
+                                .first_mut()
+                                .unwrap()
+                                .tokens
+                                .extend(suffix.tokens);
                         }
                     }
                     let result = syscalls::Buckle {
@@ -294,26 +312,43 @@ impl SyscallProcessor {
                 }
                 Some(SC::DupGate(req)) => {
                     let policy = pblabel_to_buckle(&req.policy.unwrap());
-                    let value = fs::utils::dup_gate(&env.fs, &req.orig, &req.base_dir, req.name, policy).ok();
+                    let value =
+                        fs::utils::dup_gate(&env.fs, req.orig, req.base_dir, req.name, policy).ok();
                     let result = syscalls::WriteKeyResponse {
-                        success: value.is_some()
+                        success: value.is_some(),
                     };
                     s.send(result.encode_to_vec())?;
-                },
-                Some(SC::CreateGateStr(cgs)) => {
+                }
+                Some(SC::FsCreateGate(cg)) => {
                     let mut success = false;
-                    if let Ok(base_dir) = str_to_syscall_path(&cgs.base_dir) {
-                        if let Ok(policy) = buckle::Buckle::parse(&cgs.policy) {
-                            if fs::utils::create_gate(&env.fs, &base_dir, cgs.name, policy, cgs.function.unwrap().into()).is_ok() {
-                                success = true;
+                    if let Ok(path) = fs::path::Path::parse(&cg.path) {
+                        if let Some(base_dir) = path.parent() {
+                            if let Some(name) = path.file_name() {
+                                if let Ok(policy) = buckle::Buckle::parse(&cg.policy) {
+                                    let runtime_blob =
+                                        fs::bootstrap::get_runtime_blob(&env.fs, &cg.runtime);
+                                    let kernel_blob = fs::bootstrap::get_kernel_blob(&env.fs);
+                                    if fs::utils::create_gate(
+                                        &env.fs,
+                                        base_dir,
+                                        name,
+                                        policy,
+                                        fs::Function {
+                                            memory: cg.memory as usize,
+                                            app_image: cg.app_image,
+                                            runtime_image: runtime_blob,
+                                            kernel: kernel_blob,
+                                        },
+                                    )
+                                    .is_ok()
+                                    {
+                                        success = true;
+                                    }
+                                }
                             }
-                        } else {
-                            error!("CreateGateStr: bad policy");
                         }
-                    } else {
-                        error!("CreateGateStr: bad base_dir str path");
                     }
-                    let result = syscalls::WriteKeyResponse{ success };
+                    let result = syscalls::WriteKeyResponse { success };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::ReadKey(rk)) => {
@@ -323,7 +358,7 @@ impl SyscallProcessor {
                     };
                     let _ = txn.commit();
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::WriteKey(wk)) => {
                     let mut txn = DBENV.begin_rw_txn().unwrap();
                     let result = syscalls::WriteKeyResponse {
@@ -333,7 +368,7 @@ impl SyscallProcessor {
                     };
                     let _ = txn.commit();
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::ReadDir(req)) => {
                     use lmdb::Cursor;
                     let mut keys: HashSet<Vec<u8>> = HashSet::new();
@@ -344,12 +379,20 @@ impl SyscallProcessor {
                         if !dir.ends_with(b"/") {
                             dir.push(b'/');
                         }
-                        let mut cursor = txn.open_ro_cursor(env.db).or(Err(SyscallProcessorError::Database))?.iter_from(&dir);
+                        let mut cursor = txn
+                            .open_ro_cursor(env.db)
+                            .or(Err(SyscallProcessorError::Database))?
+                            .iter_from(&dir);
                         while let Some(Ok((key, _))) = cursor.next() {
                             if !key.starts_with(&dir) {
-                                break
+                                break;
                             }
-                            if let Some(entry) = key.split_at(dir.len()).1.split_inclusive(|c| *c == b'/').next() {
+                            if let Some(entry) = key
+                                .split_at(dir.len())
+                                .1
+                                .split_inclusive(|c| *c == b'/')
+                                .next()
+                            {
                                 if !entry.is_empty() {
                                     keys.insert(entry.into());
                                 }
@@ -362,43 +405,50 @@ impl SyscallProcessor {
                         keys: keys.drain().collect(),
                     };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::FsRead(req)) => {
-                    let value = fs::utils::read(&env.fs, &req.path).ok();
-                    let result = syscalls::ReadKeyResponse {
-                        value
-                    };
+                    let value = fs::utils::read(&env.fs, req.path).ok();
+                    let result = syscalls::ReadKeyResponse { value };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::FsList(req)) => {
-                    let value = fs::utils::list(&env.fs, &req.path).ok()
-                        .map(|m| syscalls::EntryNameArr { names: m.keys().cloned().collect() });
+                    let value =
+                        fs::utils::list(&env.fs, req.path)
+                            .ok()
+                            .map(|m| syscalls::EntryNameArr {
+                                names: m.keys().cloned().collect(),
+                            });
                     let result = syscalls::FsListResponse { value };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::FsFacetedList(req)) => {
-                    let value = fs::utils::faceted_list(&env.fs, &req.path).ok()
-                        .map(|facets| {
-                            syscalls::FsFacetedListInner{
-                                facets: facets.iter().map(|(k, m)|
-                                            (k.clone(), syscalls::EntryNameArr{ names: m.keys().cloned().collect() })
-                                        ).collect::<HashMap<String, syscalls::EntryNameArr>>()
-                            }
+                    let value = fs::utils::faceted_list(&env.fs, req.path)
+                        .ok()
+                        .map(|facets| syscalls::FsFacetedListInner {
+                            facets: facets
+                                .iter()
+                                .map(|(k, m)| {
+                                    (
+                                        k.clone(),
+                                        syscalls::EntryNameArr {
+                                            names: m.keys().cloned().collect(),
+                                        },
+                                    )
+                                })
+                                .collect::<HashMap<String, syscalls::EntryNameArr>>(),
                         });
-                    let result = syscalls::FsFacetedListResponse {
-                        value
-                    };
+                    let result = syscalls::FsFacetedListResponse { value };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::FsWrite(req)) => {
-                    let value = fs::utils::write(&mut env.fs, &req.path, req.data).ok();
+                    let value = fs::utils::write(&mut env.fs, req.path, req.data).ok();
                     let result = syscalls::WriteKeyResponse {
-                        success: value.is_some()
+                        success: value.is_some(),
                     };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::FsCreateFacetedDir(req)) => {
-                    let value = fs::utils::create_faceted(&env.fs, &req.base_dir, req.name).ok();
+                    let value = fs::utils::create_faceted(&env.fs, req.base_dir, req.name).ok();
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     };
@@ -406,46 +456,74 @@ impl SyscallProcessor {
                 }
                 Some(SC::FsCreateDir(req)) => {
                     let label = pblabel_to_buckle(&req.label.clone().expect("label"));
-                    let value = fs::utils::create_directory(&env.fs, &req.base_dir, req.name, label).ok();
+                    let value =
+                        fs::utils::create_directory(&env.fs, req.base_dir, req.name, label).ok();
                     let result = syscalls::WriteKeyResponse {
-                        success: value.is_some()
+                        success: value.is_some(),
                     };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::FsCreateFile(req)) => {
                     let label = pblabel_to_buckle(&req.label.clone().expect("label"));
-                    let value = fs::utils::create_file(&env.fs, &req.base_dir, req.name, label).ok();
+                    let value = fs::utils::create_file(&env.fs, req.base_dir, req.name, label).ok();
                     let result = syscalls::WriteKeyResponse {
-                        success: value.is_some()
+                        success: value.is_some(),
                     };
                     s.send(result.encode_to_vec())?;
-                },
+                }
+                Some(SC::FsCreateBlobByName(req)) => {
+                    let mut success = false;
+                    if let Ok(path) = fs::path::Path::parse(&req.path) {
+                        if let Some(base_dir) = path.parent() {
+                            if let Some(name) = path.file_name() {
+                                let label = req.label.map_or_else(
+                                    || fs::utils::get_current_label(),
+                                    |lpb| pblabel_to_buckle(&lpb),
+                                );
+                                if fs::utils::create_blob(
+                                    &env.fs,
+                                    base_dir,
+                                    name,
+                                    label,
+                                    req.blobname,
+                                )
+                                .is_ok()
+                                {
+                                    success = true;
+                                }
+                            }
+                        }
+                    }
+                    let result = syscalls::WriteKeyResponse { success };
+                    s.send(result.encode_to_vec())?;
+                }
                 Some(SC::GithubRest(req)) => {
                     let resp = match syscalls::HttpVerb::from_i32(req.verb) {
-                        Some(syscalls::HttpVerb::Get) => {
-                            Some(self.http_get(&req)?)
-                        },
+                        Some(syscalls::HttpVerb::Get) => Some(self.http_get(&req)?),
                         Some(syscalls::HttpVerb::Post) => {
                             Some(self.http_post(&req, reqwest::Method::POST)?)
-                        },
+                        }
                         Some(syscalls::HttpVerb::Put) => {
                             Some(self.http_post(&req, reqwest::Method::PUT)?)
-                        },
+                        }
                         Some(syscalls::HttpVerb::Delete) => {
                             Some(self.http_post(&req, reqwest::Method::DELETE)?)
-                        },
-                        None => {
-                           None
                         }
+                        None => None,
                     };
                     let result = match resp {
                         None => syscalls::GithubRestResponse {
-                            data: format!("`{:?}` not supported", req.verb).as_bytes().to_vec(),
+                            data: format!("`{:?}` not supported", req.verb)
+                                .as_bytes()
+                                .to_vec(),
                             status: 0,
                         },
                         Some(mut resp) => {
                             if req.toblob && resp.status().is_success() {
-                                let mut file = env.blobstore.create().map_err(|e| SyscallProcessorError::Blob(e))?;
+                                let mut file = env
+                                    .blobstore
+                                    .create()
+                                    .map_err(|e| SyscallProcessorError::Blob(e))?;
                                 let mut buf = [0; 4096];
                                 while let Ok(len) = resp.read(&mut buf) {
                                     if len == 0 {
@@ -453,7 +531,10 @@ impl SyscallProcessor {
                                     }
                                     let _ = file.write_all(&buf[0..len]);
                                 }
-                                let result = env.blobstore.save(file).map_err(|e| SyscallProcessorError::Blob(e))?;
+                                let result = env
+                                    .blobstore
+                                    .save(file)
+                                    .map_err(|e| SyscallProcessorError::Blob(e))?;
                                 syscalls::GithubRestResponse {
                                     status: resp.status().as_u16() as u32,
                                     data: Vec::from(result.name),
@@ -461,13 +542,16 @@ impl SyscallProcessor {
                             } else {
                                 syscalls::GithubRestResponse {
                                     status: resp.status().as_u16() as u32,
-                                    data: resp.bytes().map_err(|e| SyscallProcessorError::Http(e))?.to_vec(),
+                                    data: resp
+                                        .bytes()
+                                        .map_err(|e| SyscallProcessorError::Http(e))?
+                                        .to_vec(),
                                 }
                             }
-                        },
+                        }
                     };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::GetCurrentLabel(_)) => {
                     let result = buckle_to_pblabel(&fs::utils::get_current_label());
                     s.send(result.encode_to_vec())?;
@@ -479,13 +563,19 @@ impl SyscallProcessor {
                 }
                 Some(SC::Declassify(target)) => {
                     let target = pbcomponent_to_component(&Some(target));
-                    let result = syscalls::DeclassifyResponse{
-                        label: fs::utils::declassify(target).map(|l| buckle_to_pblabel(&l)).ok(),
+                    let result = syscalls::DeclassifyResponse {
+                        label: fs::utils::declassify(target)
+                            .map(|l| buckle_to_pblabel(&l))
+                            .ok(),
                     };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::CreateBlob(_cb)) => {
-                    if let Ok(newblob) = env.blobstore.create().map_err(|e| SyscallProcessorError::Blob(e)) {
+                    if let Ok(newblob) = env
+                        .blobstore
+                        .create()
+                        .map_err(|e| SyscallProcessorError::Blob(e))
+                    {
                         self.max_blob_id += 1;
                         self.create_blobs.insert(self.max_blob_id, newblob);
 
@@ -503,7 +593,7 @@ impl SyscallProcessor {
                         };
                         s.send(result.encode_to_vec())?;
                     }
-                },
+                }
                 Some(SC::WriteBlob(wb)) => {
                     let result = if let Some(newblob) = self.create_blobs.get_mut(&wb.fd) {
                         let data = wb.data.as_ref();
@@ -528,10 +618,11 @@ impl SyscallProcessor {
                         }
                     };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::FinalizeBlob(fb)) => {
                     let result = if let Some(mut newblob) = self.create_blobs.remove(&fb.fd) {
-                        let blob = newblob.write_all(&fb.data)
+                        let blob = newblob
+                            .write_all(&fb.data)
                             .and_then(|_| env.blobstore.save(newblob))
                             .map_err(|e| SyscallProcessorError::Blob(e))?;
                         syscalls::BlobResponse {
@@ -547,7 +638,7 @@ impl SyscallProcessor {
                         }
                     };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::OpenBlob(ob)) => {
                     let result = if let Ok(file) = env.blobstore.open(ob.name) {
                         self.max_blob_id += 1;
@@ -565,13 +656,14 @@ impl SyscallProcessor {
                         }
                     };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::ReadBlob(rb)) => {
                     let result = if let Some(file) = self.blobs.get_mut(&rb.fd) {
                         let mut buf = Vec::from([0; 4096]);
                         let limit = std::cmp::min(rb.length.unwrap_or(4096), 4096) as usize;
                         if let Some(offset) = rb.offset {
-                            file.seek(std::io::SeekFrom::Start(offset)).map_err(|e| SyscallProcessorError::Blob(e))?;
+                            file.seek(std::io::SeekFrom::Start(offset))
+                                .map_err(|e| SyscallProcessorError::Blob(e))?;
                         }
                         if let Ok(len) = file.read(&mut buf[0..limit]) {
                             buf.truncate(len);
@@ -588,14 +680,14 @@ impl SyscallProcessor {
                             }
                         }
                     } else {
-                            syscalls::BlobResponse {
-                                success: false,
-                                fd: rb.fd,
-                                data: Vec::new(),
-                            }
+                        syscalls::BlobResponse {
+                            success: false,
+                            fd: rb.fd,
+                            data: Vec::new(),
+                        }
                     };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::CloseBlob(cb)) => {
                     let result = if self.blobs.remove(&cb.fd).is_some() {
                         syscalls::BlobResponse {
@@ -611,10 +703,10 @@ impl SyscallProcessor {
                         }
                     };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 None => {
                     // Should never happen, so just ignore??
-                },
+                }
             }
         }
     }

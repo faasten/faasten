@@ -9,10 +9,9 @@ use std::net::TcpStream;
 
 use labeled::buckle;
 use reqwest::blocking::Client;
-use rouille::post_input;
 use serde::{Deserialize, Serialize};
-use rouille::{Request, Response, ResponseBody, input::post::BufferedFile};
 use jwt::{PKeyWithDigest, SignWithKey, VerifyWithKey};
+use rouille::{Response, ResponseBody, Request};
 use openssl::pkey::{self, PKey};
 use lmdb::Transaction;
 use log::error;
@@ -22,9 +21,6 @@ use snapfaas::fs;
 use snapfaas::fs::FS;
 use snapfaas::fs::Function;
 use snapfaas::sched;
-use snapfaas::syscall_server::buckle_to_pblabel;
-use snapfaas::syscall_server::component_to_pbcomponent;
-use snapfaas::syscalls;
 
 struct FaastenScheduler {
     sched_address: String,
@@ -198,8 +194,11 @@ impl App {
             (GET) (/faasten/ping) => {
                 Ok(Response::text("Pong.").with_status_code(200))
             },
+            (GET) (/faasten/ping/scheduler) => {
+                self.faasten_ping_scheduler()
+            },
             (POST) (/faasten/invoke/{gate_path}) => {
-                self.faasten_init(request, gate_path)
+                self.faasten_invoke(gate_path, request)
             },
             _ => {
                 error!("404: {} {}", request.method(), request.raw_url());
@@ -208,109 +207,31 @@ impl App {
         ).unwrap_or_else(|e| e).with_additional_header("Access-Control-Allow-Origin", "*")
     }
 
-    // "init" code for any function invocation. It is responsible for resolving the passed-in
-    // gate path in a secure way. That is, it makes sure to set the privilege and the clearance
-    // for a logged in user or a public user. Moreover, it tracks the label for the file system
-    // traversal and set LabeledInvoke.label to the new label after the traversal.
-    fn faasten_init(&self, request: &Request, gate_path: String) -> Result<Response, Response> {
+    fn faasten_invoke(&self, gate_path: String, request: &Request) -> Result<Response, Response> {
         let login = self.verify_jwt(request).ok();
 
         let conn = &mut self.conn.get().map_err(|_|
             Response::json(&serde_json::json!({
                 "error": "failed to get scheduler connection"
             })).with_status_code(500))?;
-
-        // process the input:
-        // 1. generate labeled_invoke from the input
-        // 2. if file presents, store it to the blobstore.
-        let input_post_form = post_input!(request, {
-            file: Option<BufferedFile>, payload: String, label: String
-        }).map_err(|e|
-            Response::json(&serde_json::json!({ "error": e.to_string() })).with_status_code(400)
-        )?;
-
-        // parse the label
-        let label = buckle::Buckle::parse(&input_post_form.label)
-            .map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() }))
-                .with_status_code(400))?;
-
-        // parse the gate path
-        use syscalls::{PathComponent, path_component::Component};
-        let mut sc_path = Vec::new();
-        for c in gate_path.split(":") {
-            if c.starts_with("^") {
-                let facet = buckle::Buckle::parse(c.strip_prefix("^").unwrap())
-                    .map_err(|e| Response::json(&serde_json::json!({ "error": e.to_string() }))
-                        .with_status_code(400))?;
-                let facet = buckle_to_pblabel(&facet);
-                sc_path.push(PathComponent{ component: Some(Component::Facet(facet)) });
-            } else {
-                sc_path.push(PathComponent{ component: Some(Component::Dscrp(c.to_string())) });
-            }
-        }
-
-        // resolve the gate path
-        // FIXME this storage setup requires this gateway and worker machines to have access to
-        // the same database file.
+        
         let faasten_fs = FS::new(&*self.dbenv);
 
-        snapfaas::fs::utils::clear_label();
-        snapfaas::fs::utils::taint_with_label(label);
-        let (privilege, clearance) = match login {
-            Some(login) =>
-                (buckle::Buckle::parse(&("T,".to_string()+&login)).unwrap().integrity,
-                 buckle::Buckle::parse(&(login+",T")).unwrap()),
-            None =>
-                (buckle::Buckle::parse("T,T").unwrap().integrity,
-                 buckle::Buckle::public())
-        };
-        snapfaas::fs::utils::set_my_privilge(privilege);
-        snapfaas::fs::utils::set_clearance(clearance);
-        let (f, gate_privilege) = snapfaas::fs::utils::invoke_clearance_check(&faasten_fs, &sc_path).map_err(
-            |e| Response::json(&serde_json::json!({"error": format!("{:?}", e)}))
-            .with_status_code(400))?;
-        let gate_privilege = component_to_pbcomponent(&gate_privilege);
-        let label = fs::utils::get_current_label();
-        let label = buckle_to_pblabel(&label);
+        super::init::init(login, gate_path, request, conn, &faasten_fs, self.blobstore.clone())
+    }
 
-        // prepare payload
-        let val: serde_json::Value = serde_json::from_str(&input_post_form.payload).map_err(|e|
-            Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(400))?;
-        let mut payload = serde_json::json!({"input": val});
-        if let Some(f) = input_post_form.file {
-            // store file into the blobstore
-            let mut blobstore = self.blobstore.lock().map_err(|e|
-                Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
-            )?;
-            let mut newblob = blobstore.create().map_err(|e|
-                Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
-            )?;
-            newblob.write_all(f.data.as_ref()).map_err(|e|
-                Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
-            )?;
-            let name = blobstore.save(newblob).map_err(|e|
-                Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
-            )?.name;
-            payload.as_object_mut().unwrap().insert("input-blob".to_string(), serde_json::Value::String(name));
-        };
-
-        // generate the labeled_invoke
-        let req = sched::message::LabeledInvoke {
-            function: Some(f.into()), label: Some(label), gate_privilege, payload: payload.to_string(), sync: true
-        };
-
-        // submit the labeled_invoke to the scheduler
-        sched::rpc::labeled_invoke(conn, req).map_err(|_|
+    // check if we can reach the scheduler
+    fn faasten_ping_scheduler(&self) -> Result<Response, Response> {
+        let conn = &mut self.conn.get().map_err(|_|
             Response::json(&serde_json::json!({
-                "error": "failed to submit invocation to the scheduler",
+                "error": "failed to get scheduler connection"
             })).with_status_code(500))?;
 
-        // wait for the return
-        let ret = sched::message::read_u8(conn).map_err(|_|
+        sched::rpc::ping(conn).map_err(|_|
             Response::json(&serde_json::json!({
-                "error": "failed to read the task return",
-            })).with_status_code(500))?;
-        Ok(Response::from_data("application/octet-stream", ret))
+                "error": "failed to ping faasten scheduler"
+            })).with_status_code(500))
+        .map(|_| Response::empty_204())
     }
 
     fn whoami(&self, request: &Request) -> Result<Response, Response> {
@@ -621,17 +542,11 @@ impl App {
         let token = claims.sign_with_key(&key).unwrap();
 
         // generate the per-user fsutil gate.
-        let root_fsutil = vec![
-            syscalls::PathComponent { component: Some(syscalls::path_component::Component::Dscrp("fsutil".to_string())) }
-        ];
-        let user_facet = buckle::Buckle::parse(&format!("{0},{0}", sub)).unwrap();
-        let user_facet_pb = buckle_to_pblabel(&user_facet);
-        let user_facet_dir_path = vec![
-            syscalls::PathComponent { component: Some(syscalls::path_component::Component::Dscrp("home".to_string())) },
-            syscalls::PathComponent { component: Some(syscalls::path_component::Component::Facet(user_facet_pb)) },
-        ];
+        let faasten_fsutil = snapfaas::fs::path::Path::parse("home:^T,faasten:fsutil").unwrap();
+        let user_home = snapfaas::fs::path::Path::parse("~").unwrap();
         let faasten_fs = FS::new(&*self.dbenv);
-        fs::utils::dup_gate(&faasten_fs, &root_fsutil, &user_facet_dir_path, "fsutil".to_string(), user_facet)
+        let policy = buckle::Buckle::parse(&format!("{0},{0}", sub)).unwrap();
+        fs::utils::dup_gate(&faasten_fs, faasten_fsutil, user_home, "fsutil".to_string(), policy)
             .map_err(|_| Response::text("failed to create the user-specific storage function"))?;
 
         Ok(Response::html(format!(include_str!("authenticated_cas.html"), token)))

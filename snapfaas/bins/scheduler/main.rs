@@ -1,8 +1,8 @@
-use clap::{App, Arg, crate_authors, crate_version};
+use clap::{crate_authors, crate_version, App, Arg};
 
 use std::sync::{Arc, Mutex};
 
-use snapfaas::sched::{rpc_server::RpcServer, resource_manager::ResourceManager};
+use snapfaas::sched::{resource_manager::ResourceManager, rpc_server::RpcServer};
 
 fn main() {
     env_logger::init();
@@ -39,13 +39,18 @@ fn main() {
         )
         .get_matches();
 
-    snapfaas::prepare_fs(matches.value_of("config").unwrap());
+    let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
+    snapfaas::fs::bootstrap::prepare_fs(&fs, matches.value_of("config").unwrap());
 
     let sched_addr = matches
-                        .value_of("scheduler listen address")
-                        .map(String::from)
-                        .unwrap();
-    let qcap = matches.value_of("queue capacity").unwrap().parse::<usize>().unwrap();
+        .value_of("scheduler listen address")
+        .map(String::from)
+        .unwrap();
+    let qcap = matches
+        .value_of("queue capacity")
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
     let manager = Arc::new(Mutex::new(ResourceManager::new()));
 
     // Register signal handler
@@ -60,5 +65,6 @@ fn set_ctrlc_handler(manager: Arc<Mutex<ResourceManager>>) {
         log::warn!("{}", "Handling Ctrl-C. Shutting down...");
         manager.lock().unwrap().remove_all();
         std::process::exit(0);
-    }).expect("Error setting Ctrl-C handler");
+    })
+    .expect("Error setting Ctrl-C handler");
 }

@@ -19,5 +19,6 @@ pub fn main() {
         )
         .get_matches();
 
-    snapfaas::prepare_fs(matches.value_of("config").unwrap());
+    let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
+    snapfaas::fs::bootstrap::prepare_fs(&fs, matches.value_of("config").unwrap());
 }

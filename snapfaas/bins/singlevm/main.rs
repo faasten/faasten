@@ -258,7 +258,7 @@ fn main() {
     for req in requests {
         let t1 = Instant::now();
         debug!("request: {:?}", req);
-        let processor = syscall_server::SyscallProcessor::new(Buckle::public(), Buckle::public().integrity);
+        let processor = syscall_server::SyscallProcessor::new(Buckle::public(), Buckle::public().integrity, Buckle::top());
         match processor.run(&mut env, req, &mut vm) {
             Ok(rsp) => {
                 let t2 = Instant::now();

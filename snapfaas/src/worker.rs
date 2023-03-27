@@ -110,7 +110,8 @@ impl Worker {
                                         error!("[Worker {:?}] Failed VM launch: {:?}", self.thread_id, e);
                                         continue;
                                     }
-                                    let processor = SyscallProcessor::new(label.clone(), privilege.clone());
+                                    // TODO consider using meaningful clearance
+                                    let processor = SyscallProcessor::new(label.clone(), privilege.clone(), Buckle::top());
                                     if let Ok(result) = processor.run(&mut self.env, invoke.payload.clone(), &mut vm) {
                                         ret = result;
                                         self.localrm.lock().unwrap().release(vm);

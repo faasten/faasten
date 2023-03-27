@@ -10,3 +10,4 @@ blobs/
 *tmux*
 *\.ext4
 functions/*/__pycache__
+functions/*/output.ext2

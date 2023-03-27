@@ -3,6 +3,7 @@ use openssl::pkey::PKey;
 use snapfaas::blobstore::Blobstore;
 
 mod app;
+pub mod init;
 
 fn main() -> Result<(), std::io::Error> {
     dotenv::dotenv().ok();

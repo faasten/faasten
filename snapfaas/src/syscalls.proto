@@ -2,11 +2,17 @@ syntax = "proto3";
 
 package snapfaas.syscalls;
 
+message FSCreateBlobByName {
+  string path = 1;
+  string blobname = 2;
+  optional Buckle label = 3;
+}
+
 // function's presentation on the wire
 message Function {
     uint64 memory = 1;
-    string app_image = 2;
-    string runtime_image = 3;
+    string appImage = 2;
+    string runtime = 3;
     string kernel = 4;
 }
 
@@ -207,11 +213,12 @@ message FSCreateFacetedDir {
   string name = 2;
 }
 
-message CreateGateStr {
-  string baseDir = 1;
-  string name = 2;
-  Function function = 3;
-  string policy = 4;
+message FSCreateGate {
+  string path = 1;
+  string policy = 2;
+  string appImage = 3;
+  uint64 memory = 4;
+  string runtime = 5;
 }
 
 message Syscall {
@@ -242,7 +249,8 @@ message Syscall {
     TokenList subPrivilege = 24;
     string buckleParse = 25;
     FSDelete fsDelete = 26;
-    CreateGateStr createGateStr = 27;
+    FSCreateGate fsCreateGate = 27;
     InvokeFunction invokeFunction = 28;
+    FSCreateBlobByName fsCreateBlobByName = 29;
   }
 }
