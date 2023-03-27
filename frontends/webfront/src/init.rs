@@ -53,7 +53,7 @@ fn prepare_payload(
     blobstore: Arc<Mutex<Blobstore>>,
 ) -> Result<(String, buckle::Buckle), Response> {
     // Parse input into a 3-tuple. support two content types:
-    // * multipart/form
+    // * multipart/form-data
     // * application/json (passthrough)
     use core::str::FromStr;
     let (maybe_file, payload, label) = {
@@ -66,7 +66,9 @@ fn prepare_payload(
         .map_err(|_| {
             Response::json(&serde_json::json!({"error": "Unknown MIME"})).with_status_code(415)
         })?;
-        if content_type == mime::MULTIPART_FORM_DATA {
+        // get rid of the `boundary` param in multipart/form-data
+        let essence_type = mime::Mime::from_str(content_type.essence_str()).unwrap();
+        if essence_type == mime::MULTIPART_FORM_DATA {
             let parsed_form = rouille::post_input!(&request, {
                 file: Option<BufferedFile>, payload: String, label: String
             })
@@ -77,7 +79,7 @@ fn prepare_payload(
                 Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(400)
             })?;
             (parsed_form.file, parsed_form.payload, label)
-        } else if content_type == mime::APPLICATION_JSON {
+        } else if essence_type == mime::APPLICATION_JSON {
             let mut payload = String::new();
             let _ = request
                 .data()
@@ -94,8 +96,8 @@ fn prepare_payload(
             return Err(Response::json(&serde_json::json!({
                 "error":
                     format!(
-                        "Unsupported content-type: {}",
-                        content_type.type_().as_str()
+                        "Unsupported content-type: {:?}",
+                        content_type
                     )
             }))
             .with_status_code(415));
