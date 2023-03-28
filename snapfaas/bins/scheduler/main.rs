@@ -57,6 +57,7 @@ fn main() {
     set_ctrlc_handler(manager.clone());
 
     let s = RpcServer::new(&sched_addr, manager.clone(), qcap);
+    log::debug!("Scheduler starts listening at {:?}", sched_addr);
     s.run();
 }
 

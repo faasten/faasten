@@ -8,6 +8,7 @@ use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 
 use labeled::buckle;
+use log::debug;
 use rouille::{input::post::BufferedFile, Request, Response};
 use snapfaas::fs::BackingStore;
 use snapfaas::syscall_server::{buckle_to_pblabel, component_to_pbcomponent};
@@ -157,6 +158,7 @@ fn wait_for_completion(
     invoke: LabeledInvoke,
     sched_conn: &mut TcpStream,
 ) -> Result<Response, Response> {
+    debug!("submitting: {:?}", invoke);
     // submit the labeled_invoke to the scheduler
     sched::rpc::labeled_invoke(sched_conn, invoke).map_err(|_| {
         Response::json(&serde_json::json!({
@@ -165,6 +167,7 @@ fn wait_for_completion(
         .with_status_code(500)
     })?;
 
+    debug!("waiting...");
     // wait for the return
     let ret = sched::message::read_u8(sched_conn).map_err(|_| {
         Response::json(&serde_json::json!({
