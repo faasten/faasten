@@ -1978,6 +1978,7 @@ dependencies = [
  "net_util",
  "prost",
  "prost-build",
+ "r2d2",
  "rand",
  "regex",
  "reqwest",

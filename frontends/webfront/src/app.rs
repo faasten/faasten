@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::io::Read;
 use std::io::Write;
-use std::net::TcpStream;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -20,29 +19,7 @@ use snapfaas::fs::BackingStore;
 use snapfaas::fs::Function;
 use snapfaas::fs::FS;
 use snapfaas::sched;
-
-struct FaastenScheduler {
-    sched_address: String,
-}
-
-impl r2d2::ManageConnection for FaastenScheduler {
-    type Connection = TcpStream;
-    type Error = std::io::Error;
-
-    fn connect(&self) -> Result<Self::Connection, Self::Error> {
-        Ok(TcpStream::connect(&self.sched_address)?)
-    }
-
-    fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
-        use std::io::{Error, ErrorKind};
-        sched::rpc::ping(conn).map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))?;
-        Ok(())
-    }
-
-    fn has_broken(&self, conn: &mut Self::Connection) -> bool {
-        conn.take_error().ok().flatten().is_some()
-    }
-}
+use snapfaas::sched::Scheduler;
 
 #[derive(Clone)]
 pub struct GithubOAuthCredentials {
@@ -68,7 +45,7 @@ pub struct App<S: Clone + BackingStore> {
     blobstore: Arc<Mutex<Blobstore>>,
     fs: Arc<FS<S>>,
     base_url: String,
-    conn: r2d2::Pool<FaastenScheduler>,
+    conn: r2d2::Pool<Scheduler>,
 }
 
 impl<S: Clone + BackingStore> App<S> {
@@ -80,13 +57,14 @@ impl<S: Clone + BackingStore> App<S> {
         blobstore: Blobstore,
         fs: FS<S>,
         base_url: String,
-        sched_address: String,
+        addr: String,
     ) -> App<S> {
         let dbenv = Arc::new(dbenv);
         let default_db = Arc::new(dbenv.open_db(None).unwrap());
+
         let conn = r2d2::Pool::builder()
             .max_size(10)
-            .build(FaastenScheduler { sched_address })
+            .build(Scheduler::new(&addr))
             .expect("pool");
         let blobstore = Arc::new(Mutex::new(blobstore));
         App {
