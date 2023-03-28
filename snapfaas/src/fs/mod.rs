@@ -166,7 +166,7 @@ pub struct FacetedDirectory {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Blob {
     label: Buckle,
-    blob_name: String,
+    object_id: UID,
 }
 
 #[serde_as]
@@ -468,6 +468,23 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
+    pub fn create_blob(&self, blobname: String, label: Buckle) -> Blob {
+        STAT.with(|stat| {
+            let mut uid: UID = rand::random();
+            while !self
+                .storage
+                .add(&uid.to_be_bytes(), &blobname.clone().into_bytes())
+            {
+                uid = rand::random();
+                stat.borrow_mut().create_retry += 1;
+            }
+            Blob {
+                label,
+                object_id: uid,
+            }
+        })
+    }
+
     pub fn create_gate(
         &self,
         dpriv: Component,
@@ -754,6 +771,32 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
+    pub fn open_blob(&self, blob: &Blob) -> Result<String, LabelError> {
+        CURRENT_LABEL.with(|current_label| {
+            if blob.label.can_flow_to(&*current_label.borrow()) {
+                let v = self
+                    .storage
+                    .get(&blob.object_id.to_be_bytes())
+                    .unwrap_or_default();
+                Ok(String::from_utf8(v).unwrap_or_default())
+            } else {
+                Err(LabelError::CannotRead)
+            }
+        })
+    }
+
+    pub fn update_blob(&self, blob: &Blob, blobname: String) -> Result<(), LabelError> {
+        CURRENT_LABEL.with(|current_label| {
+            if current_label.borrow().can_flow_to(&blob.label) {
+                Ok(self
+                    .storage
+                    .put(&blob.object_id.to_be_bytes(), &blobname.into_bytes()))
+            } else {
+                Err(LabelError::CannotWrite)
+            }
+        })
+    }
+
     pub fn write(&self, file: &File, data: &Vec<u8>) -> Result<(), LabelError> {
         CURRENT_LABEL.with(|current_label| {
             if current_label.borrow().can_flow_to(&file.label) {
@@ -1004,7 +1047,22 @@ pub mod utils {
         match read_path(fs, path) {
             Ok(DirEntry::Blob(b)) => {
                 taint_with_label(b.label.clone());
-                Ok(b.blob_name)
+                fs.open_blob(&b).map_err(|e| Error::from(e))
+            }
+            Ok(_) => Err(Error::BadPath),
+            Err(e) => Err(Error::from(e)),
+        }
+    }
+
+    pub fn update_blob<S: Clone + BackingStore, P: Into<self::path::Path>>(
+        fs: &FS<S>,
+        path: P,
+        blobname: String,
+    ) -> Result<(), Error> {
+        match read_path(fs, path) {
+            Ok(DirEntry::Blob(b)) => {
+                endorse_with_full();
+                fs.update_blob(&b, blobname).map_err(|e| Error::from(e))
             }
             Ok(_) => Err(Error::BadPath),
             Err(e) => Err(Error::from(e)),
@@ -1213,25 +1271,25 @@ pub mod utils {
         match read_path(&fs, base_dir) {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
-                    let newblob = Blob { blob_name, label };
+                    let b = fs.create_blob(blob_name, label);
                     endorse_with_full();
-                    fs.link(&dir, name, DirEntry::Blob(newblob))
+                    fs.link(&dir, name, DirEntry::Blob(b))
                         .map(|_| ())
                         .map_err(|e| Error::from(e))
                 }
                 DirEntry::FacetedDirectory(fdir) => {
-                    let newblob = Blob { blob_name, label };
+                    let b = fs.create_blob(blob_name, label);
                     endorse_with_full();
-                    fs.faceted_link(&fdir, None, name, DirEntry::Blob(newblob))
+                    fs.faceted_link(&fdir, None, name, DirEntry::Blob(b))
                         .map(|_| ())
                         .map_err(|e| Error::from(e))
                 }
                 _ => Err(Error::BadPath),
             },
             Err(Error::FacetedDir(fdir, facet)) => {
-                let newblob = Blob { label, blob_name };
+                let b = fs.create_blob(blob_name, label);
                 endorse_with_full();
-                fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Blob(newblob))
+                fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Blob(b))
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
             }

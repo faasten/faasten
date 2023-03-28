@@ -12,14 +12,6 @@ fn main() {
         .author(crate_authors!())
         .about("Launch Faasten gateway")
         .arg(
-            Arg::with_name("config")
-                .value_name("CONFIG YAML")
-                .long("prepare_fs")
-                .takes_value(true)
-                .required(false)
-                .help("Path to the YAML file telling where to look for kernel and runtime image"),
-        )
-        .arg(
             Arg::with_name("scheduler listen address")
                 .value_name("[ADDR:]PORT")
                 .long("listen")
@@ -38,9 +30,6 @@ fn main() {
                 .help("Address on which Faasten listen for RPCs that requests for tasks"),
         )
         .get_matches();
-
-    let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
-    snapfaas::fs::bootstrap::prepare_fs(&fs, matches.value_of("config").unwrap());
 
     let sched_addr = matches
         .value_of("scheduler listen address")
