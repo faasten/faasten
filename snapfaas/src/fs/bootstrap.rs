@@ -143,13 +143,13 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
 }
 
 pub fn register_user_fsutil<S: Clone + BackingStore>(fs: &super::FS<S>, login: String) {
-    // generate the per-user fsutil gate.
-    super::utils::set_my_privilge(ROOT_PRIV.clone());
+    // generate the per-user fsutil gate, acting on behalf of the user
+    let ufacet = buckle::Buckle::parse(&format!("{0},{0}", login)).unwrap();
+    super::utils::set_my_privilge(ufacet.integrity.clone());
     let faasten_fsutil = super::path::Path::parse("home:<T,faasten>:fsutil").unwrap();
     let user_home = super::path::Path::parse("~").unwrap();
-    let policy = buckle::Buckle::parse(&format!("{0},{0}", login)).unwrap();
     if let Err(e) =
-        super::utils::dup_gate(fs, faasten_fsutil, user_home, "fsutil".to_string(), policy)
+        super::utils::dup_gate(fs, faasten_fsutil, user_home, "fsutil".to_string(), ufacet)
     {
         warn!("{:?}", e);
     }
