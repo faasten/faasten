@@ -1,22 +1,25 @@
 //! Workers proxies requests and responses between the request manager and VMs.
 //! Each worker runs in its own thread and is modeled as the following state
 //! machine:
-use std::net::{TcpStream, SocketAddr};
+use std::net::{SocketAddr, TcpStream};
+use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
-use std::os::unix::net::UnixListener;
 
-use labeled::Label;
 use labeled::buckle::Buckle;
-use log::{error, debug};
+use labeled::Label;
+use log::{debug, error};
 
 use crate::configs::FunctionConfig;
 use crate::vm::Vm;
 //use crate::metrics::{self, WorkerMetrics};
-use crate::resource_manager;
-use crate::fs::{FS, Function};
+use crate::fs::{Function, FS};
 use crate::labeled_fs::DBENV;
-use crate::sched::{self, message::{TaskReturn, ReturnCode}};
+use crate::resource_manager;
+use crate::sched::{
+    self,
+    message::{ReturnCode, TaskReturn},
+};
 use crate::syscall_server::*;
 
 // one hour
@@ -30,25 +33,27 @@ pub struct Worker {
     cid: u32,
     thread_id: ThreadId,
     localrm: Arc<Mutex<resource_manager::ResourceManager>>,
-    vm_listener: tokio::net::UnixListener,
+    vm_listener: std::os::unix::net::UnixListener,
     //stat: WorkerMetrics,
     env: SyscallGlobalEnv,
 }
 
 impl Worker {
-    pub fn new(cid: u32, sched_addr: SocketAddr, localrm: Arc<Mutex<resource_manager::ResourceManager>>) -> Self {
+    pub fn new(
+        cid: u32,
+        sched_addr: SocketAddr,
+        localrm: Arc<Mutex<resource_manager::ResourceManager>>,
+    ) -> Self {
         let thread_id = thread::current().id();
 
         // connection to the scheduler
-        let sched_conn = TcpStream::connect(sched_addr).expect("failed to connect to the scheduler.");
+        let sched_conn =
+            TcpStream::connect(sched_addr).expect("failed to connect to the scheduler.");
 
         // UNIX listener VMs connect to
         let vm_listener_path = format!("worker-{}.sock_1234", cid);
         let _ = std::fs::remove_file(&vm_listener_path);
-        let vm_listener = UnixListener::bind(vm_listener_path)
-            .expect("bind to the Unix listener");
-        let vm_listener = tokio::net::UnixListener::from_std(vm_listener)
-            .expect("convert from UnixListener std");
+        let vm_listener = UnixListener::bind(vm_listener_path).expect("bind to the Unix listener");
 
         // TODO what metrics do we want?
         // let _ = std::fs::create_dir_all("./out").unwrap();
@@ -66,7 +71,13 @@ impl Worker {
             blobstore: Default::default(),
         };
 
-        Self { cid, thread_id, localrm, vm_listener, /* stat, */ env }
+        Self {
+            cid,
+            thread_id,
+            localrm,
+            vm_listener,
+            /* stat, */ env,
+        }
     }
 
     pub fn wait_and_process(&mut self) {
@@ -75,7 +86,10 @@ impl Worker {
             // rpc::get is blocking
             match sched::rpc::get(self.env.sched_conn.as_mut().unwrap()) {
                 Err(e) => {
-                    error!("[Worker {:?}] Failed to receive a scheduler response: {:?}", self.thread_id, e);
+                    error!(
+                        "[Worker {:?}] Failed to receive a scheduler response: {:?}",
+                        self.thread_id, e
+                    );
                     continue;
                 }
                 Ok(resp) => {
@@ -95,24 +109,55 @@ impl Worker {
                             let invoke = r.labeled_invoke.unwrap();
                             let label = pblabel_to_buckle(invoke.label.as_ref().unwrap());
                             let privilege = pbcomponent_to_component(&invoke.gate_privilege);
-                            if let Some(mut vm) = self.try_allocate(&invoke.function.unwrap().into(), &label) {
+                            if let Some(mut vm) =
+                                self.try_allocate(&invoke.function.unwrap().into(), &label)
+                            {
                                 let mut cnt = 0;
-                                let mut ret = TaskReturn { code: ReturnCode::ProcessRequestFailed as i32, payload: None };
+                                let mut ret = TaskReturn {
+                                    code: ReturnCode::ProcessRequestFailed as i32,
+                                    payload: None,
+                                };
                                 loop {
                                     cnt += 1;
                                     let mut config: FunctionConfig = vm.function.clone().into();
-                                    config.kernel = self.env.blobstore.local_path_string(&vm.function.kernel).unwrap_or_default();
-                                    config.appfs = self.env.blobstore.local_path_string(&vm.function.app_image);
-                                    config.runtimefs = self.env.blobstore.local_path_string(&vm.function.runtime_image).unwrap_or_default();
-                                    if let Err(e) = vm.launch(&self.vm_listener, self.cid,
-                                        false, config, None)
-                                    {
-                                        error!("[Worker {:?}] Failed VM launch: {:?}", self.thread_id, e);
+                                    config.kernel = self
+                                        .env
+                                        .blobstore
+                                        .local_path_string(&vm.function.kernel)
+                                        .unwrap_or_default();
+                                    config.appfs = self
+                                        .env
+                                        .blobstore
+                                        .local_path_string(&vm.function.app_image);
+                                    config.runtimefs = self
+                                        .env
+                                        .blobstore
+                                        .local_path_string(&vm.function.runtime_image)
+                                        .unwrap_or_default();
+                                    if let Err(e) = vm.launch(
+                                        self.vm_listener.try_clone().unwrap(),
+                                        self.cid,
+                                        false,
+                                        config,
+                                        None,
+                                    ) {
+                                        error!(
+                                            "[Worker {:?}] Failed VM launch: {:?}",
+                                            self.thread_id, e
+                                        );
                                         continue;
                                     }
                                     // TODO consider using meaningful clearance
-                                    let processor = SyscallProcessor::new(label.clone(), privilege.clone(), Buckle::top());
-                                    if let Ok(result) = processor.run(&mut self.env, invoke.payload.clone(), &mut vm) {
+                                    let processor = SyscallProcessor::new(
+                                        label.clone(),
+                                        privilege.clone(),
+                                        Buckle::top(),
+                                    );
+                                    if let Ok(result) = processor.run(
+                                        &mut self.env,
+                                        invoke.payload.clone(),
+                                        &mut vm,
+                                    ) {
                                         ret = result;
                                         self.localrm.lock().unwrap().release(vm);
                                         break;
@@ -125,13 +170,30 @@ impl Worker {
                                         break;
                                     }
                                 }
-                                if let Err(e) = sched::rpc::finish(&mut self.env.sched_conn.as_mut().unwrap(), task_id, ret) {
-                                    error!("[Worker {:?}] Failed scheduler finish RPC: {:?}", self.thread_id, e);
+                                if let Err(e) = sched::rpc::finish(
+                                    &mut self.env.sched_conn.as_mut().unwrap(),
+                                    task_id,
+                                    ret,
+                                ) {
+                                    error!(
+                                        "[Worker {:?}] Failed scheduler finish RPC: {:?}",
+                                        self.thread_id, e
+                                    );
                                 }
                             } else {
-                                let ret = TaskReturn { code: ReturnCode::ResourceExhausted as i32, payload: None };
-                                if let Err(e) = sched::rpc::finish(&mut self.env.sched_conn.as_mut().unwrap(), task_id, ret) {
-                                    error!("[Worker {:?}] Failed scheduler finish RPC: {:?}", self.thread_id, e);
+                                let ret = TaskReturn {
+                                    code: ReturnCode::ResourceExhausted as i32,
+                                    payload: None,
+                                };
+                                if let Err(e) = sched::rpc::finish(
+                                    &mut self.env.sched_conn.as_mut().unwrap(),
+                                    task_id,
+                                    ret,
+                                ) {
+                                    error!(
+                                        "[Worker {:?}] Failed scheduler finish RPC: {:?}",
+                                        self.thread_id, e
+                                    );
                                 };
                             }
                         }
@@ -143,23 +205,50 @@ impl Worker {
                             }
                             let task_id = r.task_id;
                             let invoke = r.unlabeled_invoke.unwrap();
-                            if let Some(mut vm) = self.try_allocate_no_label_check(&invoke.function.unwrap().into()) {
+                            if let Some(mut vm) =
+                                self.try_allocate_no_label_check(&invoke.function.unwrap().into())
+                            {
                                 let mut cnt = 0;
-                                let mut ret = TaskReturn { code: ReturnCode::ProcessRequestFailed as i32, payload: None };
+                                let mut ret = TaskReturn {
+                                    code: ReturnCode::ProcessRequestFailed as i32,
+                                    payload: None,
+                                };
                                 loop {
                                     cnt += 1;
                                     let mut config: FunctionConfig = vm.function.clone().into();
-                                    config.kernel = self.env.blobstore.local_path_string(&vm.function.kernel).unwrap_or_default();
-                                    config.appfs = self.env.blobstore.local_path_string(&vm.function.app_image);
-                                    config.runtimefs = self.env.blobstore.local_path_string(&vm.function.runtime_image).unwrap_or_default();
-                                    if let Err(e) = vm.launch(&self.vm_listener, self.cid,
-                                        false, config, None)
-                                    {
-                                        error!("[Worker {:?}] Failed VM launch: {:?}", self.thread_id, e);
+                                    config.kernel = self
+                                        .env
+                                        .blobstore
+                                        .local_path_string(&vm.function.kernel)
+                                        .unwrap_or_default();
+                                    config.appfs = self
+                                        .env
+                                        .blobstore
+                                        .local_path_string(&vm.function.app_image);
+                                    config.runtimefs = self
+                                        .env
+                                        .blobstore
+                                        .local_path_string(&vm.function.runtime_image)
+                                        .unwrap_or_default();
+                                    if let Err(e) = vm.launch(
+                                        self.vm_listener.try_clone().unwrap(),
+                                        self.cid,
+                                        false,
+                                        config,
+                                        None,
+                                    ) {
+                                        error!(
+                                            "[Worker {:?}] Failed VM launch: {:?}",
+                                            self.thread_id, e
+                                        );
                                         continue;
                                     }
                                     let processor = SyscallProcessor::new_insecure();
-                                    if let Ok(result) = processor.run(&mut self.env, invoke.payload.clone(), &mut vm) {
+                                    if let Ok(result) = processor.run(
+                                        &mut self.env,
+                                        invoke.payload.clone(),
+                                        &mut vm,
+                                    ) {
                                         ret = result;
                                         self.localrm.lock().unwrap().release(vm);
                                         break;
@@ -172,18 +261,38 @@ impl Worker {
                                         break;
                                     }
                                 }
-                                if let Err(e) = sched::rpc::finish(&mut self.env.sched_conn.as_mut().unwrap(), task_id, ret) {
-                                    error!("[Worker {:?}] Failed scheduler finish RPC: {:?}", self.thread_id, e);
+                                if let Err(e) = sched::rpc::finish(
+                                    &mut self.env.sched_conn.as_mut().unwrap(),
+                                    task_id,
+                                    ret,
+                                ) {
+                                    error!(
+                                        "[Worker {:?}] Failed scheduler finish RPC: {:?}",
+                                        self.thread_id, e
+                                    );
                                 }
                             } else {
-                                let ret = TaskReturn { code: ReturnCode::ResourceExhausted as i32, payload: None };
-                                if let Err(e) = sched::rpc::finish(&mut self.env.sched_conn.as_mut().unwrap(), task_id, ret) {
-                                    error!("[Worker {:?}] Failed scheduler finish RPC: {:?}", self.thread_id, e);
+                                let ret = TaskReturn {
+                                    code: ReturnCode::ResourceExhausted as i32,
+                                    payload: None,
+                                };
+                                if let Err(e) = sched::rpc::finish(
+                                    &mut self.env.sched_conn.as_mut().unwrap(),
+                                    task_id,
+                                    ret,
+                                ) {
+                                    error!(
+                                        "[Worker {:?}] Failed scheduler finish RPC: {:?}",
+                                        self.thread_id, e
+                                    );
                                 };
                             }
                         }
                         _ => {
-                            error!("[Worker {:?}] Unknown scheduler response: {:?}", self.thread_id, resp);
+                            error!(
+                                "[Worker {:?}] Unknown scheduler response: {:?}",
+                                self.thread_id, resp
+                            );
                             continue;
                         }
                     }
@@ -196,7 +305,7 @@ impl Worker {
         if let Some(vm) = self.localrm.lock().unwrap().get_cached_vm(f) {
             // cached VM must NOT be too tainted
             if !vm.label.can_flow_to(payload_label) {
-                return Some(vm)
+                return Some(vm);
             } else {
                 self.localrm.lock().unwrap().release(vm);
             }

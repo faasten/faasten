@@ -1,7 +1,9 @@
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
 use labeled::buckle::Buckle;
+use log::{debug, error, warn};
 use snapfaas::blobstore::Blobstore;
+use snapfaas::configs::FunctionConfig;
 use snapfaas::fs::FS;
 use snapfaas::labeled_fs::DBENV;
 use snapfaas::syscall_server::SyscallGlobalEnv;
@@ -10,12 +12,10 @@ use snapfaas::syscall_server::SyscallGlobalEnv;
 /// the request to VM, waits for VM's response and finally prints the response
 /// to stdout, kills the VM and exits.
 use snapfaas::vm::Vm;
-use snapfaas::{unlink_unix_sockets, syscall_server};
-use snapfaas::configs::FunctionConfig;
+use snapfaas::{syscall_server, unlink_unix_sockets};
 use std::io::BufRead;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Instant;
-use log::{warn, debug, error};
 
 use clap::{App, Arg};
 
@@ -197,39 +197,60 @@ fn main() {
     // Create a FunctionConfig value based on cmdline inputs
     let vm_app_config = FunctionConfig {
         network: cmd_arguments.is_present("enable network"),
-        runtimefs: cmd_arguments.value_of("rootfs").expect("rootfs").to_string(),
+        runtimefs: cmd_arguments
+            .value_of("rootfs")
+            .expect("rootfs")
+            .to_string(),
         appfs: cmd_arguments.value_of("appfs").map(|s| s.to_string()),
-        vcpus: cmd_arguments.value_of("vcpu_count").expect("vcpu")
-                            .parse::<u64>().expect("vcpu not int"),
-        memory: cmd_arguments.value_of("mem_size").expect("mem_size")
-                            .parse::<usize>().expect("mem_size not int"),
+        vcpus: cmd_arguments
+            .value_of("vcpu_count")
+            .expect("vcpu")
+            .parse::<u64>()
+            .expect("vcpu not int"),
+        memory: cmd_arguments
+            .value_of("mem_size")
+            .expect("mem_size")
+            .parse::<usize>()
+            .expect("mem_size not int"),
         concurrency_limit: 1,
         load_dir: cmd_arguments.value_of("load_dir").map(|s| s.to_string()),
         dump_dir: cmd_arguments.value_of("dump_dir").map(|s| s.to_string()),
         copy_base: cmd_arguments.is_present("copy_base_memory"),
         copy_diff: cmd_arguments.is_present("copy_diff_memory"),
-        kernel: cmd_arguments.value_of("kernel").expect("kernel").to_string(),
+        kernel: cmd_arguments
+            .value_of("kernel")
+            .expect("kernel")
+            .to_string(),
         cmdline: cmd_arguments.value_of("kernel_args").map(|s| s.to_string()),
         dump_ws: cmd_arguments.is_present("dump working set"),
         load_ws: cmd_arguments.is_present("load working set"),
     };
-    let id = cmd_arguments.value_of("id").unwrap().parse::<usize>().unwrap();
+    let id = cmd_arguments
+        .value_of("id")
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
     let odirect = snapfaas::vm::OdirectOption {
         base: cmd_arguments.is_present("odirect base"),
         diff: !cmd_arguments.is_present("no odirect diff"),
         rootfs: !cmd_arguments.is_present("no odirect rootfs"),
-        appfs: !cmd_arguments.is_present("no odirect appfs")
+        appfs: !cmd_arguments.is_present("no odirect appfs"),
     };
 
     // Launch a vm based on the FunctionConfig value
     let t1 = Instant::now();
-    let mut vm =  Vm::new(id, vm_app_config.clone().into());
+    let mut vm = Vm::new(id, vm_app_config.clone().into());
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
     let _ = std::fs::remove_file(&vm_listener_path);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("bind to the UNIX listener");
-    let vm_listener = tokio::net::UnixListener::from_std(vm_listener).expect("convert to tokio UNIX listener");
     let force_exit = cmd_arguments.is_present("force_exit");
-    if let Err(e) = vm.launch(&vm_listener, CID, force_exit, vm_app_config, Some(odirect)) {
+    if let Err(e) = vm.launch(
+        vm_listener.try_clone().unwrap(),
+        CID,
+        force_exit,
+        vm_app_config,
+        Some(odirect),
+    ) {
         error!("VM launch failed: {:?}", e);
         snapfaas::unlink_unix_sockets();
     }
@@ -258,13 +279,20 @@ fn main() {
     for req in requests {
         let t1 = Instant::now();
         debug!("request: {:?}", req);
-        let processor = syscall_server::SyscallProcessor::new(Buckle::public(), Buckle::public().integrity, Buckle::top());
+        let processor = syscall_server::SyscallProcessor::new(
+            Buckle::public(),
+            Buckle::public().integrity,
+            Buckle::top(),
+        );
         match processor.run(&mut env, req, &mut vm) {
             Ok(rsp) => {
                 let t2 = Instant::now();
-                println!("request returned in: {} us", t2.duration_since(t1).as_micros());
+                println!(
+                    "request returned in: {} us",
+                    t2.duration_since(t1).as_micros()
+                );
                 log::debug!("response: {:?}", rsp);
-                num_rsp+=1;
+                num_rsp += 1;
             }
             Err(e) => {
                 eprintln!("Request failed due to: {:?}", e);
@@ -279,7 +307,6 @@ fn main() {
             break;
         }
     }
-
 
     println!("***********************************************");
     println!("Total requests: {}, Total resposnes: {}", num_req, num_rsp);

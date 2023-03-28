@@ -1,20 +1,20 @@
 //! Host-side VM handle that transfer data in and out of the VM through VSOCK socket and
 //! implements syscall API
 
+use std::io::{Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::process::Stdio;
 use std::string::String;
-use std::io::{Read, Write};
 
+use labeled::buckle::Buckle;
 use log::{debug, error};
 use prost::Message;
 use tokio::process::{Child, Command};
-use labeled::buckle::Buckle;
 
 use crate::configs::FunctionConfig;
-use crate::syscalls;
 use crate::syscall_server::{SyscallChannel, SyscallChannelError};
+use crate::syscalls;
 use crate::syscalls::syscall::Syscall as SC;
 
 const MACPREFIX: &str = "AA:BB:CC:DD";
@@ -71,14 +71,19 @@ pub struct Vm {
 
 impl Vm {
     pub fn new(id: usize, function: super::fs::Function) -> Self {
-        Self { id, function, label: Buckle::public(), handle: None }
+        Self {
+            id,
+            function,
+            label: Buckle::public(),
+            handle: None,
+        }
     }
 
     /// Launch the current Vm instance.
     /// When this function returns, the VM has finished booting and is ready to accept requests.
     pub fn launch(
         &mut self,
-        vm_listener: &tokio::net::UnixListener,
+        vm_listener: std::os::unix::net::UnixListener,
         cid: u32,
         force_exit: bool,
         function_config: FunctionConfig,
@@ -133,8 +138,13 @@ impl Vm {
         }
 
         // network config should be of the format <TAP-Name>/<MAC Address>
-        let tap_name = format!("tap{}", cid-100);
-        let mac_addr = format!("{}:{:02X}:{:02X}", MACPREFIX, ((cid-100)&0xff00)>>8, (cid-100)&0xff);
+        let tap_name = format!("tap{}", cid - 100);
+        let mac_addr = format!(
+            "{}:{:02X}:{:02X}",
+            MACPREFIX,
+            ((cid - 100) & 0xff00) >> 8,
+            (cid - 100) & 0xff
+        );
         if function_config.network {
             args.extend_from_slice(&["--tap_name", &tap_name]);
             args.extend_from_slice(&["--mac", &mac_addr]);
@@ -156,17 +166,24 @@ impl Vm {
             }
         }
 
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_io().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .unwrap();
         let (conn, vm_process) = runtime.block_on(async {
             debug!("args: {:?}", args);
-            let mut vm_process = Command::new("firerunner").args(args).kill_on_drop(true)
+            let mut vm_process = Command::new("firerunner")
+                .args(args)
+                .kill_on_drop(true)
                 .stdin(Stdio::null())
                 .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|e| Error::ProcessSpawn(e))?;
 
             if force_exit {
-                let output = vm_process .wait_with_output().await
+                let output = vm_process
+                    .wait_with_output()
+                    .await
                     .expect("failed to wait on child");
                 let mut status = 0;
                 if !output.status.success() {
@@ -177,6 +194,7 @@ impl Vm {
                 std::process::exit(status);
             }
 
+            let vm_listener = tokio::net::UnixListener::from_std(vm_listener).unwrap();
             let conn = tokio::select! {
                 res = vm_listener.accept() => {
                     res.unwrap().0.into_std().unwrap()
@@ -187,15 +205,13 @@ impl Vm {
                     std::process::exit(1);
                 }
             };
-            conn.set_nonblocking(false).map_err(|e| Error::VsockListen(e))?;
+            conn.set_nonblocking(false)
+                .map_err(|e| Error::VsockListen(e))?;
             let x: Result<_, Error> = Ok((conn, vm_process));
             x
         })?;
 
-        let handle = VmHandle {
-            conn,
-            vm_process,
-        };
+        let handle = VmHandle { conn, vm_process };
 
         self.handle = Some(handle);
 
@@ -206,10 +222,11 @@ impl Vm {
 impl SyscallChannel for Vm {
     fn send(&mut self, bytes: Vec<u8>) -> Result<(), SyscallChannelError> {
         let mut conn = &self.handle.as_ref().unwrap().conn;
-        conn.write_all(&(bytes.len() as u32).to_be_bytes()).map_err(|e| {
-            error!("{:?}", e);
-            SyscallChannelError::Write
-        })?;
+        conn.write_all(&(bytes.len() as u32).to_be_bytes())
+            .map_err(|e| {
+                error!("{:?}", e);
+                SyscallChannelError::Write
+            })?;
         conn.write_all(bytes.as_ref()).map_err(|e| {
             error!("{:?}", e);
             SyscallChannelError::Write
@@ -217,7 +234,7 @@ impl SyscallChannel for Vm {
     }
 
     fn wait(&mut self) -> Result<Option<SC>, SyscallChannelError> {
-        let mut lenbuf = [0;4];
+        let mut lenbuf = [0; 4];
         let mut conn = &self.handle.as_ref().unwrap().conn;
         conn.read_exact(&mut lenbuf).map_err(|e| {
             error!("{:?}", e);
@@ -229,10 +246,12 @@ impl SyscallChannel for Vm {
             error!("{:?}", e);
             SyscallChannelError::Read
         })?;
-        let ret = syscalls::Syscall::decode(buf.as_ref()).map_err(|e| {
-            error!("{:?}", e);
-            SyscallChannelError::Decode
-        })?.syscall;
+        let ret = syscalls::Syscall::decode(buf.as_ref())
+            .map_err(|e| {
+                error!("{:?}", e);
+                SyscallChannelError::Decode
+            })?
+            .syscall;
         Ok(ret)
     }
 }
