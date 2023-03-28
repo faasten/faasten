@@ -65,7 +65,7 @@ pub fn labeled_invoke(
         kind: Some(ReqKind::LabeledInvoke(labeled_invoke)),
     };
     message::write(stream, &req)?;
-    let _ = message::read_response(stream)?;
+    //let _ = message::read_response(stream)?;
     Ok(())
 }
 
@@ -78,7 +78,7 @@ pub fn unlabeled_invoke(
         kind: Some(ReqKind::UnlabeledInvoke(unlabeled_invoke)),
     };
     message::write(stream, &req)?;
-    let _ = message::read_response(stream)?;
+    //let _ = message::read_response(stream)?;
     Ok(())
 }
 

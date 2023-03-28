@@ -1,8 +1,8 @@
 use core::panic;
+use log::{debug, error, warn};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use log::{warn, debug};
 
 use super::message;
 use super::resource_manager::ResourceManager;
@@ -46,12 +46,13 @@ impl RpcServer {
 
     // Process the RPC request
     fn serve(
-        mut stream: TcpStream, manager: Manager,
+        mut stream: TcpStream,
+        manager: Manager,
         queue_tx: crossbeam::channel::Sender<Task>,
         queue_rx: crossbeam::channel::Receiver<Task>,
     ) {
         while let Ok(req) = message::read_request(&mut stream) {
-            use message::{request::Kind, Response, response::Kind as ResKind};
+            use message::{request::Kind, response::Kind as ResKind, Response};
             match req.kind {
                 Some(Kind::Ping(_)) => {
                     debug!("PING");
@@ -63,6 +64,7 @@ impl RpcServer {
                 Some(Kind::GetTask(r)) => {
                     debug!("RPC GET received {:?}", r.thread_id);
                     if let Ok(task) = queue_rx.recv() {
+                        debug!("RPC GET got task {:?}", task);
                         match task {
                             Task::Invoke(uuid, labeled_invoke) => {
                                 let res = message::Response {
@@ -71,16 +73,22 @@ impl RpcServer {
                                         labeled_invoke: Some(labeled_invoke),
                                     })),
                                 };
-                                let _ = message::write(&mut stream, &res);
+                                if let Err(e) = message::write(&mut stream, &res) {
+                                    error!("{:?}", e);
+                                }
                             }
                             Task::InvokeInsecure(uuid, unlabeled_invoke) => {
                                 let res = message::Response {
-                                    kind: Some(ResKind::ProcessTaskInsecure(message::ProcessTaskInsecure {
-                                        task_id: uuid.to_string(),
-                                        unlabeled_invoke: Some(unlabeled_invoke)
-                                    })),
+                                    kind: Some(ResKind::ProcessTaskInsecure(
+                                        message::ProcessTaskInsecure {
+                                            task_id: uuid.to_string(),
+                                            unlabeled_invoke: Some(unlabeled_invoke),
+                                        },
+                                    )),
                                 };
-                                let _ = message::write(&mut stream, &res);
+                                if let Err(e) = message::write(&mut stream, &res) {
+                                    error!("{:?}", e);
+                                }
                             }
                             Task::Terminate => {
                                 let res = Response {
@@ -118,12 +126,17 @@ impl RpcServer {
                             };
                             let _ = message::write(&mut stream, &ret);
                         }
-                        Err(crossbeam::channel::TrySendError::Disconnected(_)) =>
-                            panic!("Broken request queue"),
+                        Err(crossbeam::channel::TrySendError::Disconnected(_)) => {
+                            panic!("Broken request queue")
+                        }
                         Ok(()) => {
                             if sync {
                                 let (sync_invoke_s, sync_invoke_r) = std::sync::mpsc::channel();
-                                manager.lock().unwrap().wait_list.insert(uuid, sync_invoke_s);
+                                manager
+                                    .lock()
+                                    .unwrap()
+                                    .wait_list
+                                    .insert(uuid, sync_invoke_s);
                                 let ret = sync_invoke_r.recv().unwrap();
                                 let _ = message::write(&mut stream, &ret);
                             } else {
@@ -170,5 +183,6 @@ impl RpcServer {
                 _ => {}
             }
         }
+        error!("RPC GET failed.");
     }
 }
