@@ -10,7 +10,7 @@ def handle(req, syscall):
         app_blob = req['input-blob']
         memory = args['memory']
         runtime = args['runtime']
-        ret['success'] = syscall.create_gate(path, policy, app_blob, memory, runtime)
+        ret['success'] = syscall.fs_creategate(path, policy, app_blob, memory, runtime)
     else:
         ret['success'] = False
         ret['error'] = '[fsutil] unknown op'

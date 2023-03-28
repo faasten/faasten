@@ -280,8 +280,8 @@ class Syscall():
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_creategate(self, path: str, policy: str, app: str, memory: uint, runtime: str):
-        req = syscalls_pb2.Syscall(createGate=syscalls_pb2.CreateGate(path=path, policy=policy, appImage=app, memory=memory, runtime=runtime))
+    def fs_creategate(self, path: str, policy: str, app: str, memory: int, runtime: str):
+        req = syscalls_pb2.Syscall(fsCreateGate=syscalls_pb2.FSCreateGate(path=path, policy=policy, appImage=app, memory=memory, runtime=runtime))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
