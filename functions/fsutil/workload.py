@@ -2,7 +2,7 @@ import json
 
 def handle(req, syscall):
     args = req['input']['args']
-    op = args['input']['op']
+    op = req['input']['op']
     ret = {}
     if op == 'create-gate':
         path = args['path']
