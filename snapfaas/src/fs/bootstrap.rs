@@ -12,6 +12,8 @@ use super::BackingStore;
 lazy_static! {
     static ref FAASTEN_HOME: super::path::Path =
         super::path::Path::parse("home:<T,faasten>").unwrap();
+    static ref ROOT_PRIV: buckle::Component = buckle::Component::dc_false();
+    static ref EMPTY_PRIV: buckle::Component = buckle::Component::dc_true();
 }
 
 /// The preparer installs supported kernels and runtime images in the directory `FAASTEN_HOME`.
@@ -38,8 +40,7 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
 
     // bootstrap
     // set up ``home''
-    let root_priv = buckle::Component::dc_false();
-    super::utils::set_my_privilge(root_priv);
+    super::utils::set_my_privilge(ROOT_PRIV.clone());
     super::utils::create_faceted(&faasten_fs, super::path::Path::root(), "home".to_string())
         .expect("create ``home'' faceted directory");
 
@@ -138,6 +139,21 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
         )
         .expect(&format!("link {:?} blob", rt));
     }
+    super::utils::set_my_privilge(EMPTY_PRIV.clone());
+}
+
+pub fn register_user_fsutil<S: Clone + BackingStore>(fs: &super::FS<S>, login: String) {
+    // generate the per-user fsutil gate.
+    super::utils::set_my_privilge(ROOT_PRIV.clone());
+    let faasten_fsutil = super::path::Path::parse("home:<T,faasten>:fsutil").unwrap();
+    let user_home = super::path::Path::parse("~").unwrap();
+    let policy = buckle::Buckle::parse(&format!("{0},{0}", login)).unwrap();
+    if let Err(e) =
+        super::utils::dup_gate(fs, faasten_fsutil, user_home, "fsutil".to_string(), policy)
+    {
+        warn!("{:?}", e);
+    }
+    super::utils::set_my_privilge(EMPTY_PRIV.clone());
 }
 
 pub fn get_runtime_blob<S: Clone + BackingStore>(fs: &super::FS<S>, runtime: &str) -> String {

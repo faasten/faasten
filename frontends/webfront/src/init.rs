@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use labeled::buckle;
 use rouille::{input::post::BufferedFile, Request, Response};
+use snapfaas::fs::BackingStore;
 use snapfaas::syscall_server::{buckle_to_pblabel, component_to_pbcomponent};
 use snapfaas::{
     blobstore::Blobstore,
@@ -16,12 +17,12 @@ use snapfaas::{
     sched::{self, message::LabeledInvoke},
 };
 
-pub fn init(
+pub fn init<S: Clone + BackingStore>(
     login: Option<String>,
     gate_path: String,
     request: &Request,
     sched_conn: &mut TcpStream,
-    fs: &FS<&lmdb::Environment>,
+    fs: &FS<S>,
     blobstore: Arc<Mutex<Blobstore>>,
 ) -> Result<Response, Response> {
     let (payload, label) = prepare_payload(request, blobstore)?;
@@ -94,11 +95,7 @@ fn prepare_payload(
             (None, payload, buckle::Buckle::public())
         } else {
             return Err(Response::json(&serde_json::json!({
-                "error":
-                    format!(
-                        "Unsupported content-type: {:?}",
-                        content_type
-                    )
+                "error": format!("Unsupported content-type: {:?}", content_type)
             }))
             .with_status_code(415));
         }
@@ -133,10 +130,10 @@ fn prepare_payload(
     Ok((payload.to_string(), label))
 }
 
-fn prepare_labeled_invoke(
+fn prepare_labeled_invoke<S: Clone + BackingStore>(
     gate_path: String,
     payload: String,
-    fs: &FS<&lmdb::Environment>,
+    fs: &FS<S>,
 ) -> Result<sched::message::LabeledInvoke, Response> {
     let path = fs::path::Path::parse(&gate_path).map_err(|_| {
         Response::json(&serde_json::json!({"error": "Invalid path."})).with_status_code(400)
