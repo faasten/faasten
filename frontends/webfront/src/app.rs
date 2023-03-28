@@ -654,7 +654,8 @@ impl<S: Clone + BackingStore> App<S> {
             .and_then(|text| {
                 let result: Vec<&str> = text.lines().collect();
                 match result.as_slice() {
-                    ["yes", user] => Ok(format!("{}@princeton.edu", user)),
+                    // FIXME buckle parser does not allow `@`. should we?
+                    ["yes", user] => Ok(format!("{}", user)),
                     _ => Err(Response::empty_400()),
                 }
             })?;
