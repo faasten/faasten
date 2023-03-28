@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 
 use lazy_static::lazy_static;
-use log::warn;
+use log::{debug, warn};
 use serde::Deserialize;
 use sha2::Sha256;
 
@@ -49,6 +49,7 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
     super::utils::set_my_privilge(faasten_priv);
     let base_dir = super::path::Path::parse("home:<T,faasten>").unwrap();
 
+    debug!("creating kernel blob...");
     let kernel_blob = {
         let mut kernel = std::fs::File::open(config.kernel).expect("open kernel file");
         let mut blob = blobstore.create().expect("create kernel blob");
@@ -68,6 +69,7 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
         blob
     };
 
+    debug!("creating python runtime blob...");
     let python_blob = {
         let mut python = std::fs::File::open(config.python).expect("open python file");
         let mut blob = blobstore.create().expect("create python blob");
@@ -87,6 +89,7 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
         blob
     };
 
+    debug!("creating faasten-supplied fsutil blob...");
     {
         let mut fsutil = std::fs::File::open(config.fsutil).expect("open fsutil file");
         let mut blob = blobstore.create().expect("create fsutil blob");
@@ -111,6 +114,7 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
     }
 
     for rt in config.other_runtimes {
+        debug!("creating {} runtime blob...", rt);
         let mut img = std::fs::File::open(&rt).expect(&format!("open runtime image {:?}", rt));
         let mut blob = blobstore
             .create()
@@ -140,9 +144,11 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
         .expect(&format!("link {:?} blob", rt));
     }
     super::utils::set_my_privilge(EMPTY_PRIV.clone());
+    debug!("Done with bootstrapping.")
 }
 
 pub fn register_user_fsutil<S: Clone + BackingStore>(fs: &super::FS<S>, login: String) {
+    debug!("Duplicating faasten-supplied fsutil to user-specific fsutil");
     // generate the per-user fsutil gate, acting on behalf of the user
     let ufacet = buckle::Buckle::parse(&format!("{0},{0}", login)).unwrap();
     super::utils::set_my_privilge(ufacet.integrity.clone());
