@@ -10,6 +10,11 @@ use std::net::TcpStream;
 use std::io::{stdin, self, Write, Read};
 use std::time::{self, Duration};
 
+const DEFAULT_HEADERS: &[(&str, &str)] = &[
+    ("ACCEPT", "*/*"),
+    ("USER_AGENT", "faasten"),
+];
+
 fn parse_path_vec(mut path: Vec<&str>) -> Vec<syscalls::PathComponent> {
     if path[0] == "" {
         path.remove(0);
@@ -450,9 +455,28 @@ fn main() {
             let label = sub_m.value_of("label").and_then(|s|
                 buckle::Buckle::parse(s).ok()
             ).unwrap();
+
+            let headers = DEFAULT_HEADERS
+                .iter()
+                .map(|(n, v)| (
+                    reqwest::header::HeaderName::from_bytes(n.as_bytes()).unwrap(),
+                    reqwest::header::HeaderValue::from_str(v).unwrap()
+                ))
+                .collect::<reqwest::header::HeaderMap>()
+                .iter()
+                .map(|(n, v)| (n.to_string(), v.as_bytes().to_vec()))
+                .collect::<HashMap<_, _>>();
+
+            let service_info = fs::ServiceInfo {
+                url,
+                verb: verb.into(),
+                token,
+                headers,
+            };
+
             let base_dir = sub_m.values_of("base-dir").unwrap().collect::<Vec<&str>>();
             let base_dir = parse_path_vec(base_dir);
-            if let Err(e) = fs::utils::create_service(&fs, &base_dir, name, label, url, verb.into(), token) {
+            if let Err(e) = fs::utils::create_service(&fs, &base_dir, name, label, service_info) {
                 eprintln!("Cannot create the service: {:?}", e);
             }
         },

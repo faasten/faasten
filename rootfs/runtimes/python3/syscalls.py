@@ -166,7 +166,7 @@ class Syscall():
     def invoke(self, gate, payload):
         req = syscalls_pb2.Syscall(invoke = syscalls_pb2.Invoke(gate = convert_path(gate), payload = payload))
         self._send(req)
-        response= self._recv(syscalls_pb2.WriteKeyResponse())
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
     def invoke_service(self, service, route, body):

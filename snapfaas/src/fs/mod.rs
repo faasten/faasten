@@ -387,8 +387,8 @@ pub struct Gate {
     object_id: UID,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum HttpVerb { GET, POST, PUT, DELETE }
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub enum HttpVerb { #[default] GET, POST, PUT, DELETE }
 
 impl From<HttpVerb> for reqwest::Method {
     fn from(verb: HttpVerb) -> Self {
@@ -411,6 +411,14 @@ impl From<reqwest::Method> for HttpVerb {
             _ => panic!("Request method {} not supported", method)
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServiceInfo {
+    pub url: String,
+    pub verb: HttpVerb,
+    pub token: Option<String>,
+    pub headers: HashMap<String, Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -647,6 +655,69 @@ impl<S: BackingStore> FS<S> {
                     } else {
                         // TODO need label tracking?
                         Err(ServiceError::CannotInvoke)
+                    }
+                })
+            })
+        })
+    }
+
+    pub fn read_service(&self, service: &Service) -> Result<ServiceInfo, LabelError> {
+        CURRENT_LABEL.with(|current_label| {
+            PRIVILEGE.with(|opriv| {
+                STAT.with(|stat| {
+                    // implicit endorsement
+                    utils::endorse_with(&*opriv.borrow());
+                    let now = Instant::now();
+                    if !service.writable {
+                        if service.label.can_flow_to(&current_label.borrow()) {
+                            stat.borrow_mut().label_tracking += now.elapsed();
+                            Ok(match self.storage.get(&service.object_id.to_be_bytes()) {
+                                Some(bs) => {
+                                    let info = serde_json::from_slice(bs.as_slice()).unwrap();
+                                    info
+                                }
+                                None => Default::default(),
+                            })
+
+                        } else {
+                            Err(LabelError::CannotRead)
+>>>>>>> 6217537 (service gate)
+                        }
+                    } else {
+                        Err(LabelError::CannotRead)
+                    }
+                })
+            })
+        })
+    }
+
+    pub fn write_service(&self, service: &Service) -> Result<ServiceInfo, LabelError> {
+        CURRENT_LABEL.with(|current_label| {
+            PRIVILEGE.with(|opriv| {
+                STAT.with(|stat| {
+                    // implicit endorsement
+                    utils::endorse_with(&*opriv.borrow());
+                    let now = Instant::now();
+                    if service.writable {
+                        if current_label.borrow().can_flow_to(&service.label) {
+                            stat.borrow_mut().label_tracking += now.elapsed();
+                            Ok(match self.storage.get(&service.object_id.to_be_bytes()) {
+                                Some(bs) => {
+                                    let info = serde_json::from_slice(bs.as_slice()).unwrap();
+                                    info
+                                }
+                                None => Default::default(),
+                            })
+                        } else {
+                            Err(LabelError::CannotWrite)
+                        }
+<<<<<<< HEAD
+>>>>>>> d95d515 (service gate draft)
+=======
+                    } else {
+                        Err(LabelError::CannotWrite)
+>>>>>>> 6217537 (service gate)
+>>>>>>> 5a1eb1f (service gate)
                     }
                 })
             })
@@ -1773,7 +1844,12 @@ pub mod utils {
     }
 
     pub fn create_service<S: Clone + BackingStore, P: Into<self::path::Path>>(
-        fs: &FS<S>, base_dir: P, name: String, policy: Buckle, service_info: ServiceInfo) -> Result<(), Error> {
+        fs: &FS<S>,
+        base_dir: P,
+        name: String,
+        policy: Buckle,
+        service_info: ServiceInfo
+    ) -> Result<(), Error> {
         // raise the integrity to true
         match read_path(&fs, base_dir) {
             Ok(entry) => match entry {
