@@ -12,11 +12,11 @@
 use clap::{App, Arg};
 use log::warn;
 use snapfaas::resource_manager::ResourceManager;
-use snapfaas::worker::Worker;
 use snapfaas::sched;
+use snapfaas::worker::Worker;
 
-use std::sync::{Arc, Mutex};
 use std::net::{SocketAddr, TcpStream};
+use std::sync::{Arc, Mutex};
 
 fn main() {
     env_logger::init();
@@ -42,43 +42,45 @@ fn main() {
                 .required(true)
                 .help("Address on which SnapFaaS listen for RPCs that requests for tasks"),
         )
-        .arg(Arg::with_name("total memory")
+        .arg(
+            Arg::with_name("total memory")
                 .value_name("MB")
                 .long("mem")
                 .takes_value(true)
                 .required(true)
-                .help("Total memory available for all VMs")
+                .help("Total memory available for all VMs"),
         )
         .get_matches();
 
     // intialize remote scheduler
     let sched_addr = matches
-                        .value_of("scheduler address")
-                        .map(String::from)
-                        .unwrap();
-    let sched_addr = sched_addr.parse::<SocketAddr>().expect("invalid socket address");
+        .value_of("scheduler address")
+        .map(String::from)
+        .unwrap();
+    let sched_addr = sched_addr
+        .parse::<SocketAddr>()
+        .expect("invalid socket address");
 
     // create the local resource manager
     let mut manager = ResourceManager::new(sched_addr.clone());
 
     // set total memory
     let total_mem = matches
-                        .value_of("total memory")
-                        .unwrap()
-                        .parse::<usize>()
-                        .expect("Total memory is not a valid integer");
+        .value_of("total memory")
+        .unwrap()
+        .parse::<usize>()
+        .expect("Total memory is not a valid integer");
     manager.set_total_mem(total_mem);
 
     // create the worker pool
-    let pool_size = manager.total_mem_in_mb()/128;
+    let pool_size = manager.total_mem_in_mb() / 128;
     let pool = threadpool::ThreadPool::new(pool_size);
     let manager = Arc::new(Mutex::new(manager));
-    for id in 0..pool_size as u32 {
+    for i in 0..pool_size as u32 {
         let sched_addr_dup = sched_addr.clone();
         let manager_dup = Arc::clone(&manager);
         pool.execute(move || {
-            Worker::new(id, sched_addr_dup, manager_dup)
-                .wait_and_process();
+            Worker::new(i + 100, sched_addr_dup, manager_dup).wait_and_process();
         });
     }
 
@@ -112,5 +114,6 @@ fn set_ctrlc_handler(sched_addr: SocketAddr) {
         }
         snapfaas::unlink_unix_sockets();
         std::process::exit(0);
-    }).expect("set Ctrl-C handler");
+    })
+    .expect("set Ctrl-C handler");
 }
