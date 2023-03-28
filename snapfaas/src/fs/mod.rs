@@ -1102,19 +1102,33 @@ pub mod utils {
             return Err(Error::from(GateError::CannotDelegate));
         }
         read_path(fs, orig).and_then(|entry| match entry {
-            DirEntry::Gate(orig) => read_path(fs, base_dir).and_then(|entry| match entry {
-                DirEntry::Directory(dir) => {
-                    let gate = Gate {
-                        privilege: dpriv,
-                        weakest_privilege_required: wpr,
-                        object_id: orig.object_id,
-                    };
-                    fs.link(&dir, name, DirEntry::Gate(gate))
-                        .map(|_| ())
-                        .map_err(|e| Error::from(e))
+            DirEntry::Gate(orig) => {
+                let gate = Gate {
+                    privilege: dpriv,
+                    weakest_privilege_required: wpr,
+                    object_id: orig.object_id,
+                };
+                match read_path(fs, base_dir) {
+                    Ok(entry) => match entry {
+                        DirEntry::Directory(dir) => fs
+                            .link(&dir, name, DirEntry::Gate(gate))
+                            .map(|_| ())
+                            .map_err(|e| Error::from(e)),
+                        DirEntry::FacetedDirectory(fdir) => fs
+                            .faceted_link(&fdir, None, name, DirEntry::Gate(gate))
+                            .map(|_| ())
+                            .map_err(|e| Error::from(e)),
+                        _ => Err(Error::BadPath),
+                    },
+                    Err(Error::FacetedDir(fdir, facet)) => {
+                        endorse_with_full();
+                        fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Gate(gate))
+                            .map(|_| ())
+                            .map_err(|e| Error::from(e))
+                    }
+                    Err(e) => Err(Error::from(e)),
                 }
-                _ => Err(Error::BadPath),
-            }),
+            }
             _ => Err(Error::BadPath),
         })
     }
