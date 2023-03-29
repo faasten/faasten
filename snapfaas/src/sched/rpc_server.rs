@@ -1,7 +1,7 @@
 use core::panic;
 use log::{debug, error, warn};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 use super::message;
@@ -14,18 +14,22 @@ pub type Manager = Arc<Mutex<ResourceManager>>;
 pub struct RpcServer {
     manager: Manager,
     listener: TcpListener,
-    queue_rx: crossbeam::channel::Receiver<Task>,
     queue_tx: crossbeam::channel::Sender<Task>,
+    cvar: Arc<Condvar>,
 }
 
 impl RpcServer {
-    pub fn new(addr: &str, manager: Manager, queue_size: usize) -> Self {
-        let (queue_tx, queue_rx) = crossbeam::channel::bounded(queue_size);
+    pub fn new(
+        addr: &str,
+        manager: Manager,
+        queue_tx: crossbeam::channel::Sender<Task>,
+        cvar: Arc<Condvar>,
+    ) -> Self {
         Self {
             manager,
             listener: TcpListener::bind(addr).expect("bind to the TCP listening address"),
-            queue_rx,
             queue_tx,
+            cvar,
         }
     }
 
@@ -36,9 +40,9 @@ impl RpcServer {
                     debug!("connection from {:?}", stream.peer_addr());
                     let manager = Arc::clone(&self.manager);
                     let queue_tx = self.queue_tx.clone();
-                    let queue_rx = self.queue_rx.clone();
+                    let cvar = self.cvar.clone();
 
-                    thread::spawn(move || RpcServer::serve(stream, manager, queue_tx, queue_rx));
+                    thread::spawn(move || RpcServer::serve(stream, manager, queue_tx, cvar));
                 }
             }
         }
@@ -49,7 +53,7 @@ impl RpcServer {
         mut stream: TcpStream,
         manager: Manager,
         queue_tx: crossbeam::channel::Sender<Task>,
-        queue_rx: crossbeam::channel::Receiver<Task>,
+        cvar: Arc<Condvar>,
     ) {
         while let Ok(req) = message::read_request(&mut stream) {
             use message::{request::Kind, response::Kind as ResKind, Response};
@@ -63,41 +67,11 @@ impl RpcServer {
                 }
                 Some(Kind::GetTask(r)) => {
                     debug!("RPC GET received {:?}", r.thread_id);
-                    if let Ok(task) = queue_rx.recv() {
-                        debug!("RPC GET got task {:?}", task);
-                        match task {
-                            Task::Invoke(uuid, labeled_invoke) => {
-                                let res = message::Response {
-                                    kind: Some(ResKind::ProcessTask(message::ProcessTask {
-                                        task_id: uuid.to_string(),
-                                        labeled_invoke: Some(labeled_invoke),
-                                    })),
-                                };
-                                if let Err(e) = message::write(&mut stream, &res) {
-                                    error!("{:?}", e);
-                                }
-                            }
-                            Task::InvokeInsecure(uuid, unlabeled_invoke) => {
-                                let res = message::Response {
-                                    kind: Some(ResKind::ProcessTaskInsecure(
-                                        message::ProcessTaskInsecure {
-                                            task_id: uuid.to_string(),
-                                            unlabeled_invoke: Some(unlabeled_invoke),
-                                        },
-                                    )),
-                                };
-                                if let Err(e) = message::write(&mut stream, &res) {
-                                    error!("{:?}", e);
-                                }
-                            }
-                            Task::Terminate => {
-                                let res = Response {
-                                    kind: Some(ResKind::Terminate(message::Terminate {})),
-                                };
-                                let _ = message::write(&mut stream, &res);
-                            }
-                        }
-                    }
+                    manager
+                        .lock()
+                        .unwrap()
+                        .add_idle(stream.peer_addr().unwrap(), stream.try_clone().unwrap());
+                    cvar.notify_one();
                 }
                 Some(Kind::FinishTask(r)) => {
                     debug!("RPC FINISH received {:?}", r.result);
@@ -107,14 +81,14 @@ impl RpcServer {
                     if let Ok(uuid) = uuid::Uuid::parse_str(&r.task_id) {
                         if !uuid.is_nil() {
                             let mut manager = manager.lock().unwrap();
-                            if let Some(tx) = manager.wait_list.remove(&uuid) {
-                                let _ = tx.send(result);
+                            if let Some(mut conn) = manager.wait_list.remove(&uuid) {
+                                let _ = message::write(&mut conn, &result);
                             }
                         }
                     }
                 }
                 Some(Kind::LabeledInvoke(r)) => {
-                    debug!("RPC INVOKE received {:?}", r);
+                    debug!("RPC LABELED INVOKE received {:?}", r);
                     let uuid = uuid::Uuid::new_v4();
                     let sync = r.sync;
                     match queue_tx.try_send(Task::Invoke(uuid, r)) {
@@ -131,22 +105,31 @@ impl RpcServer {
                         }
                         Ok(()) => {
                             if sync {
-                                let (sync_invoke_s, sync_invoke_r) = std::sync::mpsc::channel();
                                 manager
                                     .lock()
                                     .unwrap()
                                     .wait_list
-                                    .insert(uuid, sync_invoke_s);
-                                let ret = sync_invoke_r.recv().unwrap();
-                                let _ = message::write(&mut stream, &ret);
-                            } else {
-                                let ret = message::TaskReturn {
-                                    code: message::ReturnCode::Success as i32,
-                                    payload: None,
-                                };
-                                let _ = message::write(&mut stream, &ret);
+                                    .insert(uuid, stream.try_clone().unwrap());
                             }
                         }
+                    }
+                }
+                Some(Kind::UnlabeledInvoke(r)) => {
+                    debug!("RPC UNLABELED INVOKE received {:?}", r);
+                    let uuid = uuid::Uuid::new_v4();
+                    match queue_tx.try_send(Task::InvokeInsecure(uuid, r)) {
+                        Err(crossbeam::channel::TrySendError::Full(_)) => {
+                            warn!("Dropping Invocation from {:?}", stream.peer_addr());
+                            let ret = message::TaskReturn {
+                                code: message::ReturnCode::QueueFull as i32,
+                                payload: None,
+                            };
+                            let _ = message::write(&mut stream, &ret);
+                        }
+                        Err(crossbeam::channel::TrySendError::Disconnected(_)) => {
+                            panic!("Broken request queue")
+                        }
+                        Ok(()) => (),
                     }
                 }
                 //Some(Kind::TerminateAll(_)) => {
@@ -170,6 +153,7 @@ impl RpcServer {
                         let res = Response { kind: None };
                         let _ = message::write(&mut stream, &res);
                     }
+                    cvar.notify_one();
                 }
                 Some(Kind::DropResource(_)) => {
                     debug!("RPC DROP received");

@@ -1,4 +1,4 @@
-use std::net::{TcpStream, SocketAddr};
+use std::net::TcpStream;
 //use std::result::Result;
 use std::collections::HashMap;
 //use std::sync::mpsc;
@@ -8,8 +8,8 @@ use log::error;
 //use serde::{Deserialize, Serialize};
 
 use crate::fs::Function;
-use crate::vm::Vm;
 use crate::sched::{self, rpc::ResourceInfo};
+use crate::vm::Vm;
 
 //#[derive(Debug)]
 //pub enum Message {
@@ -27,21 +27,19 @@ pub struct ResourceManager {
     total_num_vms: usize, // total number of vms ever created
     total_mem: usize,
     free_mem: usize,
-    sched_conn: TcpStream,
 }
 
 impl ResourceManager {
     /// create and return a ResourceManager value
     /// The ResourceManager value encapsulates the idle lists and function configs
-    pub fn new(sched_addr: SocketAddr) -> Self {
+    pub fn new() -> Self {
         // set default total memory to free memory on the machine
         let total_mem = crate::get_machine_memory();
         Self {
-           cache: Default::default(),
-           total_num_vms: 0,
-           total_mem,
-           free_mem: total_mem,
-           sched_conn: TcpStream::connect(sched_addr).expect("failed to connect to the scheduler"),
+            cache: Default::default(),
+            total_num_vms: 0,
+            total_mem,
+            free_mem: total_mem,
         }
         //let (sender, receiver) = mpsc::channel();
 
@@ -60,12 +58,18 @@ impl ResourceManager {
     /// changing total available memory on the fly.
     pub fn set_total_mem(&mut self, mem: usize) {
         if mem > self.total_mem {
-            error!("Target total memory exceeds the available memory of the machine. \
-                Total memory remains {}.", self.total_mem);
+            error!(
+                "Target total memory exceeds the available memory of the machine. \
+                Total memory remains {}.",
+                self.total_mem
+            );
             return;
         }
         if mem == 0 {
-            error!("Total memory cannot be 0. Total memory remains {}.", self.total_mem);
+            error!(
+                "Total memory cannot be 0. Total memory remains {}.",
+                self.total_mem
+            );
             return;
         }
         self.total_mem = mem;
@@ -115,24 +119,24 @@ impl ResourceManager {
     // If there's not enough resources on the machine to
     // allocate a new Vm, it will try to evict an idle Vm from another
     // function's idle list, and then allocate a new unlaunched VM.
-    pub fn get_cached_vm(&mut self, f: &Function) -> Option<Vm> {
+    pub fn get_cached_vm(&mut self, f: &Function, conn: &mut TcpStream) -> Option<Vm> {
         let ret = self.cache.get_mut(f).map_or(None, |l| l.pop());
-        self.update_scheduler();
+        self.update_scheduler(conn);
         ret
     }
 
-    pub fn new_vm(&mut self, f: Function) -> Option<Vm> {
+    pub fn new_vm(&mut self, f: Function, conn: &mut TcpStream) -> Option<Vm> {
         let ret = if self.try_allocate_memory(f.memory) {
             Some(Vm::new(self.total_num_vms, f))
         } else {
             None
         };
-        self.update_scheduler();
+        self.update_scheduler(conn);
         ret
     }
 
     // Push the VM into the VM cache
-    pub fn release(&mut self, vm: Vm) {
+    pub fn release(&mut self, vm: Vm, conn: &mut TcpStream) {
         if let Some(l) = self.cache.get_mut(&vm.function) {
             l.push(vm);
         } else {
@@ -140,30 +144,31 @@ impl ResourceManager {
             let l = vec![vm];
             let _ = self.cache.insert(k, l);
         }
-        self.update_scheduler();
+        self.update_scheduler(conn);
     }
 
-    pub fn delete(&mut self, vm: Vm) {
+    pub fn delete(&mut self, vm: Vm, conn: &mut TcpStream) {
         self.free_mem += vm.function.memory;
         drop(vm); // being explicit
-        self.update_scheduler();
+        self.update_scheduler(conn);
     }
 
-    fn update_scheduler(&mut self) {
-        let stats = self.cache.iter().map(|(k, v)| (k.clone(), v.len())).collect();
+    fn update_scheduler(&mut self, conn: &mut TcpStream) {
+        let stats = self
+            .cache
+            .iter()
+            .map(|(k, v)| (k.clone(), v.len()))
+            .collect();
         let info = ResourceInfo {
             stats,
             total_mem: self.total_mem,
             free_mem: self.free_mem,
         };
-        let _ = sched::rpc::update_resource(&mut self.sched_conn, info);
+        let _ = sched::rpc::update_resource(conn, info);
     }
 
     /// proactively "reserve" requisite memory by decrementing `free_mem`.
-    fn try_allocate_memory(
-        &mut self,
-        memory: usize,
-    ) -> bool {
+    fn try_allocate_memory(&mut self, memory: usize) -> bool {
         if self.free_mem >= memory || self.dummy_evict(memory) {
             self.free_mem -= memory;
             self.total_num_vms += 1;

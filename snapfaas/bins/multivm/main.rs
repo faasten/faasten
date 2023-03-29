@@ -11,11 +11,11 @@
 
 use clap::{App, Arg};
 use log::warn;
+use r2d2::Pool;
 use snapfaas::resource_manager::ResourceManager;
-use snapfaas::sched;
+use snapfaas::sched::{self, Scheduler};
 use snapfaas::worker::Worker;
 
-use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, Mutex};
 
 fn main() {
@@ -52,19 +52,9 @@ fn main() {
         )
         .get_matches();
 
-    // intialize remote scheduler
-    let sched_addr = matches
-        .value_of("scheduler address")
-        .map(String::from)
-        .unwrap();
-    let sched_addr = sched_addr
-        .parse::<SocketAddr>()
-        .expect("invalid socket address");
+    let sched_addr = matches.value_of("scheduler address").unwrap();
 
-    // create the local resource manager
-    let mut manager = ResourceManager::new(sched_addr.clone());
-
-    // set total memory
+    let mut manager = ResourceManager::new();
     let total_mem = matches
         .value_of("total memory")
         .unwrap()
@@ -74,18 +64,22 @@ fn main() {
 
     // create the worker pool
     let pool_size = manager.total_mem_in_mb() / 128;
+    let conn = Pool::builder()
+        .max_size(pool_size as u32 + 1)
+        .build(Scheduler::new(sched_addr))
+        .unwrap();
     let pool = threadpool::ThreadPool::new(pool_size);
     let manager = Arc::new(Mutex::new(manager));
     for i in 0..pool_size as u32 {
-        let sched_addr_dup = sched_addr.clone();
         let manager_dup = Arc::clone(&manager);
+        let conn_dup = conn.clone();
         pool.execute(move || {
-            Worker::new(i + 100, sched_addr_dup, manager_dup).wait_and_process();
+            Worker::new(i + 100, conn_dup, manager_dup).wait_and_process();
         });
     }
 
     // register signal handler
-    set_ctrlc_handler(sched_addr.clone());
+    set_ctrlc_handler(conn);
 
     // hold on
     pool.join();
@@ -106,10 +100,10 @@ fn main() {
 //    pool
 //}
 
-fn set_ctrlc_handler(sched_addr: SocketAddr) {
+fn set_ctrlc_handler(conn: Pool<Scheduler>) {
     ctrlc::set_handler(move || {
         warn!("{}", "Handling Ctrl-C. Shutting down...");
-        if let Ok(mut sched) = TcpStream::connect(sched_addr.clone()) {
+        if let Ok(mut sched) = conn.get() {
             let _ = sched::rpc::drop_resource(&mut sched);
         }
         snapfaas::unlink_unix_sockets();

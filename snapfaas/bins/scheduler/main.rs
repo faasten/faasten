@@ -1,8 +1,11 @@
 use clap::{crate_authors, crate_version, App, Arg};
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Condvar, Mutex},
+    thread,
+};
 
-use snapfaas::sched::{resource_manager::ResourceManager, rpc_server::RpcServer};
+use snapfaas::sched::{resource_manager::ResourceManager, rpc_server::RpcServer, schedule};
 
 fn main() {
     env_logger::init();
@@ -40,12 +43,19 @@ fn main() {
         .unwrap()
         .parse::<usize>()
         .unwrap();
+    let (queue_tx, queue_rx) = crossbeam::channel::bounded(qcap);
     let manager = Arc::new(Mutex::new(ResourceManager::new()));
+    let cvar = Arc::new(Condvar::new());
 
     // Register signal handler
     set_ctrlc_handler(manager.clone());
 
-    let s = RpcServer::new(&sched_addr, manager.clone(), qcap);
+    // kick off scheduling thread
+    let manager_dup = manager.clone();
+    let cvar_dup = cvar.clone();
+    thread::spawn(move || schedule(queue_rx, manager_dup, cvar_dup));
+
+    let s = RpcServer::new(&sched_addr, manager.clone(), queue_tx, cvar);
     log::debug!("Scheduler starts listening at {:?}", sched_addr);
     s.run();
 }

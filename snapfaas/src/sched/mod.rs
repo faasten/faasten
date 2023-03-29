@@ -3,13 +3,16 @@ pub mod resource_manager;
 pub mod rpc;
 pub mod rpc_server;
 
+use log::error;
 use message::{LabeledInvoke, UnlabeledInvoke};
 use std::{
     net::{SocketAddr, TcpStream},
     str::FromStr,
-    sync::mpsc::Sender,
+    sync::{mpsc::Sender, Arc, Condvar, Mutex},
 };
 use uuid::Uuid;
+
+use self::resource_manager::ResourceManager;
 
 pub type RequestInfo = (message::LabeledInvoke, Sender<String>);
 
@@ -28,6 +31,75 @@ pub enum Task {
     Invoke(Uuid, LabeledInvoke),
     InvokeInsecure(Uuid, UnlabeledInvoke),
     Terminate,
+}
+
+/// simple fifo
+pub fn schedule(
+    queue_rx: crossbeam::channel::Receiver<Task>,
+    manager: Arc<Mutex<ResourceManager>>,
+    cvar: Arc<Condvar>,
+) {
+    while let Ok(task) = queue_rx.recv() {
+        let f = match &task {
+            Task::Invoke(_, li) => li.function.as_ref().unwrap().clone().into(),
+            Task::InvokeInsecure(_, ui) => ui.function.as_ref().unwrap().clone().into(),
+            _ => panic!("Unexpected task {:?}", task),
+        };
+        use message::response::Kind as ResKind;
+        // we might be given broken stream, so if message::write fail
+        // we loop to try again
+        loop {
+            let mut maybe_worker: Option<resource_manager::Worker>;
+            {
+                // wait till there is an idle worker.
+                let mut manager = manager.lock().unwrap();
+                loop {
+                    maybe_worker = manager.find_idle(&f);
+                    if maybe_worker.is_none() {
+                        manager = cvar.wait(manager).unwrap();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            let mut worker = maybe_worker.unwrap();
+            match &task {
+                Task::Invoke(uuid, labeled_invoke) => {
+                    let res = message::Response {
+                        kind: Some(ResKind::ProcessTask(message::ProcessTask {
+                            task_id: uuid.to_string(),
+                            labeled_invoke: Some(labeled_invoke.clone()),
+                        })),
+                    };
+                    if let Err(e) = message::write(&mut worker.conn, &res) {
+                        error!("{:?}. try again.", e);
+                    } else {
+                        break;
+                    }
+                }
+                Task::InvokeInsecure(uuid, unlabeled_invoke) => {
+                    let res = message::Response {
+                        kind: Some(ResKind::ProcessTaskInsecure(message::ProcessTaskInsecure {
+                            task_id: uuid.to_string(),
+                            unlabeled_invoke: Some(unlabeled_invoke.clone()),
+                        })),
+                    };
+                    if let Err(e) = message::write(&mut worker.conn, &res) {
+                        error!("{:?}. try again.", e);
+                    } else {
+                        break;
+                    }
+                }
+                _ => panic!("Unexpected task {:?}", task),
+                //Task::Terminate => {
+                //    let res = Response {
+                //        kind: Some(ResKind::Terminate(message::Terminate {})),
+                //    };
+                //    let _ = message::write(&mut worker.conn, &res);
+                //}
+            }
+        } // retry loop upon message::write failure
+    }
 }
 
 #[derive(Debug)]

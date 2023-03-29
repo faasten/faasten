@@ -1,20 +1,22 @@
 include!(concat!(env!("OUT_DIR"), "/snapfaas.sched.messages.rs"));
 
+use prost::Message;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use prost::Message;
 
 use super::Error;
 
 fn _read_u8(stream: &mut TcpStream, allow_empty: bool) -> Result<Vec<u8>, Error> {
     let mut lenbuf = [0; 8];
-    stream.read_exact(&mut lenbuf)
-          .map_err(|e| Error::StreamRead(e))?;
+    stream
+        .read_exact(&mut lenbuf)
+        .map_err(|e| Error::StreamRead(e))?;
     let size = u64::from_be_bytes(lenbuf);
     if allow_empty || size > 0 {
         let mut buf = vec![0u8; size as usize];
-        stream.read_exact(&mut buf)
-              .map_err(|e| Error::StreamRead(e))?;
+        stream
+            .read_exact(&mut buf)
+            .map_err(|e| Error::StreamRead(e))?;
         Ok(buf)
     } else {
         Err(Error::Other("Empty Payload".to_string()))
@@ -29,10 +31,8 @@ pub fn read_u8(stream: &mut TcpStream) -> Result<Vec<u8>, Error> {
 /// Function that writes bytes to a stream
 pub fn write_u8(stream: &mut TcpStream, msg: &[u8]) -> Result<(), Error> {
     let size = (msg.len() as u64).to_be_bytes();
-    stream.write_all(&size)
-          .map_err(|e| Error::StreamWrite(e))?;
-    stream.write_all(msg)
-          .map_err(|e| Error::StreamWrite(e))?;
+    stream.write_all(&size).map_err(|e| Error::StreamWrite(e))?;
+    stream.write_all(msg).map_err(|e| Error::StreamWrite(e))?;
     Ok(())
 }
 
