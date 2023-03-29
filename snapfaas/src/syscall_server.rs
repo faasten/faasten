@@ -278,9 +278,16 @@ impl SyscallProcessor {
                     };
                     s.send(result.encode_to_vec())?;
                 }
-                Some(SC::FsDelete(req)) => {
+                Some(SC::FsDelete(del)) => {
+                    let value = fs::path::Path::parse(&del.path).ok().and_then(|p| {
+                        p.file_name().and_then(|name| {
+                            p.parent().and_then(|base_dir| {
+                                fs::utils::delete(&env.fs, base_dir, name).ok()
+                            })
+                        })
+                    });
                     let result = syscalls::WriteKeyResponse {
-                        success: fs::utils::delete(&env.fs, req.base_dir, req.name).is_ok(),
+                        success: value.is_some(),
                     };
                     s.send(result.encode_to_vec())?;
                 }
@@ -406,66 +413,92 @@ impl SyscallProcessor {
                     };
                     s.send(result.encode_to_vec())?;
                 }
-                Some(SC::FsRead(req)) => {
-                    let value = fs::utils::read(&env.fs, req.path).ok();
+                Some(SC::FsRead(rd)) => {
+                    let value = fs::path::Path::parse(&rd.path)
+                        .ok()
+                        .and_then(|p| fs::utils::read(&env.fs, p).ok());
                     let result = syscalls::ReadKeyResponse { value };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsList(req)) => {
-                    let value =
-                        fs::utils::list(&env.fs, req.path)
+                    let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
+                        fs::utils::list(&env.fs, p)
                             .ok()
                             .map(|m| syscalls::EntryNameArr {
                                 names: m.keys().cloned().collect(),
-                            });
+                            })
+                    });
                     let result = syscalls::FsListResponse { value };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsFacetedList(req)) => {
-                    let value = fs::utils::faceted_list(&env.fs, req.path)
-                        .ok()
-                        .map(|facets| syscalls::FsFacetedListInner {
-                            facets: facets
-                                .iter()
-                                .map(|(k, m)| {
-                                    (
-                                        k.clone(),
-                                        syscalls::EntryNameArr {
-                                            names: m.keys().cloned().collect(),
-                                        },
-                                    )
-                                })
-                                .collect::<HashMap<String, syscalls::EntryNameArr>>(),
-                        });
+                    let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
+                        fs::utils::faceted_list(&env.fs, p).ok().map(|facets| {
+                            syscalls::FsFacetedListInner {
+                                facets: facets
+                                    .iter()
+                                    .map(|(k, m)| {
+                                        (
+                                            k.clone(),
+                                            syscalls::EntryNameArr {
+                                                names: m.keys().cloned().collect(),
+                                            },
+                                        )
+                                    })
+                                    .collect::<HashMap<String, syscalls::EntryNameArr>>(),
+                            }
+                        })
+                    });
                     let result = syscalls::FsFacetedListResponse { value };
                     s.send(result.encode_to_vec())?;
                 }
-                Some(SC::FsWrite(req)) => {
-                    let value = fs::utils::write(&mut env.fs, req.path, req.data).ok();
+                Some(SC::FsWrite(wr)) => {
+                    let value = fs::path::Path::parse(&wr.path)
+                        .ok()
+                        .and_then(|p| fs::utils::write(&env.fs, p, wr.data).ok());
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsCreateFacetedDir(req)) => {
-                    let value = fs::utils::create_faceted(&env.fs, req.base_dir, req.name).ok();
+                    let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
+                        p.file_name().and_then(|name| {
+                            p.parent().and_then(|base_dir| {
+                                fs::utils::create_faceted(&env.fs, base_dir, name).ok()
+                            })
+                        })
+                    });
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsCreateDir(req)) => {
-                    let label = pblabel_to_buckle(&req.label.clone().expect("label"));
-                    let value =
-                        fs::utils::create_directory(&env.fs, req.base_dir, req.name, label).ok();
+                    let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
+                        p.file_name().and_then(|name| {
+                            p.parent().and_then(|base_dir| {
+                                buckle::Buckle::parse(&req.label).ok().and_then(|l| {
+                                    fs::utils::create_directory(&env.fs, base_dir, name, l).ok()
+                                })
+                            })
+                        })
+                    });
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsCreateFile(req)) => {
-                    let label = pblabel_to_buckle(&req.label.clone().expect("label"));
-                    let value = fs::utils::create_file(&env.fs, req.base_dir, req.name, label).ok();
+                    let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
+                        p.file_name().and_then(|name| {
+                            p.parent().and_then(|base_dir| {
+                                buckle::Buckle::parse(&req.label).ok().and_then(|l| {
+                                    fs::utils::create_file(&env.fs, base_dir, name, l).ok()
+                                })
+                            })
+                        })
+                    });
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     };

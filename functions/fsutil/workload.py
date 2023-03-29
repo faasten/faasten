@@ -1,16 +1,58 @@
 import json
 
-def handle(req, syscall):
-    args = req['input']['args']
-    op = req['input']['op']
+def handle(request, syscall):
+    args = request['input']['args']
+    op = request['input']['op']
     ret = {}
     if op == 'create-gate':
         path = args['path']
         policy = args['policy']
-        app_blob = req['input-blob']
+        app_blob = request['input-blob']
         memory = args['memory']
         runtime = args['runtime']
         ret['success'] = syscall.fs_creategate(path, policy, app_blob, memory, runtime)
+    elif op == 'create-file':
+        path = args['path']
+        label = args['label']
+        ret['success'] = syscall.fs_createfile(path, label)
+    elif op == 'read-file':
+        path = args['path']
+        v = syscall.fs_read(path)
+        if v is None:
+            ret['success'] = False
+        else:
+            ret['success'] = True
+            ret['value'] = v
+    elif op == 'write-file':
+        path = args['path']
+        data = args['data']
+        ret['success'] = syscall.fs_write(path, data)
+    elif op == 'create-dir':
+        path = args['path']
+        label = args['label']
+        ret['success'] = syscall.fs_createdir(path, label)
+    elif op == 'list-dir':
+        path = args['path']
+        v = syscall.fs_list(path)
+        if v is None:
+            ret['success'] = False
+        else:
+            ret['success'] = True
+            ret['value'] = v
+    elif op == 'create-faceted':
+        path = args['path']
+        ret['success'] = syscall.fs_createfaceted(path)
+    elif op == 'list-faceted':
+        path = args['path']
+        v = syscall.fs_faceted_list(path)
+        if v is None:
+            ret['success'] = False
+        else:
+            ret['success'] = True
+            ret['value'] = v
+    elif op == 'delete':
+        path = args['path']
+        ret['success'] = syscall.fs_delete(path)
     else:
         ret['success'] = False
         ret['error'] = '[fsutil] unknown op'

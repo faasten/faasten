@@ -121,29 +121,26 @@ message PathComponent {
 }
 
 message FSDelete {
-  repeated PathComponent baseDir = 1;
-  string name = 2;
+  string path = 1;
 }
 
 message FSRead {
-  repeated PathComponent path = 1;
+  string path = 1;
 }
 
 message FSWrite {
-  repeated PathComponent path = 1;
+  string path = 1;
   bytes data = 2;
 }
 
 message FSCreateDir {
-  repeated PathComponent baseDir = 1;
-  string name = 2;
-  Buckle label = 3;
+  string path = 1;
+  string label = 2;
 }
 
 message FSCreateFile {
-  repeated PathComponent baseDir = 1;
-  string name = 2;
-  Buckle label = 3;
+  string path = 1;
+  string label = 2;
 }
 
 message ExercisePrivilege {
@@ -185,7 +182,7 @@ message BlobClose {
 }
 
 message FSList {
-  repeated PathComponent path = 1;
+  string path = 1;
 }
 
 message EntryNameArr {
@@ -197,7 +194,7 @@ message FSListResponse {
 }
 
 message FSFacetedList {
-  repeated PathComponent path = 1;
+  string path = 1;
 }
 
 message FSFacetedListInner {
@@ -209,8 +206,7 @@ message FSFacetedListResponse {
 }
 
 message FSCreateFacetedDir {
-  repeated PathComponent baseDir = 1;
-  string name = 2;
+  string path = 1;
 }
 
 message FSCreateGate {
