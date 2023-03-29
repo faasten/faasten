@@ -1388,6 +1388,8 @@ pub mod utils {
     pub fn check_delegation(delegated: &Component) -> bool {
         STAT.with(|stat| {
             PRIVILEGE.with(|p| {
+                use log::debug;
+                debug!("my_privilege: {:?}, to be delegated: {:?}", p, delegated);
                 let now = Instant::now();
                 let res = p.borrow().implies(delegated);
                 stat.borrow_mut().label_tracking += now.elapsed();

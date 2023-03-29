@@ -335,7 +335,7 @@ impl SyscallProcessor {
                                     let runtime_blob =
                                         fs::bootstrap::get_runtime_blob(&env.fs, &cg.runtime);
                                     let kernel_blob = fs::bootstrap::get_kernel_blob(&env.fs);
-                                    if fs::utils::create_gate(
+                                    let value = fs::utils::create_gate(
                                         &env.fs,
                                         base_dir,
                                         name,
@@ -346,9 +346,10 @@ impl SyscallProcessor {
                                             runtime_image: runtime_blob,
                                             kernel: kernel_blob,
                                         },
-                                    )
-                                    .is_ok()
-                                    {
+                                    );
+                                    if value.is_err() {
+                                        debug!("fs-create-gate failed: {:?}", value.unwrap_err());
+                                    } else {
                                         success = true;
                                     }
                                 }
