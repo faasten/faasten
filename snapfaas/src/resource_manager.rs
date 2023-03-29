@@ -1,10 +1,10 @@
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream};
 //use std::result::Result;
 use std::collections::HashMap;
 //use std::sync::mpsc;
 //use std::sync::mpsc::{Receiver, Sender};
 
-use log::error;
+use log::{debug, error};
 //use serde::{Deserialize, Serialize};
 
 use crate::fs::Function;
@@ -27,19 +27,31 @@ pub struct ResourceManager {
     total_num_vms: usize, // total number of vms ever created
     total_mem: usize,
     free_mem: usize,
+    sched_conn: TcpStream,
 }
 
 impl ResourceManager {
     /// create and return a ResourceManager value
     /// The ResourceManager value encapsulates the idle lists and function configs
-    pub fn new() -> Self {
+    pub fn new(sched_addr: SocketAddr) -> Self {
         // set default total memory to free memory on the machine
         let total_mem = crate::get_machine_memory();
+        let sched_conn = loop {
+            debug!(
+                "localrm trying to connect to the scheduler at {:?}",
+                sched_addr
+            );
+            if let Ok(conn) = TcpStream::connect(sched_addr) {
+                break conn;
+            }
+            std::thread::sleep(std::time::Duration::new(5, 0));
+        };
         Self {
             cache: Default::default(),
             total_num_vms: 0,
             total_mem,
             free_mem: total_mem,
+            sched_conn,
         }
         //let (sender, receiver) = mpsc::channel();
 
@@ -119,24 +131,24 @@ impl ResourceManager {
     // If there's not enough resources on the machine to
     // allocate a new Vm, it will try to evict an idle Vm from another
     // function's idle list, and then allocate a new unlaunched VM.
-    pub fn get_cached_vm(&mut self, f: &Function, conn: &mut TcpStream) -> Option<Vm> {
+    pub fn get_cached_vm(&mut self, f: &Function) -> Option<Vm> {
         let ret = self.cache.get_mut(f).map_or(None, |l| l.pop());
-        self.update_scheduler(conn);
+        self.update_scheduler();
         ret
     }
 
-    pub fn new_vm(&mut self, f: Function, conn: &mut TcpStream) -> Option<Vm> {
+    pub fn new_vm(&mut self, f: Function) -> Option<Vm> {
         let ret = if self.try_allocate_memory(f.memory) {
             Some(Vm::new(self.total_num_vms, f))
         } else {
             None
         };
-        self.update_scheduler(conn);
+        self.update_scheduler();
         ret
     }
 
     // Push the VM into the VM cache
-    pub fn release(&mut self, vm: Vm, conn: &mut TcpStream) {
+    pub fn release(&mut self, vm: Vm) {
         if let Some(l) = self.cache.get_mut(&vm.function) {
             l.push(vm);
         } else {
@@ -144,16 +156,16 @@ impl ResourceManager {
             let l = vec![vm];
             let _ = self.cache.insert(k, l);
         }
-        self.update_scheduler(conn);
+        self.update_scheduler();
     }
 
-    pub fn delete(&mut self, vm: Vm, conn: &mut TcpStream) {
+    pub fn delete(&mut self, vm: Vm) {
         self.free_mem += vm.function.memory;
         drop(vm); // being explicit
-        self.update_scheduler(conn);
+        self.update_scheduler();
     }
 
-    fn update_scheduler(&mut self, conn: &mut TcpStream) {
+    fn update_scheduler(&mut self) {
         let stats = self
             .cache
             .iter()
@@ -164,7 +176,7 @@ impl ResourceManager {
             total_mem: self.total_mem,
             free_mem: self.free_mem,
         };
-        let _ = sched::rpc::update_resource(conn, info);
+        let _ = sched::rpc::update_resource(&mut self.sched_conn, info);
     }
 
     /// proactively "reserve" requisite memory by decrementing `free_mem`.

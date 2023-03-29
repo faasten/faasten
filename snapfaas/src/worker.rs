@@ -1,15 +1,14 @@
 //! Workers proxies requests and responses between the request manager and VMs.
 //! Each worker runs in its own thread and is modeled as the following state
 //! machine:
+use std::net::{SocketAddr, TcpStream};
 use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
-use std::time::Duration;
 
 use labeled::buckle::Buckle;
 use labeled::Label;
 use log::{debug, error};
-use r2d2::Pool;
 
 use crate::configs::FunctionConfig;
 use crate::vm::Vm;
@@ -20,7 +19,6 @@ use crate::resource_manager;
 use crate::sched::{
     self,
     message::{ReturnCode, TaskReturn},
-    Scheduler,
 };
 use crate::syscall_server::*;
 
@@ -38,16 +36,27 @@ pub struct Worker {
     vm_listener: std::os::unix::net::UnixListener,
     //stat: WorkerMetrics,
     env: SyscallGlobalEnv,
-    conn: Pool<Scheduler>,
 }
 
 impl Worker {
     pub fn new(
         cid: u32,
-        conn: Pool<Scheduler>,
+        sched_addr: SocketAddr,
         localrm: Arc<Mutex<resource_manager::ResourceManager>>,
     ) -> Self {
         let thread_id = thread::current().id();
+
+        // connection to the scheduler
+        let sched_conn = loop {
+            debug!(
+                "[Worker {:?}] trying to connect to the scheduler at {:?}",
+                thread_id, sched_addr
+            );
+            if let Ok(conn) = TcpStream::connect(sched_addr) {
+                break conn;
+            }
+            std::thread::sleep(std::time::Duration::new(5, 0));
+        };
 
         // UNIX listener VMs connect to
         let vm_listener_path = format!("worker-{}.sock_1234", cid);
@@ -64,7 +73,7 @@ impl Worker {
         let default_fs = FS::new(&*DBENV);
 
         let env = SyscallGlobalEnv {
-            sched_conn: None,
+            sched_conn: Some(sched_conn),
             db: default_db,
             fs: default_fs,
             blobstore: Default::default(),
@@ -75,28 +84,18 @@ impl Worker {
             thread_id,
             localrm,
             vm_listener,
-            /* stat, */
-            env,
-            conn,
+            /* stat, */ env,
         }
     }
 
     pub fn wait_and_process(&mut self) {
         use sched::message::response::Kind;
         loop {
-            let maybe_conn = self.conn.get();
-            if maybe_conn.is_err() {
-                error!("{}", maybe_conn.unwrap_err().to_string());
-                std::thread::sleep(Duration::new(1, 0));
-                continue;
-            }
-            self.env.sched_conn = Some(maybe_conn.unwrap().try_clone().unwrap());
-
             // rpc::get is blocking
             match sched::rpc::get(self.env.sched_conn.as_mut().unwrap()) {
                 Err(e) => {
                     error!(
-                        "[Worker {:?}] Failed to receive a GET response: {:?}",
+                        "[Worker {:?}] Failed to receive a scheduler response: {:?}",
                         self.thread_id, e
                     );
                     continue;
@@ -168,20 +167,14 @@ impl Worker {
                                         &mut vm,
                                     ) {
                                         ret = result;
-                                        self.localrm
-                                            .lock()
-                                            .unwrap()
-                                            .release(vm, self.env.sched_conn.as_mut().unwrap());
+                                        self.localrm.lock().unwrap().release(vm);
                                         break;
                                     }
                                     if cnt == 5 {
                                         if vm.handle.is_none() {
                                             ret.code = ReturnCode::LaunchFailed as i32;
                                         }
-                                        self.localrm
-                                            .lock()
-                                            .unwrap()
-                                            .delete(vm, self.env.sched_conn.as_mut().unwrap());
+                                        self.localrm.lock().unwrap().delete(vm);
                                         break;
                                     }
                                 }
@@ -265,20 +258,14 @@ impl Worker {
                                         &mut vm,
                                     ) {
                                         ret = result;
-                                        self.localrm
-                                            .lock()
-                                            .unwrap()
-                                            .release(vm, self.env.sched_conn.as_mut().unwrap());
+                                        self.localrm.lock().unwrap().release(vm);
                                         break;
                                     }
                                     if cnt == 5 {
                                         if vm.handle.is_none() {
                                             ret.code = ReturnCode::LaunchFailed as i32;
                                         }
-                                        self.localrm
-                                            .lock()
-                                            .unwrap()
-                                            .delete(vm, self.env.sched_conn.as_mut().unwrap());
+                                        self.localrm.lock().unwrap().delete(vm);
                                         break;
                                     }
                                 }
@@ -322,41 +309,22 @@ impl Worker {
         }
     }
 
-    fn try_allocate(&mut self, f: &Function, payload_label: &Buckle) -> Option<Vm> {
-        if let Some(vm) = self
-            .localrm
-            .lock()
-            .unwrap()
-            .get_cached_vm(f, self.env.sched_conn.as_mut().unwrap())
-        {
+    fn try_allocate(&self, f: &Function, payload_label: &Buckle) -> Option<Vm> {
+        if let Some(vm) = self.localrm.lock().unwrap().get_cached_vm(f) {
             // cached VM must NOT be too tainted
             if !vm.label.can_flow_to(payload_label) {
                 return Some(vm);
             } else {
-                self.localrm
-                    .lock()
-                    .unwrap()
-                    .release(vm, self.env.sched_conn.as_mut().unwrap());
+                self.localrm.lock().unwrap().release(vm);
             }
         }
-        self.localrm
-            .lock()
-            .unwrap()
-            .new_vm(f.clone(), self.env.sched_conn.as_mut().unwrap())
+        self.localrm.lock().unwrap().new_vm(f.clone())
     }
 
-    fn try_allocate_no_label_check(&mut self, f: &Function) -> Option<Vm> {
-        if let Some(vm) = self
-            .localrm
-            .lock()
-            .unwrap()
-            .get_cached_vm(f, self.env.sched_conn.as_mut().unwrap())
-        {
+    fn try_allocate_no_label_check(&self, f: &Function) -> Option<Vm> {
+        if let Some(vm) = self.localrm.lock().unwrap().get_cached_vm(f) {
             return Some(vm);
         }
-        self.localrm
-            .lock()
-            .unwrap()
-            .new_vm(f.clone(), self.env.sched_conn.as_mut().unwrap())
+        self.localrm.lock().unwrap().new_vm(f.clone())
     }
 }
