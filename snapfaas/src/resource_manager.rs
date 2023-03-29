@@ -38,7 +38,7 @@ impl ResourceManager {
         let total_mem = crate::get_machine_memory();
         let sched_conn = loop {
             debug!(
-                "localrm trying to connect to the scheduler at {:?}",
+                "[localrm] trying to connect to the scheduler at {:?}",
                 sched_addr
             );
             if let Ok(conn) = TcpStream::connect(sched_addr) {
@@ -46,6 +46,7 @@ impl ResourceManager {
             }
             std::thread::sleep(std::time::Duration::new(5, 0));
         };
+        debug!("[localrm] connected.");
         Self {
             cache: Default::default(),
             total_num_vms: 0,

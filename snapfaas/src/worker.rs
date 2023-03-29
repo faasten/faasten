@@ -57,6 +57,7 @@ impl Worker {
             }
             std::thread::sleep(std::time::Duration::new(5, 0));
         };
+        debug!("[Worker{:?}] connected.", thread_id);
 
         // UNIX listener VMs connect to
         let vm_listener_path = format!("worker-{}.sock_1234", cid);
