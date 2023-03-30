@@ -1629,13 +1629,23 @@ pub mod utils {
 
 #[cfg(test)]
 mod test {
+    use tempfile::TempDir;
+
     use super::*;
-    use crate::labeled_fs::DBENV;
 
     #[test]
     fn test_collect_garbage() -> Result<(), LabelError> {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let dbenv = lmdb::Environment::new()
+            .set_map_size(100 * 1024 * 1024 * 1024)
+            .set_max_readers(1)
+            .open(tmp_dir.path())
+            .unwrap();
+
         utils::taint_with_label(Buckle::top());
-        let mut fs = FS::new(&*DBENV);
+        let mut fs = FS::new(&dbenv);
+        fs.initialize();
 
         let objects = vec![
             fs.create_file(Buckle::public()).object_id,
