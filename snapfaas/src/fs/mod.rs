@@ -417,7 +417,6 @@ impl From<reqwest::Method> for HttpVerb {
 pub struct ServiceInfo {
     pub url: String,
     pub verb: HttpVerb,
-    pub token: Option<String>,
     pub headers: HashMap<String, Vec<u8>>,
 }
 
@@ -655,69 +654,6 @@ impl<S: BackingStore> FS<S> {
                     } else {
                         // TODO need label tracking?
                         Err(ServiceError::CannotInvoke)
-                    }
-                })
-            })
-        })
-    }
-
-    pub fn read_service(&self, service: &Service) -> Result<ServiceInfo, LabelError> {
-        CURRENT_LABEL.with(|current_label| {
-            PRIVILEGE.with(|opriv| {
-                STAT.with(|stat| {
-                    // implicit endorsement
-                    utils::endorse_with(&*opriv.borrow());
-                    let now = Instant::now();
-                    if !service.writable {
-                        if service.label.can_flow_to(&current_label.borrow()) {
-                            stat.borrow_mut().label_tracking += now.elapsed();
-                            Ok(match self.storage.get(&service.object_id.to_be_bytes()) {
-                                Some(bs) => {
-                                    let info = serde_json::from_slice(bs.as_slice()).unwrap();
-                                    info
-                                }
-                                None => Default::default(),
-                            })
-
-                        } else {
-                            Err(LabelError::CannotRead)
->>>>>>> 6217537 (service gate)
-                        }
-                    } else {
-                        Err(LabelError::CannotRead)
-                    }
-                })
-            })
-        })
-    }
-
-    pub fn write_service(&self, service: &Service) -> Result<ServiceInfo, LabelError> {
-        CURRENT_LABEL.with(|current_label| {
-            PRIVILEGE.with(|opriv| {
-                STAT.with(|stat| {
-                    // implicit endorsement
-                    utils::endorse_with(&*opriv.borrow());
-                    let now = Instant::now();
-                    if service.writable {
-                        if current_label.borrow().can_flow_to(&service.label) {
-                            stat.borrow_mut().label_tracking += now.elapsed();
-                            Ok(match self.storage.get(&service.object_id.to_be_bytes()) {
-                                Some(bs) => {
-                                    let info = serde_json::from_slice(bs.as_slice()).unwrap();
-                                    info
-                                }
-                                None => Default::default(),
-                            })
-                        } else {
-                            Err(LabelError::CannotWrite)
-                        }
-<<<<<<< HEAD
->>>>>>> d95d515 (service gate draft)
-=======
-                    } else {
-                        Err(LabelError::CannotWrite)
->>>>>>> 6217537 (service gate)
->>>>>>> 5a1eb1f (service gate)
                     }
                 })
             })

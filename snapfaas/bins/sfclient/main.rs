@@ -470,7 +470,6 @@ fn main() {
             let service_info = fs::ServiceInfo {
                 url,
                 verb: verb.into(),
-                token,
                 headers,
             };
 
