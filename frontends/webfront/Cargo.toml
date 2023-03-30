@@ -16,7 +16,7 @@ chrono = "0.4.22"
 clap = "^3.2.22"
 reqwest = { version = "*", features = [ "blocking", "json", "multipart" ] }
 github-types = "0.1.1"
-rouille = "3.5.0"
+rouille = "=3.5.0"
 openssl = "*"
 jwt = { version = "0.15.0", features = [ "openssl" ]}
 lazy_static = "1.4.0"
@@ -25,3 +25,5 @@ regex = "1.5.4"
 snapfaas = { path = "../../snapfaas" }
 r2d2 = "0.8.9"
 labeled = { git = "https://github.com/alevy/labeled", features = ["buckle"] }
+prost = "0.9.0"
+mime = "0.3.17"

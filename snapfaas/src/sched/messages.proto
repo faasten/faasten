@@ -11,13 +11,20 @@ message GetTask {
 
 message FinishTask {
     string taskId = 1;
-    string result = 2;
+    TaskReturn result = 2;
+}
+
+message UnlabeledInvoke {
+    syscalls.Function function = 1;
+    string payload = 2;
 }
 
 message LabeledInvoke {
-    syscalls.Invoke    invoke           = 1;
+    syscalls.Function function         = 1;
     syscalls.Buckle    label            = 2;
-    syscalls.Component invokerPrivilege = 3;
+    syscalls.Component gatePrivilege    = 3;
+    string             payload          = 4;
+    bool               sync             = 5;
 }
 
 message UpdateResource {
@@ -34,8 +41,15 @@ message ProcessTask {
     LabeledInvoke labeledInvoke = 2;
 }
 
+message ProcessTaskInsecure {
+    string taskId = 1;
+    UnlabeledInvoke unlabeledInvoke = 2;
+}
+
 message Terminate {}
 message Fail {}
+message Ping {}
+message Pong {}
 // End of response messages
 
 message Request {
@@ -49,6 +63,8 @@ message Request {
         DropResource   dropResource   = 5;
         // Debug
         TerminateAll   terminateAll   = 6;
+        Ping           ping           = 7;
+        UnlabeledInvoke unlabeledInvoke = 8;
     }
 }
 
@@ -59,6 +75,23 @@ message Response {
         Terminate   terminate   = 2;
         // Debug
         Fail        fail        = 3;
+        TaskReturn  success     = 4;
+        Pong        pong        = 5;
+        // Worker
+        ProcessTaskInsecure processTaskInsecure = 6;
     }
 }
 
+enum ReturnCode {
+    ResourceExhausted = 0;
+    LaunchFailed = 1;
+    ProcessRequestFailed = 2;
+    GateNotExist = 3;
+    Success = 4;
+    QueueFull = 5;
+}
+
+message TaskReturn {
+    ReturnCode code = 1;
+    optional string payload = 2;
+}

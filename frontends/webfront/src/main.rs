@@ -1,8 +1,9 @@
 use clap::{App, Arg};
 use openssl::pkey::PKey;
-use snapfaas::blobstore::Blobstore;
+use snapfaas::{blobstore::Blobstore, labeled_fs};
 
 mod app;
+pub mod init;
 
 fn main() -> Result<(), std::io::Error> {
     dotenv::dotenv().ok();
@@ -76,26 +77,34 @@ fn main() -> Result<(), std::io::Error> {
                 .help("Base URL of server"),
         )
         .arg(
-            Arg::with_name("snapfaas address")
-                .long("snapfaas_address")
+            Arg::with_name("faasten scheduler address")
+                .long("faasten_scheduler")
                 .value_name("[ADDR:]PORT")
                 .takes_value(true)
                 .required(true)
-                .help("Path to snapfaas config YAML file"),
+                .help("Address of the Faasten scheduler"),
         )
         .get_matches();
-
 
     let dbenv = lmdb::Environment::new()
         .set_map_size(100 * 1024 * 1024 * 1024)
         .set_max_dbs(2)
-        .open(&std::path::Path::new(matches.value_of("storage path").unwrap()))
+        .open(&std::path::Path::new(
+            matches.value_of("storage path").unwrap(),
+        ))
         .unwrap();
     let public_key_bytes = std::fs::read(matches.value_of("public key").expect("public key"))?;
     let private_key_bytes = std::fs::read(matches.value_of("secret key").expect("private key"))?;
     let base_url = matches.value_of("base url").expect("base url").to_string();
-    let snapfaas_address = matches.value_of("snapfaas address").unwrap().to_string();
-    let blobstore = Blobstore::new(matches.value_of("blob path").unwrap().into(), matches.value_of("tmp path").unwrap().into());
+    let sched_address = matches
+        .value_of("faasten scheduler address")
+        .unwrap()
+        .to_string();
+    let blobstore = Blobstore::new(
+        matches.value_of("blob path").unwrap().into(),
+        matches.value_of("tmp path").unwrap().into(),
+    );
+    let fs = snapfaas::fs::FS::new(&*labeled_fs::DBENV);
     let app = app::App::new(
         app::GithubOAuthCredentials {
             client_id: github_client_id,
@@ -105,25 +114,35 @@ fn main() -> Result<(), std::io::Error> {
         PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
         dbenv,
         blobstore,
+        fs,
         base_url,
-        snapfaas_address,
+        sched_address,
     );
     let listen_addr = matches.value_of("listen").unwrap();
     rouille::start_server(listen_addr, move |request| {
-        use rouille::{Request, Response};
         use log::{error, info};
+        use rouille::{Request, Response};
 
         let mut app = app.clone();
 
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.6f");
         let log_ok = |req: &Request, resp: &Response, _elap: std::time::Duration| {
-            info!("{} {} {} - {}", now, req.method(), req.raw_url(), resp.status_code);
+            info!(
+                "{} {} {} - {}",
+                now,
+                req.method(),
+                req.raw_url(),
+                resp.status_code
+            );
         };
         let log_err = |req: &Request, _elap: std::time::Duration| {
-            error!("{} Handler panicked: {} {}", now, req.method(), req.raw_url());
+            error!(
+                "{} Handler panicked: {} {}",
+                now,
+                req.method(),
+                req.raw_url()
+            );
         };
-        rouille::log_custom(request, log_ok, log_err, || {
-            app.handle(request)
-        })
+        rouille::log_custom(request, log_ok, log_err, || app.handle(request))
     });
 }

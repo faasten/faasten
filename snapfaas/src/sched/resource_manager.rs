@@ -1,13 +1,14 @@
 //! This resource manager maintains a global resource
 //! state across worker nodes.
 
-use std::net::{IpAddr, SocketAddr};
 use std::collections::HashMap;
-use std::sync::mpsc::Sender;
+use std::net::{IpAddr, SocketAddr, TcpStream};
 use uuid::Uuid;
 
+use crate::fs::Function;
+
+use super::message;
 use super::rpc::ResourceInfo;
-use super::Task;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Node(IpAddr);
@@ -44,7 +45,7 @@ impl NodeInfo {
 pub struct Worker {
     // pub id: WorkerId,
     pub addr: SocketAddr,
-    pub sender: Sender<Task>,
+    pub conn: TcpStream,
 }
 
 /// Global resource manager
@@ -53,12 +54,12 @@ pub struct ResourceManager {
     // TODO Garbage collection
     pub info: HashMap<Node, NodeInfo>,
     // Locations of cached VMs for a function
-    pub cached: HashMap<String, Vec<(Node, usize)>>,
+    pub cached: HashMap<Function, Vec<(Node, usize)>>,
     // If no idle workers, we simply remove the entry out of
     // the hashmap, which is why we need another struct to store info
     pub idle: HashMap<Node, Vec<Worker>>,
     // For sync invoke
-    pub wait_list: HashMap<Uuid, Sender<String>>,
+    pub wait_list: HashMap<Uuid, TcpStream>,
 }
 
 impl ResourceManager {
@@ -68,10 +69,10 @@ impl ResourceManager {
         }
     }
 
-    pub fn add_idle(&mut self, addr: SocketAddr, sender: Sender<Task>) {
+    pub fn add_idle(&mut self, addr: SocketAddr, conn: TcpStream) {
         let node = Node(addr.ip());
         self.try_add_node(&node);
-        let worker = Worker { addr, sender };
+        let worker = Worker { addr, conn };
         let idle = &mut self.idle;
         if let Some(v) = idle.get_mut(&node) {
             v.push(worker);
@@ -80,37 +81,33 @@ impl ResourceManager {
         }
     }
 
-    pub fn find_idle(&mut self, function: &String) -> Option<Worker> {
+    pub fn find_idle(&mut self, f: &Function) -> Option<Worker> {
         let info = &self.info;
-        let node = self.cached
-                    .get_mut(function)
-                    .and_then(|v| {
-                        let fst = v
-                            .iter_mut()
-                            // Find the first safe node
-                            .find(|n| {
-                                let i = info.get(&n.0).unwrap();
-                                !i.dirty()
-                            })
-                            // Update cached number for this node
-                            // because we are going to use one of
-                            // it's idle workers. A cached VM always
-                            // implies an idle worker, but not the opposite
-                            .map(|n| {
-                                n.1 -= 1;
-                                n.0.clone()
-                            });
-                        // Remove the entry if no more cached VM remains
-                        v.retain(|n| n.1 != 0);
-                        fst
-                    });
+        let node = self.cached.get_mut(f).and_then(|v| {
+            let fst = v
+                .iter_mut()
+                // Find the first safe node
+                .find(|n| {
+                    let i = info.get(&n.0).unwrap();
+                    !i.dirty()
+                })
+                // Update cached number for this node
+                // because we are going to use one of
+                // it's idle workers. A cached VM always
+                // implies an idle worker, but not the opposite
+                .map(|n| {
+                    n.1 -= 1;
+                    n.0.clone()
+                });
+            // Remove the entry if no more cached VM remains
+            v.retain(|n| n.1 != 0);
+            fst
+        });
         // Find idle worker
         // FIXME assume that all workers can handle any function
         match node {
             Some(n) => {
-                let worker = self.idle
-                                .get_mut(&n)
-                                .and_then(|v| v.pop());
+                let worker = self.idle.get_mut(&n).and_then(|v| v.pop());
                 self.idle.retain(|_, v| !v.is_empty());
                 log::debug!("find cached {:?}", worker);
                 worker
@@ -118,10 +115,7 @@ impl ResourceManager {
             None => {
                 log::debug!("no cached {:?}", self.cached);
                 // If no cached, simply return some worker
-                let worker = self.idle
-                                .values_mut()
-                                .next()
-                                .and_then(|v| v.pop());
+                let worker = self.idle.values_mut().next().and_then(|v| v.pop());
                 // Mark the node dirty because it may or may not have
                 // the same cached functions. This indicates an implicit
                 // eviction on the remote worker node, thus we can't
@@ -129,10 +123,7 @@ impl ResourceManager {
                 if let Some(w) = worker.as_ref() {
                     let addr = w.addr.ip();
                     let node = Node(addr);
-                    self.info
-                        .get_mut(&node)
-                        .unwrap()
-                        .set_dirty(true);
+                    self.info.get_mut(&node).unwrap().set_dirty(true);
                 }
                 // Remove the entry if no more idle remains
                 self.idle.retain(|_, v| !v.is_empty());
@@ -148,27 +139,20 @@ impl ResourceManager {
         // Set node to not dirty bc we are sure of its state
         let success = self.try_add_node(&node);
         if !success {
-            self.info
-                .get_mut(&node)
-                .unwrap()
-                .set_dirty(false);
+            self.info.get_mut(&node).unwrap().set_dirty(false);
         }
 
         // Update mem info as well
-        let nodeinfo = self.info
-                            .get_mut(&node)
-                            .unwrap();
+        let nodeinfo = self.info.get_mut(&node).unwrap();
         nodeinfo.total_mem = info.total_mem;
         nodeinfo.free_mem = info.free_mem;
 
         // Update number of cached VMs per funciton
-        for (f, num_cached) in info.stats.into_iter() {
-            let nodes = self.cached.get_mut(&f);
+        for (k, num_cached) in info.stats {
+            let nodes = self.cached.get_mut(&k);
             match nodes {
                 Some(nodes) => {
-                    let n = nodes
-                            .iter_mut()
-                            .find(|&&mut n| n.0 == node);
+                    let n = nodes.iter_mut().find(|&&mut n| n.0 == node);
                     if let Some(n) = n {
                         n.1 = num_cached;
                     } else {
@@ -178,9 +162,9 @@ impl ResourceManager {
                 }
                 None => {
                     if num_cached > 0 {
-                        let f = f.clone();
+                        let k = k.clone();
                         let v = vec![(node.clone(), num_cached)];
-                        let _ = self.cached.insert(f, v);
+                        let _ = self.cached.insert(k, v);
                     }
                 }
             }
@@ -188,6 +172,7 @@ impl ResourceManager {
     }
 
     pub fn remove(&mut self, addr: IpAddr) {
+        use message::response::Kind as ResKind;
         let node = Node(addr);
         // They must have no busy worker
         for (_, v) in self.cached.iter_mut() {
@@ -199,8 +184,13 @@ impl ResourceManager {
         }
         self.info.remove(&node);
         if let Some(mut workers) = self.idle.remove(&node) {
-            while let Some(w) = workers.pop() {
-                let _ = w.sender.send(Task::Terminate);
+            while let Some(mut w) = workers.pop() {
+                let _ = message::write(
+                    &mut w.conn,
+                    &message::Response {
+                        kind: Some(ResKind::Terminate(message::Terminate {})),
+                    },
+                );
             }
         }
     }
@@ -215,10 +205,7 @@ impl ResourceManager {
     fn try_add_node(&mut self, node: &Node) -> bool {
         let has_node = self.info.contains_key(&node);
         if !has_node {
-            self.info.insert(
-                node.clone(),
-                NodeInfo::new(node.clone())
-            );
+            self.info.insert(node.clone(), NodeInfo::new(node.clone()));
         }
         !has_node
     }

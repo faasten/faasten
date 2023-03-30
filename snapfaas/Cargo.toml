@@ -20,9 +20,9 @@ path = "bins/multivm/main.rs"
 name = "scheduler"
 path = "bins/scheduler/main.rs"
 
-[[bin]]
-name = "sfclient"
-path = "bins/sfclient/main.rs"
+#[[bin]]
+#name = "sfclient"
+#path = "bins/sfclient/main.rs"
 
 [[bin]]
 name = "sfdb"
@@ -35,6 +35,10 @@ path = "bins/sfdb/main.rs"
 [[bin]]
 name = "sfblob"
 path = "bins/sfblob/main.rs"
+
+[[bin]]
+name = "prepare_fs"
+path = "bins/prepare_fs/main.rs"
 
 [lib]
 
@@ -55,14 +59,14 @@ serde = {version = "1.0.102", features = ["derive"]}
 serde_yaml = "0.8.11"
 serde_json = "*"
 cgroups = "0.1.0"
-vmm = { git = "https://github.com/princeton-sns/firecracker", rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f", features = ["vsock"] }
-memory_model = { git = "https://github.com/princeton-sns/firecracker", rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f" }
-fc_util = { git = "https://github.com/princeton-sns/firecracker", rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f" }
-sys_util = { git = "https://github.com/princeton-sns/firecracker", rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f" }
-net_util = { git = "https://github.com/princeton-sns/firecracker", rev = "5b64f6a9ee00da992b23c3654fcdb53dd845975f" }
-time = "0.1"
+vmm = { git = "https://github.com/princeton-sns/firecracker", rev = "165c69a1b4fb53831d616da33daf2aa539e67b37", features = ["vsock"] }
+memory_model = { git = "https://github.com/princeton-sns/firecracker", rev = "165c69a1b4fb53831d616da33daf2aa539e67b37" }
+fc_util = { git = "https://github.com/princeton-sns/firecracker", rev = "165c69a1b4fb53831d616da33daf2aa539e67b37" }
+sys_util = { git = "https://github.com/princeton-sns/firecracker", rev = "165c69a1b4fb53831d616da33daf2aa539e67b37" }
+net_util = { git = "https://github.com/princeton-sns/firecracker", rev = "165c69a1b4fb53831d616da33daf2aa539e67b37" }
+time = "*"
 signal-hook = "0.1.13"
-crossbeam-channel = "0.5.5"
+crossbeam = "0.8.2"
 futures = "0.1.18"
 glob =  "*"
 tokio = { version = "1.14.0", features = [ "rt", "macros",  "process", "net" ] }
@@ -72,6 +76,9 @@ sha2 = "0.10.1"
 hex = "0.4.3"
 serde_with = { version = "2.1.0", features = ["json"] }
 uuid = { version = "1.2.2", features = ["v4", "fast-rng", "macro-diagnostics"] }
+threadpool = "1.8.1"
+regex = "1"
+r2d2 = "0.8.9"
 
 [build-dependencies]
 prost-build = "0.9.0"

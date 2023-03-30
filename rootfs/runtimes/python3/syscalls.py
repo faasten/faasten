@@ -128,9 +128,9 @@ class Syscall():
         base, name, ok = split_path(path)
         if not ok:
             return False
-        request = syscalls_pb2.Syscall(dupGate = syscalls_pb2.DupGate(orig = convert_path(orig), baseDir = convert_path(base), name = name, policy = policy))
+        req = syscalls_pb2.Syscall(dupGate = syscalls_pb2.DupGate(orig = convert_path(orig), baseDir = convert_path(base), name = name, policy = policy))
         self._send(req)
-        response = self._recv(syscalls_pb2.Buckle())
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
     ### github APIs ###
@@ -169,125 +169,102 @@ class Syscall():
         return response.success
 
     ###  amed data object syscalls ###
-    def fs_list(self, path):
-        req = syscalls_pb2.Syscall(fsList = syscalls_pb2.FSList(path=convert_path(path)))
+    def fs_list(self, path: str):
+        req = syscalls_pb2.Syscall(fsList = syscalls_pb2.FSList(path=path))
         self._send(req)
         response = self._recv(syscalls_pb2.FSListResponse())
         return response.value
 
-    def fs_faceted_list(self, path):
-        req = syscalls_pb2.Syscall(fsList = syscalls_pb2.FSFacetedList(path=convert_path(path)))
+    def fs_faceted_list(self, path: str):
+        req = syscalls_pb2.Syscall(fsList = syscalls_pb2.FSFacetedList(path=path))
         self._send(req)
         response = self._recv(syscalls_pb2.FSFacetedListResponse())
         return response.value
 
-    def fs_read(self, path):
+    def fs_read(self, path: str):
         """Read the file at the `path`.
-
-        Args:
-            path ([str|syscalls_pb2.Buckle]): list of either str or syscalls_pb2.Buckle instances.
 
         Returns:
             bytes: if success
             None: otherwise
         """
-        req = syscalls_pb2.Syscall(fsRead = syscalls_pb2.FSRead(path = convert_path(path)))
+        req = syscalls_pb2.Syscall(fsRead = syscalls_pb2.FSRead(path=path))
         self._send(req)
         response = self._recv(syscalls_pb2.ReadKeyResponse())
         return response.value
 
-    def fs_write(self, path, data):
+    def fs_write(self, path: str, data):
         """Overwrite the file at the `path` with the `data`.
         The host-side handler always endorse before writing.
 
-        Args:
-            path ([str|syscalls_pb2.Buckle]): list of either str or syscalls_pb2.Buckle instances.
-            data (bytes): data to write
-
         Returns:
             bool: True for success, False otherwise
         """
-        req = syscalls_pb2.Syscall(fsWrite = syscalls_pb2.FSWrite(path = convert_path(path), data = data))
+        req = syscalls_pb2.Syscall(fsWrite = syscalls_pb2.FSWrite(path=path, data=data))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_createdir(self, path, label: syscalls_pb2.Buckle=None):
+    def fs_createdir(self, path: str, label: str):
         """Create a directory at the `path` with the `label`.
         The host-side handler always endorse before creating the directory.
 
-        Args:
-            path ([str|syscalls_pb2.Buckle]): list of either str or syscalls_pb2.Buckle instances.
-            label (syscalls_pb2.Buckle, optional): Defaults to None.
-                The default None instructs the host-side handler to use the function's current label.
-
         Returns:
             bool: True for success, False otherwise
         """
-        base, name, ok = split_path(path)
-        if not ok:
-            return False
-        req = syscalls_pb2.Syscall(fsCreateDir = syscalls_pb2.FSCreateDir(
-            baseDir = convert_path(base), name = name, label = label))
+        req = syscalls_pb2.Syscall(fsCreateDir=syscalls_pb2.FSCreateDir(path=path, label=label))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_createfile(self, path, label: syscalls_pb2.Buckle=None):
+    def fs_createfile(self, path: str, label: str):
         """Create a file at the `path` with the `label`.
         The host-side handler always endorse before creating the file.
 
-        Args:
-            path ([str|syscalls_pb2.Buckle]): list of either str or syscalls_pb2.Buckle instances.
-            label (syscalls_pb2.Buckle, optional): Defaults to None.
-                The default None instructs the host-side handler to use the function's current label.
-
         Returns:
             bool: True for success, False otherwise
         """
-        base, name, ok = split_path(path)
-        if not ok:
-            return False
-        req = syscalls_pb2.Syscall(fsCreateFile = syscalls_pb2.FSCreateFile(
-            baseDir = convert_path(base), name = name, label = label))
+        req = syscalls_pb2.Syscall(fsCreateFile = syscalls_pb2.FSCreateFile(path=path, label=label))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_createfaceted(self, path):
+    def fs_createfaceted(self, path: str):
         """Create a file at the `path` with the `label`.
         The host-side handler always endorse before creating the file.
 
-        Args:
-            path ([str|syscalls_pb2.Buckle]): list of either str or syscalls_pb2.Buckle instances.
-
         Returns:
             bool: True for success, False otherwise
         """
-        base, name, ok = split_path(path)
-        if not ok:
-            return False
-        req = syscalls_pb2.Syscall(fsCreateFacetedDir = syscalls_pb2.FSCreateFacetedDir(
-            baseDir = convert_path(base), name = name))
+        req = syscalls_pb2.Syscall(fsCreateFacetedDir = syscalls_pb2.FSCreateFacetedDir(path=path))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_delete(self, path):
-        base, name, ok = split_path(path)
-        if not ok:
-            return False
-        req = syscalls_pb2.Syscall(fsDelete = syscalls_pb2.FSDelete(
-            baseDir = convert_path(base), name = name))
+    def fs_createblobbyname(self, path, blobname: str, label: syscalls_pb2.Buckle=None):
+        """Link `blobname` into the file system at `path`."""
+        req = syscalls_pb2.Syscall(fsLinkBlob=syscalls_pb2.FSLinkBlob(path=path, blobname=blobname, label=label))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+    def fs_creategate(self, path: str, policy: str, app: str, memory: int, runtime: str):
+        req = syscalls_pb2.Syscall(fsCreateGate=syscalls_pb2.FSCreateGate(path=path, policy=policy, appImage=app, memory=memory, runtime=runtime))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+    def fs_delete(self, path: str):
+        req = syscalls_pb2.Syscall(fsDelete = syscalls_pb2.FSDelete(path=path))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
     ### end of named data object syscalls ###
 
-    ### unnamed data object syscalls #
+    ### blob data object syscalls #
     @contextmanager
-    def create_unnamed(self, size: int = None):
+    def create_blob(self, size: int = None):
         """Create a nameless data object.
 
         The implementation uses the content-addressed blob store.
@@ -305,13 +282,11 @@ class Syscall():
             self._send(req)
             response = self._recv(syscalls_pb2.BlobResponse())
         else:
-            raise CreateUnnamedError
+            raise CreateBlobError
 
     @contextmanager
-    def open_unnamed(self, name):
-        """Open an existing nameless data object read-only.
-
-        The implementation uses the content-addressed blob store.
+    def open_blob(self, name):
+        """Open a content-addressed immutable data object.
 
         Yield:
             An instance of class Blob
@@ -354,7 +329,7 @@ class Blob():
         response = self.syscall._recv(syscalls_pb2.BlobResponse())
         if response.success:
             return response.data
-        raise ReadUnnamedError
+        raise ReadBlobError
 
     def read(self, size=None):
         buf = []
@@ -374,8 +349,8 @@ class Blob():
         # size = 0
         return buf
 
-class CreateUnnamedError(Exception):
+class CreateBlobError(Exception):
     pass
 
-class ReadUnnamedError(Exception):
+class ReadBlobError(Exception):
     pass

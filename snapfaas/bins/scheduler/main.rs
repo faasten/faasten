@@ -1,18 +1,11 @@
-use clap::{App, Arg, crate_authors, crate_version};
-use std::sync::{Arc, Mutex};
-use std::net::SocketAddr;
-use std::{thread, time};
-use snapfaas::fs;
-use snapfaas::sched::{
-    schedule_sync,
-    rpc::Scheduler,
-    gateway::{
-        Gateway,
-        HTTPGateway,
-        SchedGateway,
-    },
-    resource_manager::ResourceManager,
+use clap::{crate_authors, crate_version, App, Arg};
+
+use std::{
+    sync::{Arc, Condvar, Mutex},
+    thread,
 };
+
+use snapfaas::sched::{resource_manager::ResourceManager, rpc_server::RpcServer, schedule};
 
 fn main() {
     env_logger::init();
@@ -21,31 +14,31 @@ fn main() {
         .version(crate_version!())
         .author(crate_authors!())
         .about("Launch Faasten gateway")
-        // TODO upgrade webfront to use labeled_invoke and remove http listen address
-        .arg(
-            Arg::with_name("http listen address")
-                .value_name("[ADDR:]PORT")
-                .long("listen_http")
-                .short("l")
-                .takes_value(true)
-                .required(true)
-                .help("Address on which Faasten listen for connections that sends requests"),
-        )
         .arg(
             Arg::with_name("scheduler listen address")
                 .value_name("[ADDR:]PORT")
-                .long("listen_sched")
+                .long("listen")
                 .short("s")
                 .takes_value(true)
                 .required(true)
+                .help("Address on which Faasten listen for RPCs that requests for tasks"),
+        )
+        .arg(
+            Arg::with_name("queue capacity")
+                .value_name("CAP_NUM_OF_TASK")
+                .long("qcap")
+                .takes_value(true)
+                .required(true)
+                .default_value("1000000")
                 .help("Address on which Faasten listen for RPCs that requests for tasks"),
         )
         .get_matches();
 
     // Start garbage collector
     thread::spawn(|| {
+        use snapfaas::fs;
         loop {
-            thread::sleep(time::Duration::from_secs(5));
+            thread::sleep(std::time::Duration::new(5, 0));
             fs::utils::taint_with_label(labeled::buckle::Buckle::top());
             let mut fs = fs::FS::new(&*snapfaas::labeled_fs::DBENV);
             let collected = fs.collect_garbage().unwrap();
@@ -55,36 +48,36 @@ fn main() {
 
     // Intialize remote scheduler
     let sched_addr = matches
-                        .value_of("scheduler listen address")
-                        .map(String::from)
-                        .unwrap();
+        .value_of("scheduler listen address")
+        .map(String::from)
+        .unwrap();
+    let qcap = matches
+        .value_of("queue capacity")
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    let (queue_tx, queue_rx) = crossbeam::channel::bounded(qcap);
     let manager = Arc::new(Mutex::new(ResourceManager::new()));
-    let mut sched_gateway = SchedGateway::listen(&sched_addr, Some(Arc::clone(&manager)));
-    let _ = sched_addr.parse::<SocketAddr>().expect("invalid socket address");
+    let cvar = Arc::new(Condvar::new());
 
     // Register signal handler
-    set_ctrlc_handler(sched_addr.clone());
+    set_ctrlc_handler(manager.clone());
 
-    // TCP gateway
-    if let Some(l) = matches.value_of("http listen address") {
-        let gateway = HTTPGateway::listen(l, None);
-        for (request, tx) in gateway {
-            // Block until a worker is available
-            if let Some(_) = sched_gateway.next() {
-                let sched_resman_dup = Arc::clone(&manager);
-                thread::spawn(move || {
-                    let _ = schedule_sync(request, sched_resman_dup, tx).unwrap();
-                });
-            }
-        }
-    }
+    // kick off scheduling thread
+    let manager_dup = manager.clone();
+    let cvar_dup = cvar.clone();
+    thread::spawn(move || schedule(queue_rx, manager_dup, cvar_dup));
+
+    let s = RpcServer::new(&sched_addr, manager.clone(), queue_tx, cvar);
+    log::debug!("Scheduler starts listening at {:?}", sched_addr);
+    s.run();
 }
 
-fn set_ctrlc_handler(sched_addr: String) {
+fn set_ctrlc_handler(manager: Arc<Mutex<ResourceManager>>) {
     ctrlc::set_handler(move || {
         log::warn!("{}", "Handling Ctrl-C. Shutting down...");
-        let mut sched = Scheduler::new(sched_addr.clone());
-        let _ = sched.terminate_all();
+        manager.lock().unwrap().remove_all();
         std::process::exit(0);
-    }).expect("Error setting Ctrl-C handler");
+    })
+    .expect("Error setting Ctrl-C handler");
 }

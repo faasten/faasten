@@ -2,7 +2,7 @@
 
 members = [
     "snapfaas",
-    "frontends/httpserver",
-    "frontends/webhook",
+    #"frontends/httpserver",
+    # TODO webhook needs migrating to use scheduler rpc "frontends/webhook",
     "frontends/webfront",
 ]

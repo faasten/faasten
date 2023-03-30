@@ -49,6 +49,12 @@ impl<D: Digest> Blobstore<D> {
         })
     }
 
+    // a hack, see the place that calls vm.launch in worker.rs
+    pub fn local_path_string(&self, name: &String) -> Option<String> {
+        let (d, n) = name.split_at(2);
+        PathBuf::from(&self.base_dir).join(d).join(n).into_os_string().into_string().ok()
+    }
+
     pub fn save(&mut self, new_blob: NewBlob<D>) -> Result<Blob> {
         let name = hex::encode(new_blob.digest.finalize());
 

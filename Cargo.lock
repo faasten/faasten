@@ -59,7 +59,7 @@ checksum = "98161a4e3e2184da77bb14f02184cdd111e83bbbcc9979dfee3c44b9a85f5602"
 [[package]]
 name = "arch"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "arch_gen",
  "byteorder",
@@ -72,7 +72,7 @@ dependencies = [
 [[package]]
 name = "arch_gen"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 
 [[package]]
 name = "ascii"
@@ -286,7 +286,7 @@ dependencies = [
 [[package]]
 name = "cpuid"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "kvm",
  "kvm-bindings",
@@ -302,10 +302,58 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2801af0d36612ae591caa9568261fddce32ce6e08a7275ea334a06a4ad021a2c"
+dependencies = [
+ "cfg-if",
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2dd04ddaf88237dc3b8d8f9a3c1004b506b54b3313403944054d23c0870c521"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-deque"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce6fd6f855243022dcecf8702fef0c297d4338e226845fe067f6341ad9fa0cef"
+dependencies = [
+ "cfg-if",
+ "crossbeam-epoch",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-epoch"
+version = "0.9.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46bd5f3f85273295a9d14aedfb86f6aadbff6d8f5295c4a9edb08e819dcf5695"
+dependencies = [
+ "autocfg",
+ "cfg-if",
+ "crossbeam-utils",
+ "memoffset",
+ "scopeguard",
+]
+
+[[package]]
+name = "crossbeam-queue"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1cfb3ea8a53f37c40dea2c7bedcbd88bdfae54f5e2175d6ecaff1c988353add"
 dependencies = [
  "cfg-if",
  "crossbeam-utils",
@@ -411,7 +459,7 @@ dependencies = [
 [[package]]
 name = "devices"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "byteorder",
  "dumbo",
@@ -456,7 +504,7 @@ checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
 [[package]]
 name = "dumbo"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "bitflags",
  "byteorder",
@@ -537,7 +585,7 @@ dependencies = [
 [[package]]
 name = "fc_util"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "libc",
 ]
@@ -792,15 +840,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4a1e36c821dbe04574f602848a19f742f4fb3c98d40449f11bcad18d6b17421"
 
 [[package]]
-name = "httpserver"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "http",
- "httparse",
-]
-
-[[package]]
 name = "humantime"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -958,7 +997,7 @@ dependencies = [
 [[package]]
 name = "kernel"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "memory_model",
  "sys_util",
@@ -967,7 +1006,7 @@ dependencies = [
 [[package]]
 name = "kvm"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "kvm-bindings",
  "libc",
@@ -1060,7 +1099,7 @@ dependencies = [
 [[package]]
 name = "logger"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "chrono",
  "lazy_static",
@@ -1079,9 +1118,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
 
 [[package]]
+name = "memoffset"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d61c719bcfbcf5d62b3a09efa6088de8c54bc0bfcd3ea7ae39fcc186108b8de1"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "memory_model"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "libc",
  "serde",
@@ -1091,13 +1139,13 @@ dependencies = [
 [[package]]
 name = "micro_http"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 
 [[package]]
 name = "mime"
-version = "0.3.16"
+version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a60c7ce501c71e03a9c9c0d35b861413ae925bd979cc7a4e30d060069aaac8d"
+checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
 name = "mime_guess"
@@ -1130,7 +1178,7 @@ dependencies = [
 [[package]]
 name = "mmds"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "json-patch",
  "lazy_static",
@@ -1183,7 +1231,7 @@ dependencies = [
 [[package]]
 name = "net_gen"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "sys_util",
 ]
@@ -1191,7 +1239,7 @@ dependencies = [
 [[package]]
 name = "net_util"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "libc",
  "net_gen",
@@ -1353,9 +1401,9 @@ checksum = "478c572c3d73181ff3c2539045f6eb99e5491218eae919370993b890cdbdd98e"
 
 [[package]]
 name = "petgraph"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6d5014253a1331579ce62aa67443b4a658c5e7dd03d4bc6d302b94474888143"
+checksum = "4dd7d28ee937e54fe3080c91faa1c3a46c06de6252988a7f4592ba2310ef22a4"
 dependencies = [
  "fixedbitset",
  "indexmap",
@@ -1524,7 +1572,7 @@ dependencies = [
 [[package]]
 name = "rate_limiter"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "libc",
  "logger",
@@ -1605,21 +1653,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "winreg",
-]
-
-[[package]]
-name = "ring"
-version = "0.16.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3053cf52e236a3ed746dfc745aa9cacf1b791d846bdaf412f60a8d7d6e17c8fc"
-dependencies = [
- "cc",
- "libc",
- "once_cell",
- "spin",
- "untrusted",
- "web-sys",
- "winapi",
 ]
 
 [[package]]
@@ -1710,7 +1743,7 @@ checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
 [[package]]
 name = "seccomp"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "libc",
 ]
@@ -1930,7 +1963,7 @@ dependencies = [
  "bytes",
  "cgroups",
  "clap 2.34.0",
- "crossbeam-channel",
+ "crossbeam",
  "ctrlc",
  "env_logger",
  "fc_util",
@@ -1945,7 +1978,9 @@ dependencies = [
  "net_util",
  "prost",
  "prost-build",
+ "r2d2",
  "rand",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -1955,7 +1990,8 @@ dependencies = [
  "signal-hook",
  "sys_util",
  "tempfile",
- "time 0.1.44",
+ "threadpool",
+ "time 0.3.14",
  "tokio",
  "url",
  "uuid",
@@ -1971,12 +2007,6 @@ dependencies = [
  "libc",
  "winapi",
 ]
-
-[[package]]
-name = "spin"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "strsim"
@@ -2021,7 +2051,7 @@ dependencies = [
 [[package]]
 name = "sys_util"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "libc",
 ]
@@ -2276,9 +2306,9 @@ dependencies = [
 
 [[package]]
 name = "unicode-segmentation"
-version = "1.10.0"
+version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fdbf052a0783de01e944a6ce7a8cb939e295b1e7be835a1112c3b9a7f047a5a"
+checksum = "1dd624098567895118886609431a7c3b8f516e41d30e0643f03d94592a147e36"
 
 [[package]]
 name = "unicode-width"
@@ -2297,12 +2327,6 @@ name = "unsafe-libyaml"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1e5fa573d8ac5f1a856f8d7be41d390ee973daf97c806b2c1a465e4e1406e68"
-
-[[package]]
-name = "untrusted"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "url"
@@ -2358,12 +2382,12 @@ checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
 [[package]]
 name = "virtio_gen"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 
 [[package]]
 name = "vmm"
 version = "0.1.0"
-source = "git+https://github.com/princeton-sns/firecracker?rev=5b64f6a9ee00da992b23c3654fcdb53dd845975f#5b64f6a9ee00da992b23c3654fcdb53dd845975f"
+source = "git+https://github.com/princeton-sns/firecracker?rev=165c69a1b4fb53831d616da33daf2aa539e67b37#165c69a1b4fb53831d616da33daf2aa539e67b37"
 dependencies = [
  "arch",
  "byteorder",
@@ -2503,7 +2527,9 @@ dependencies = [
  "lazy_static",
  "lmdb-rkv",
  "log",
+ "mime",
  "openssl",
+ "prost",
  "r2d2",
  "regex",
  "reqwest",
@@ -2515,28 +2541,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "webhook"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "clap 2.34.0",
- "env_logger",
- "http",
- "httpserver",
- "log",
- "r2d2",
- "ring",
- "serde",
- "serde_json",
- "serde_yaml 0.9.13",
- "snapfaas",
-]
-
-[[package]]
 name = "which"
-version = "4.3.0"
+version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c831fbbee9e129a8cf93e7747a82da9d95ba8e16621cae60ec2cdc849bacb7b"
+checksum = "2441c784c52b289a054b7201fc93253e288f094e2f4be9058343127c4226a269"
 dependencies = [
  "either",
  "libc",

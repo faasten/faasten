@@ -1,13 +1,18 @@
-pub mod gateway;
-pub mod resource_manager;
 pub mod message;
+pub mod resource_manager;
 pub mod rpc;
+pub mod rpc_server;
 
-use std::sync::MutexGuard;
-use std::sync::mpsc::Sender;
+use log::error;
+use message::{LabeledInvoke, UnlabeledInvoke};
+use std::{
+    net::{SocketAddr, TcpStream},
+    str::FromStr,
+    sync::{mpsc::Sender, Arc, Condvar, Mutex},
+};
 use uuid::Uuid;
-use resource_manager::ResourceManager;
-use message::LabeledInvoke;
+
+use self::resource_manager::ResourceManager;
 
 pub type RequestInfo = (message::LabeledInvoke, Sender<String>);
 
@@ -18,55 +23,113 @@ pub enum Error {
     StreamConnect(std::io::Error),
     StreamRead(std::io::Error),
     StreamWrite(std::io::Error),
-    SocketAddrParse(std::net::AddrParseError),
     Other(String),
 }
 
 #[derive(Debug)]
 pub enum Task {
     Invoke(Uuid, LabeledInvoke),
+    InvokeInsecure(Uuid, UnlabeledInvoke),
     Terminate,
 }
 
-fn schedule(
-    labeled_invoke: LabeledInvoke,
-    manager: &mut MutexGuard<ResourceManager>,
-    uuid: Uuid,
-) -> Result<(), Error> {
-    use crate::syscalls::path_component::Component::Dscrp;
-    let gate_component = labeled_invoke.invoke.as_ref()
-        .and_then(|ref i| i.gate.last())
-        .and_then(|f| f.component.as_ref());
-    let gate = match gate_component {
-        Some(Dscrp(f)) => Ok(f),
-        _ => Err(Error::Other("Invalid gate components".to_string())),
-    }?;
-
-    let task_sender = manager
-        .find_idle(gate)
-        .map(|w| w.sender)
-        .unwrap_or_else(|| {
-            panic!("no idle worker found")
-        });
-    task_sender.send(Task::Invoke(uuid, labeled_invoke))
-        .map_err(|e| Error::TaskSend(e))
+/// simple fifo
+pub fn schedule(
+    queue_rx: crossbeam::channel::Receiver<Task>,
+    manager: Arc<Mutex<ResourceManager>>,
+    cvar: Arc<Condvar>,
+) {
+    while let Ok(task) = queue_rx.recv() {
+        let f = match &task {
+            Task::Invoke(_, li) => li.function.as_ref().unwrap().clone().into(),
+            Task::InvokeInsecure(_, ui) => ui.function.as_ref().unwrap().clone().into(),
+            _ => panic!("Unexpected task {:?}", task),
+        };
+        use message::response::Kind as ResKind;
+        // we might be given broken stream, so if message::write fail
+        // we loop to try again
+        loop {
+            let mut maybe_worker: Option<resource_manager::Worker>;
+            {
+                // wait till there is an idle worker.
+                let mut manager = manager.lock().unwrap();
+                loop {
+                    maybe_worker = manager.find_idle(&f);
+                    if maybe_worker.is_none() {
+                        manager = cvar.wait(manager).unwrap();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            let mut worker = maybe_worker.unwrap();
+            match &task {
+                Task::Invoke(uuid, labeled_invoke) => {
+                    let res = message::Response {
+                        kind: Some(ResKind::ProcessTask(message::ProcessTask {
+                            task_id: uuid.to_string(),
+                            labeled_invoke: Some(labeled_invoke.clone()),
+                        })),
+                    };
+                    if let Err(e) = message::write(&mut worker.conn, &res) {
+                        error!("{:?}. try again.", e);
+                    } else {
+                        break;
+                    }
+                }
+                Task::InvokeInsecure(uuid, unlabeled_invoke) => {
+                    let res = message::Response {
+                        kind: Some(ResKind::ProcessTaskInsecure(message::ProcessTaskInsecure {
+                            task_id: uuid.to_string(),
+                            unlabeled_invoke: Some(unlabeled_invoke.clone()),
+                        })),
+                    };
+                    if let Err(e) = message::write(&mut worker.conn, &res) {
+                        error!("{:?}. try again.", e);
+                    } else {
+                        break;
+                    }
+                }
+                _ => panic!("Unexpected task {:?}", task),
+                //Task::Terminate => {
+                //    let res = Response {
+                //        kind: Some(ResKind::Terminate(message::Terminate {})),
+                //    };
+                //    let _ = message::write(&mut worker.conn, &res);
+                //}
+            }
+        } // retry loop upon message::write failure
+    }
 }
 
-/// This method schedules an async invoke to a remote worker
-pub fn schedule_async(
-    invoke: LabeledInvoke, manager: gateway::Manager,
-) -> Result<(), Error> {
-    let mut manager = manager.lock().unwrap();
-    let uuid = Uuid::nil();
-    schedule(invoke, &mut manager, uuid)
+#[derive(Debug)]
+pub struct Scheduler {
+    addr: SocketAddr,
 }
 
-/// This method schedules a sync invoke to a remote worker
-pub fn schedule_sync(
-    invoke: LabeledInvoke, manager: gateway::Manager, tx: Sender<String>
-) -> Result<(), Error> {
-    let mut manager = manager.lock().unwrap();
-    let uuid = Uuid::new_v4();
-    manager.wait_list.insert(uuid.clone(), tx);
-    schedule(invoke, &mut manager, uuid)
+impl Scheduler {
+    pub fn new(addr: &str) -> Self {
+        Self {
+            addr: SocketAddr::from_str(addr).unwrap(),
+        }
+    }
+}
+
+impl r2d2::ManageConnection for Scheduler {
+    type Connection = TcpStream;
+    type Error = std::io::Error;
+
+    fn connect(&self) -> Result<Self::Connection, Self::Error> {
+        Ok(TcpStream::connect(&self.addr)?)
+    }
+
+    fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+        use std::io::{Error, ErrorKind};
+        self::rpc::ping(conn).map_err(|e| Error::new(ErrorKind::Other, format!("{:?}", e)))?;
+        Ok(())
+    }
+
+    fn has_broken(&self, conn: &mut Self::Connection) -> bool {
+        conn.take_error().ok().flatten().is_some()
+    }
 }

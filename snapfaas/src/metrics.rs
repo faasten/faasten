@@ -66,7 +66,7 @@ impl WorkerMetrics {
     }
 
     /// manual flush
-    pub fn flush(mut self) {
+    pub fn flush(&mut self) {
         let tsps = &*self.request_timestamps.lock().unwrap();
         for t in tsps.as_slice() {
             if let Err(e) = writeln!(&mut self.log_file, "{}", t.to_json()) {
