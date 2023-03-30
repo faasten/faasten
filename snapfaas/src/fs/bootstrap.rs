@@ -27,6 +27,7 @@ fn localfile2blob(blobstore: &mut Blobstore, local_path: &str) -> String {
     let _ = f.read_to_end(buf).expect("read");
     blob.write_all(buf).expect("write blob");
     let blob = blobstore.save(blob).expect("finalize blob");
+    debug!("DONE! local {} to blob {}", local_path, blob.name);
     blob.name
 }
 
