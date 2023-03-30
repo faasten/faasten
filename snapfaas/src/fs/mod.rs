@@ -2,19 +2,19 @@ pub mod bootstrap;
 ///! Labeled File System
 pub mod path;
 
-use lmdb::{Transaction, WriteFlags, Cursor};
-use log::info;
-use serde::{Serialize, Deserialize};
-use std::{collections::{HashMap, HashSet}, cell::RefCell, time::{Duration, Instant}};
-use labeled::{buckle::{Clause, Buckle, Component, Principal}, Label};
-
-use serde_with::serde_as;
-
+use labeled::{
+    buckle::{Buckle, Component, Principal},
+    Label,
+};
+use lmdb::{Cursor, Transaction, WriteFlags};
+use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
+
+use serde_with::serde_as;
 
 use crate::configs::FunctionConfig;
 
@@ -64,7 +64,8 @@ pub trait BackingStore {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>>;
     fn put(&self, key: &[u8], value: &[u8]);
     fn add(&self, key: &[u8], value: &[u8]) -> bool;
-    fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8]) -> Result<(), Option<Vec<u8>>>;
+    fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8])
+        -> Result<(), Option<Vec<u8>>>;
     fn del(&self, key: &[u8]) -> bool;
     fn get_keys(&self) -> Option<Vec<&[u8]>>;
 }
@@ -165,7 +166,6 @@ impl BackingStore for &lmdb::Environment {
             Some(keys)
         })
     }
-
 }
 
 #[derive(Debug)]
@@ -853,25 +853,31 @@ impl<S: BackingStore> FS<S> {
 
     fn faceted_inner(&self, fdir: &FacetedDirectory) -> HashMap<String, DirEntry> {
         match self.storage.get(&fdir.object_id.to_be_bytes()) {
-            Some(bs) => {
-                serde_json::from_slice::<FacetedDirectoryInner>(bs.as_slice())
-                    .map(|inner| {
-                        inner.list_facets()
-                    }).unwrap_or_default().iter()
-                    .fold(HashMap::<String, DirEntry>::new(), |mut m, dir| {
-                        m.insert(serde_json::ser::to_string(dir.label()).unwrap(), DirEntry::Directory(dir.clone()));
-                        m
-                    })
-            }
+            Some(bs) => serde_json::from_slice::<FacetedDirectoryInner>(bs.as_slice())
+                .map(|inner| inner.list_facets())
+                .unwrap_or_default()
+                .iter()
+                .fold(HashMap::<String, DirEntry>::new(), |mut m, dir| {
+                    m.insert(
+                        serde_json::ser::to_string(dir.label()).unwrap(),
+                        DirEntry::Directory(dir.clone()),
+                    );
+                    m
+                }),
             None => Default::default(),
         }
     }
 
     pub fn collect_garbage(&mut self) -> Result<Vec<u64>, LabelError> {
         use std::convert::TryInto;
-        let object_list = self.storage.get_keys().unwrap_or_default().iter()
+        let object_list = self
+            .storage
+            .get_keys()
+            .unwrap_or_default()
+            .iter()
             .filter_map(|&b| b.try_into().ok())
-            .map(|b| UID::from_be_bytes(b)).collect::<Vec<_>>();
+            .map(|b| UID::from_be_bytes(b))
+            .collect::<Vec<_>>();
         let mut objects = HashSet::new();
         for obj in object_list.into_iter() {
             objects.insert(obj);
@@ -882,21 +888,32 @@ impl<S: BackingStore> FS<S> {
         while let Some(entry) = remaining.pop() {
             match entry {
                 DirEntry::Directory(dir) => {
-                    if !visited.insert(dir.object_id) { continue; }
+                    if !visited.insert(dir.object_id) {
+                        continue;
+                    }
                     let entries = self.list(dir)?;
                     for entry in entries.into_values() {
                         remaining.push(entry);
                     }
                 }
                 DirEntry::FacetedDirectory(fdir) => {
-                    if !visited.insert(fdir.object_id) { continue; }
+                    if !visited.insert(fdir.object_id) {
+                        continue;
+                    }
                     let faceted_entries = self.faceted_inner(&fdir);
                     for entry in faceted_entries.into_values() {
                         remaining.push(entry);
                     }
                 }
-                DirEntry::File(file) => { if !visited.insert(file.object_id) { continue; } }
-                DirEntry::Gate(gate) => { if !visited.insert(gate.object_id) { continue; } }
+                DirEntry::File(file) => {
+                    let _ = visited.insert(file.object_id);
+                }
+                DirEntry::Gate(gate) => {
+                    let _ = visited.insert(gate.object_id);
+                }
+                DirEntry::Blob(blob) => {
+                    let _ = visited.insert(blob.object_id);
+                }
             }
         }
 
@@ -1627,10 +1644,11 @@ mod test {
         ];
         let deleted = fs.collect_garbage()?;
 
-        assert!(
-            [objects.clone(), deleted.clone()]
-            .concat().iter().map(|x| objects.contains(x) && deleted.contains(x)).all(|x| x)
-        );
+        assert!([objects.clone(), deleted.clone()]
+            .concat()
+            .iter()
+            .map(|x| objects.contains(x) && deleted.contains(x))
+            .all(|x| x));
 
         Ok(())
     }

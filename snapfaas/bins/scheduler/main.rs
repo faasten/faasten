@@ -34,11 +34,11 @@ fn main() {
         )
         .get_matches();
 
-
     // Start garbage collector
     thread::spawn(|| {
+        use snapfaas::fs;
         loop {
-            thread::sleep(time::Duration::from_secs(5));
+            thread::sleep(std::time::Duration::new(5, 0));
             fs::utils::taint_with_label(labeled::buckle::Buckle::top());
             let mut fs = fs::FS::new(&*snapfaas::labeled_fs::DBENV);
             let collected = fs.collect_garbage().unwrap();
