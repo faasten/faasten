@@ -2,12 +2,12 @@ pub mod bootstrap;
 ///! Labeled File System
 pub mod path;
 
-use labeled::{
-    buckle::{Buckle, Component, Principal},
-    Label,
-};
-use lmdb::{Transaction, WriteFlags};
-use serde::{Deserialize, Serialize};
+use lmdb::{Transaction, WriteFlags, Cursor};
+use log::info;
+use serde::{Serialize, Deserialize};
+use std::{collections::{HashMap, HashSet}, cell::RefCell, time::{Duration, Instant}};
+use labeled::{buckle::{Clause, Buckle, Component, Principal}, Label};
+
 use serde_with::serde_as;
 
 use std::{
@@ -64,8 +64,9 @@ pub trait BackingStore {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>>;
     fn put(&self, key: &[u8], value: &[u8]);
     fn add(&self, key: &[u8], value: &[u8]) -> bool;
-    fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8])
-        -> Result<(), Option<Vec<u8>>>;
+    fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8]) -> Result<(), Option<Vec<u8>>>;
+    fn del(&self, key: &[u8]) -> bool;
+    fn get_keys(&self) -> Option<Vec<&[u8]>>;
 }
 
 impl BackingStore for &lmdb::Environment {
@@ -139,6 +140,32 @@ impl BackingStore for &lmdb::Environment {
             res
         })
     }
+
+    fn del(&self, key: &[u8]) -> bool {
+        STAT.with(|_stat| {
+            let db = self.open_db(None).unwrap();
+            let mut txn = self.begin_rw_txn().unwrap();
+            let res = txn.del(db, &key, None).is_ok();
+            txn.commit().unwrap();
+            res
+        })
+    }
+
+    fn get_keys(&self) -> Option<Vec<&[u8]>> {
+        STAT.with(|_stat| {
+            let db = self.open_db(None).ok()?;
+            let txn = self.begin_ro_txn().ok()?;
+            let mut cursor = txn.open_ro_cursor(db).ok()?;
+            let mut keys = Vec::new();
+            for data in cursor.iter_start() {
+                if let Ok((key, _)) = data {
+                    keys.push(key);
+                }
+            }
+            Some(keys)
+        })
+    }
+
 }
 
 #[derive(Debug)]
@@ -822,6 +849,65 @@ impl<S: BackingStore> FS<S> {
                 Err(GateError::CannotInvoke)
             }
         })
+    }
+
+    fn faceted_inner(&self, fdir: &FacetedDirectory) -> HashMap<String, DirEntry> {
+        match self.storage.get(&fdir.object_id.to_be_bytes()) {
+            Some(bs) => {
+                serde_json::from_slice::<FacetedDirectoryInner>(bs.as_slice())
+                    .map(|inner| {
+                        inner.list_facets()
+                    }).unwrap_or_default().iter()
+                    .fold(HashMap::<String, DirEntry>::new(), |mut m, dir| {
+                        m.insert(serde_json::ser::to_string(dir.label()).unwrap(), DirEntry::Directory(dir.clone()));
+                        m
+                    })
+            }
+            None => Default::default(),
+        }
+    }
+
+    pub fn collect_garbage(&mut self) -> Result<Vec<u64>, LabelError> {
+        use std::convert::TryInto;
+        let object_list = self.storage.get_keys().unwrap_or_default().iter()
+            .filter_map(|&b| b.try_into().ok())
+            .map(|b| UID::from_be_bytes(b)).collect::<Vec<_>>();
+        let mut objects = HashSet::new();
+        for obj in object_list.into_iter() {
+            objects.insert(obj);
+        }
+
+        let mut visited = HashSet::new();
+        let mut remaining = vec![DirEntry::Directory(self.root())];
+        while let Some(entry) = remaining.pop() {
+            match entry {
+                DirEntry::Directory(dir) => {
+                    if !visited.insert(dir.object_id) { continue; }
+                    let entries = self.list(dir)?;
+                    for entry in entries.into_values() {
+                        remaining.push(entry);
+                    }
+                }
+                DirEntry::FacetedDirectory(fdir) => {
+                    if !visited.insert(fdir.object_id) { continue; }
+                    let faceted_entries = self.faceted_inner(&fdir);
+                    for entry in faceted_entries.into_values() {
+                        remaining.push(entry);
+                    }
+                }
+                DirEntry::File(file) => { if !visited.insert(file.object_id) { continue; } }
+                DirEntry::Gate(gate) => { if !visited.insert(gate.object_id) { continue; } }
+            }
+        }
+
+        assert!(visited.iter().map(|o| objects.contains(o)).all(|x| x));
+
+        let diff = objects.difference(&visited).map(|&x| x).collect::<Vec<_>>();
+        for obj in diff.iter() {
+            self.storage.del(&obj.to_be_bytes());
+        }
+
+        Ok(diff)
     }
 }
 
@@ -1521,5 +1607,31 @@ pub mod utils {
             stat.borrow_mut().label_tracking += now.elapsed();
             res
         })
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::labeled_fs::DBENV;
+
+    #[test]
+    fn test_collect_garbage() -> Result<(), LabelError> {
+        utils::taint_with_label(Buckle::top());
+        let mut fs = FS::new(&*DBENV);
+
+        let objects = vec![
+            fs.create_file(Buckle::public()).object_id,
+            fs.create_directory(Buckle::public()).object_id,
+            fs.create_faceted_directory().object_id,
+        ];
+        let deleted = fs.collect_garbage()?;
+
+        assert!(
+            [objects.clone(), deleted.clone()]
+            .concat().iter().map(|x| objects.contains(x) && deleted.contains(x)).all(|x| x)
+        );
+
+        Ok(())
     }
 }
