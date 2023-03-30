@@ -25,18 +25,19 @@ pub fn main() {
     let blobstore = blobstore::Blobstore::default();
     if matches.is_present("config") {
         snapfaas::fs::bootstrap::prepare_fs(&fs, matches.value_of("config").unwrap());
-    } else if matches.is_present("update fsutil") {
+    } else if matches.is_present("update_fsutil") {
         snapfaas::fs::bootstrap::update_fsutil(
             &fs,
             blobstore,
             matches.value_of("update_fsutil").unwrap(),
         );
-    } else if matches.is_present("update fsutil") {
+    } else if matches.is_present("update_python") {
         snapfaas::fs::bootstrap::update_python(
             &fs,
             blobstore,
             matches.value_of("update_python").unwrap(),
         );
     } else {
+        log::warn!("Noop.");
     }
 }
