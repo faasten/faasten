@@ -245,40 +245,6 @@ impl SyscallProcessor {
                     };
                     s.send(result.encode_to_vec())?;
                 }
-                Some(SC::InvokeRedirectGate(irg)) => {
-                    let result = match env.sched_conn.as_mut() {
-                        None => {
-                            warn!("No scheduler presents. Syscall invoke_redirect is noop.");
-                            syscalls::WriteKeyResponse { success: false }
-                        }
-                        Some(sched_conn) => {
-                            let mut result = syscalls::WriteKeyResponse { success: false };
-                            if let Ok(path) = fs::path::Path::parse(&irg.gate) {
-                                let ret = fs::utils::invoke_redirect(&env.fs, path).ok();
-                                if let Some((f, p)) = ret {
-                                    let label = fs::utils::get_current_label();
-                                    let sched_invoke = sched::message::LabeledInvoke {
-                                        function: Some(f.into()),
-                                        payload: irg.payload,
-                                        gate_privilege: component_to_pbcomponent(&p),
-                                        label: Some(buckle_to_pblabel(&label)),
-                                        sync: false,
-                                    };
-                                    // return from UnreachableScheduler error
-                                    sched::rpc::labeled_invoke(sched_conn, sched_invoke).map_err(
-                                        |e| {
-                                            error!("{:?}", e);
-                                            SyscallProcessorError::UnreachableScheduler
-                                        },
-                                    )?;
-                                    result.success = true;
-                                }
-                            }
-                            result
-                        }
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
                 Some(SC::InvokeFunction(i)) => {
                     let result = match env.sched_conn.as_mut() {
                         None => {

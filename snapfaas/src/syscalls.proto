@@ -21,11 +21,6 @@ message InvokeGate {
   string payload = 2;
 }
 
-message InvokeRedirectGate {
-  string gate = 1;
-  string payload = 2;
-}
-
 message InvokeFunction {
   string function = 1;
   string payload = 2;
@@ -264,6 +259,5 @@ message Syscall {
     InvokeFunction invokeFunction = 28;
     FSCreateBlobByName fsCreateBlobByName = 29;
     FSCreateRedirectGate fsCreateRedirectGate = 30;
-    InvokeRedirectGate invokeRedirectGate = 31;
   }
 }

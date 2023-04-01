@@ -1519,52 +1519,6 @@ pub mod utils {
         }
     }
 
-    pub fn invoke_redirect<S: Clone + BackingStore, P: Into<self::path::Path>>(
-        fs: &FS<S>,
-        path: P,
-    ) -> Result<(Function, Component), Error> {
-        match read_path(fs, path) {
-            Ok(DirEntry::Gate(gate)) => {
-                endorse_with_full();
-                let redirect_path = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
-                let dircontents = list(fs, redirect_path)?;
-                let app_image = match dircontents.get("app") {
-                    Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                    _ => Err(Error::BadPath),
-                }?;
-                let runtime_image = match dircontents.get("runtime") {
-                    Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                    _ => Err(Error::BadPath),
-                }?;
-                let kernel = match dircontents.get("kernel") {
-                    Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                    _ => Err(Error::BadPath),
-                }?;
-                let raw_memsize = match dircontents.get("memory") {
-                    Some(DirEntry::File(f)) => fs.read(f).map_err(|e| Error::from(e)),
-                    _ => Err(Error::BadPath),
-                }?;
-                if raw_memsize.len() != 8 {
-                    return Err(Error::CorruptedMemsizeFile);
-                }
-                let mut buf = [0u8; 8usize];
-                buf.copy_from_slice(&raw_memsize[0..8]);
-                let memory = usize::from_be_bytes(buf);
-                Ok((
-                    Function {
-                        memory,
-                        app_image,
-                        runtime_image,
-                        kernel,
-                    },
-                    gate.privilege,
-                ))
-            }
-            Ok(_) => Err(Error::BadPath),
-            Err(e) => Err(Error::from(e)),
-        }
-    }
-
     pub fn invoke<S: Clone + BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
@@ -1573,9 +1527,45 @@ pub mod utils {
             Ok(DirEntry::Gate(gate)) => {
                 // implicit endorsement
                 endorse_with_full();
-                fs.invoke(&gate)
-                    .map(|f| (f, gate.privilege))
-                    .map_err(|e| Error::from(e))
+                if !gate.redirect {
+                    fs.invoke(&gate)
+                        .map(|f| (f, gate.privilege))
+                        .map_err(|e| Error::from(e))
+                } else {
+                    let redirect_path = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
+                    let dircontents = list(fs, redirect_path)?;
+                    let app_image = match dircontents.get("app") {
+                        Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
+                        _ => Err(Error::BadPath),
+                    }?;
+                    let runtime_image = match dircontents.get("runtime") {
+                        Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
+                        _ => Err(Error::BadPath),
+                    }?;
+                    let kernel = match dircontents.get("kernel") {
+                        Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
+                        _ => Err(Error::BadPath),
+                    }?;
+                    let raw_memsize = match dircontents.get("memory") {
+                        Some(DirEntry::File(f)) => fs.read(f).map_err(|e| Error::from(e)),
+                        _ => Err(Error::BadPath),
+                    }?;
+                    if raw_memsize.len() != 8 {
+                        return Err(Error::CorruptedMemsizeFile);
+                    }
+                    let mut buf = [0u8; 8usize];
+                    buf.copy_from_slice(&raw_memsize[0..8]);
+                    let memory = usize::from_be_bytes(buf);
+                    Ok((
+                        Function {
+                            memory,
+                            app_image,
+                            runtime_image,
+                            kernel,
+                        },
+                        gate.privilege,
+                    ))
+                }
             }
             Ok(_) => Err(Error::BadPath),
             Err(e) => Err(Error::from(e)),
@@ -1590,9 +1580,45 @@ pub mod utils {
             Ok(DirEntry::Gate(gate)) => {
                 // implicit endorsement
                 endorse_with_full();
-                fs.invoke(&gate)
-                    .map(|f| (f, gate.privilege))
-                    .map_err(|e| Error::from(e))
+                if !gate.redirect {
+                    fs.invoke(&gate)
+                        .map(|f| (f, gate.privilege))
+                        .map_err(|e| Error::from(e))
+                } else {
+                    let redirect_path = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
+                    let dircontents = list(fs, redirect_path)?;
+                    let app_image = match dircontents.get("app") {
+                        Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
+                        _ => Err(Error::BadPath),
+                    }?;
+                    let runtime_image = match dircontents.get("runtime") {
+                        Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
+                        _ => Err(Error::BadPath),
+                    }?;
+                    let kernel = match dircontents.get("kernel") {
+                        Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
+                        _ => Err(Error::BadPath),
+                    }?;
+                    let raw_memsize = match dircontents.get("memory") {
+                        Some(DirEntry::File(f)) => fs.read(f).map_err(|e| Error::from(e)),
+                        _ => Err(Error::BadPath),
+                    }?;
+                    if raw_memsize.len() != 8 {
+                        return Err(Error::CorruptedMemsizeFile);
+                    }
+                    let mut buf = [0u8; 8usize];
+                    buf.copy_from_slice(&raw_memsize[0..8]);
+                    let memory = usize::from_be_bytes(buf);
+                    Ok((
+                        Function {
+                            memory,
+                            app_image,
+                            runtime_image,
+                            kernel,
+                        },
+                        gate.privilege,
+                    ))
+                }
             }
             Ok(_) => Err(Error::BadPath),
             Err(e) => Err(Error::from(e)),
