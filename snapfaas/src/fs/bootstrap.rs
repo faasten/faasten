@@ -8,7 +8,7 @@ use sha2::Sha256;
 use labeled::buckle;
 
 use super::BackingStore;
-use crate::blobstore::Blobstore;
+use crate::{blobstore::Blobstore, fs};
 
 const FSUTIL_MEMSIZE: usize = 128;
 
@@ -16,7 +16,7 @@ lazy_static! {
     static ref FSTN_IMAGE_BASE: super::path::Path =
         super::path::Path::parse("home:<T,faasten>").unwrap();
     // home:<T,faasten>:fsutil can be read by anyone but only faasten can update it.
-    static ref FSUTIL_POLICY: buckle::Buckle =
+    static ref FSUTIL_CONFIG_POLICY: buckle::Buckle =
         buckle::Buckle::parse("T,faasten").unwrap();
     static ref ROOT_PRIV: buckle::Component = buckle::Component::dc_false();
     static ref EMPTY_PRIV: buckle::Component = buckle::Component::dc_true();
@@ -45,8 +45,8 @@ fn create_fsutil_redirect_target<S: Clone + BackingStore>(
     super::utils::create_directory(
         faasten_fs,
         FSTN_IMAGE_BASE.clone(),
-        "fsutil".to_string(),
-        FSUTIL_POLICY.clone(),
+        "fsutil_config".to_string(),
+        FSUTIL_CONFIG_POLICY.clone(),
     )
     .expect("create redirection target directory");
     let mut target_directory = FSTN_IMAGE_BASE.clone();
@@ -55,7 +55,7 @@ fn create_fsutil_redirect_target<S: Clone + BackingStore>(
         faasten_fs,
         target_directory.clone(),
         "app".to_string(),
-        FSUTIL_POLICY.clone(),
+        FSUTIL_CONFIG_POLICY.clone(),
         blobname,
     )
     .expect("link app image blob");
@@ -63,7 +63,7 @@ fn create_fsutil_redirect_target<S: Clone + BackingStore>(
         faasten_fs,
         target_directory.clone(),
         "runtime".to_string(),
-        FSUTIL_POLICY.clone(),
+        FSUTIL_CONFIG_POLICY.clone(),
         python_blob,
     )
     .expect("link python image blob");
@@ -71,7 +71,7 @@ fn create_fsutil_redirect_target<S: Clone + BackingStore>(
         faasten_fs,
         target_directory.clone(),
         "kernel".to_string(),
-        FSUTIL_POLICY.clone(),
+        FSUTIL_CONFIG_POLICY.clone(),
         kernel_blob,
     )
     .expect("link kernel image blob");
@@ -79,7 +79,7 @@ fn create_fsutil_redirect_target<S: Clone + BackingStore>(
         faasten_fs,
         target_directory.clone(),
         "memory".to_string(),
-        FSUTIL_POLICY.clone(),
+        FSUTIL_CONFIG_POLICY.clone(),
     )
     .expect("create memory size file");
     let mut memsize_file = target_directory.clone();
@@ -163,6 +163,17 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
         python_blob,
         kernel_blob,
     );
+    let fsutil_gate_policy = buckle::Buckle::parse("t,t").unwrap();
+    let mut redirect_path = FSTN_IMAGE_BASE.clone();
+    redirect_path.push_dscrp("fsutil_config".to_string());
+    fs::utils::create_redirect_gate(
+        faasten_fs,
+        base_dir.clone(),
+        "fsutil_redirect_gate".to_string(),
+        fsutil_gate_policy,
+        redirect_path,
+    )
+    .expect("create redirect gate");
 
     for rt in config.other_runtimes {
         debug!("creating {} runtime blob...", rt);
