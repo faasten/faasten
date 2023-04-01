@@ -10,12 +10,14 @@ use labeled::buckle;
 use super::BackingStore;
 use crate::blobstore::Blobstore;
 
+const FSUTIL_MEMSIZE: usize = 128;
+
 lazy_static! {
     static ref FSTN_IMAGE_BASE: super::path::Path =
         super::path::Path::parse("home:<T,faasten>").unwrap();
-    // home:<T,faasten>:fsutil can be invoked by anyone and grants no privilege.
-    static ref FSTN_FSUTIL_POLICY: buckle::Buckle =
-        buckle::Buckle::parse("T,T").unwrap();
+    // home:<T,faasten>:fsutil can be read by anyone but only faasten can update it.
+    static ref FSUTIL_POLICY: buckle::Buckle =
+        buckle::Buckle::parse("T,faasten").unwrap();
     static ref ROOT_PRIV: buckle::Component = buckle::Component::dc_false();
     static ref EMPTY_PRIV: buckle::Component = buckle::Component::dc_true();
 }
@@ -29,6 +31,65 @@ fn localfile2blob(blobstore: &mut Blobstore, local_path: &str) -> String {
     let blob = blobstore.save(blob).expect("finalize blob");
     debug!("DONE! local {} to blob {}", local_path, blob.name);
     blob.name
+}
+
+fn create_fsutil_redirect_target<S: Clone + BackingStore>(
+    faasten_fs: &super::FS<S>,
+    blobstore: &mut Blobstore,
+    fsutil_local_path: &str,
+    python_blob: String,
+    kernel_blob: String,
+) {
+    debug!("creating fsutil redirection target...");
+    let blobname = localfile2blob(blobstore, fsutil_local_path);
+    super::utils::create_directory(
+        faasten_fs,
+        FSTN_IMAGE_BASE.clone(),
+        "fsutil".to_string(),
+        FSUTIL_POLICY.clone(),
+    )
+    .expect("create redirection target directory");
+    let mut target_directory = FSTN_IMAGE_BASE.clone();
+    target_directory.push_dscrp("fsutil".to_string());
+    super::utils::create_blob(
+        faasten_fs,
+        target_directory.clone(),
+        "app".to_string(),
+        FSUTIL_POLICY.clone(),
+        blobname,
+    )
+    .expect("link app image blob");
+    super::utils::create_blob(
+        faasten_fs,
+        target_directory.clone(),
+        "runtime".to_string(),
+        FSUTIL_POLICY.clone(),
+        python_blob,
+    )
+    .expect("link python image blob");
+    super::utils::create_blob(
+        faasten_fs,
+        target_directory.clone(),
+        "kernel".to_string(),
+        FSUTIL_POLICY.clone(),
+        kernel_blob,
+    )
+    .expect("link kernel image blob");
+    super::utils::create_file(
+        faasten_fs,
+        target_directory.clone(),
+        "memory".to_string(),
+        FSUTIL_POLICY.clone(),
+    )
+    .expect("create memory size file");
+    let mut memsize_file = target_directory.clone();
+    memsize_file.push_dscrp("memory".to_string());
+    super::utils::write(
+        faasten_fs,
+        memsize_file,
+        FSUTIL_MEMSIZE.to_be_bytes().to_vec(),
+    )
+    .expect("write memory size file");
 }
 
 /// The preparer installs supported kernels and runtime images in the directory `FSTN_IMAGE_BASE`.
@@ -95,24 +156,13 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
         blobname
     };
 
-    debug!("creating faasten-supplied fsutil blob...");
-    {
-        let blobname = localfile2blob(&mut blobstore, &config.fsutil);
-        let f = crate::fs::Function {
-            memory: 128,
-            app_image: blobname,
-            runtime_image: python_blob,
-            kernel: kernel_blob,
-        };
-        super::utils::create_gate(
-            faasten_fs,
-            base_dir.clone(),
-            "fsutil".to_string(),
-            FSTN_FSUTIL_POLICY.clone(),
-            f,
-        )
-        .expect("link fsutil blob");
-    }
+    create_fsutil_redirect_target(
+        faasten_fs,
+        &mut blobstore,
+        &config.fsutil,
+        python_blob,
+        kernel_blob,
+    );
 
     for rt in config.other_runtimes {
         debug!("creating {} runtime blob...", rt);
@@ -166,19 +216,13 @@ pub fn update_fsutil<S: Clone + BackingStore>(
     let faasten_priv = [buckle::Clause::new_from_vec(vec![faasten_principal])].into();
     super::utils::set_my_privilge(faasten_priv);
 
-    let blobname = localfile2blob(&mut blobstore, local_path);
-    let base_dir = FSTN_IMAGE_BASE.clone();
-    let name = "fsutil".to_string();
-    super::utils::delete(fs, base_dir.clone(), name.clone()).expect("delete gate");
+    let mut target_directory = FSTN_IMAGE_BASE.clone();
+    target_directory.push_dscrp("fsutil".to_string());
 
-    let f = crate::fs::Function {
-        memory: 128,
-        app_image: blobname,
-        runtime_image: get_runtime_blob(fs, "python"),
-        kernel: get_kernel_blob(fs),
-    };
-    super::utils::create_gate(fs, base_dir, name, FSTN_FSUTIL_POLICY.clone(), f)
-        .expect("create gate");
+    let blobname = localfile2blob(&mut blobstore, local_path);
+    let mut app_path = target_directory.clone();
+    app_path.push_dscrp("app".to_string());
+    super::utils::update_blob(fs, app_path, blobname).expect("repoint app blob");
 
     super::utils::set_my_privilge(EMPTY_PRIV.clone());
 }
@@ -192,10 +236,18 @@ pub fn update_python<S: Clone + BackingStore>(
     let faasten_priv = [buckle::Clause::new_from_vec(vec![faasten_principal])].into();
     super::utils::set_my_privilge(faasten_priv);
 
+    debug!("repointing :home:<T,faasten>:python...");
     let blobname = localfile2blob(&mut blobstore, local_path);
     let mut path = FSTN_IMAGE_BASE.clone();
     path.push_dscrp("python".to_string());
-    super::utils::update_blob(fs, path, blobname).expect("update blob");
+    super::utils::update_blob(fs, path, blobname.clone()).expect("repoint python blob");
+
+    debug!("repointing :home:<T,faasten>:fsutil:runtime...");
+    let mut fsutil_runtime_path = FSTN_IMAGE_BASE.clone();
+    fsutil_runtime_path.push_dscrp("fsutil".to_string());
+    fsutil_runtime_path.push_dscrp("runtime".to_string());
+    super::utils::update_blob(fs, fsutil_runtime_path, blobname)
+        .expect("repoint fsutil runtime blob");
 
     super::utils::set_my_privilge(EMPTY_PRIV.clone());
 }

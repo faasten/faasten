@@ -11,10 +11,37 @@ def handle(request, syscall):
         memory = args['memory']
         runtime = args['runtime']
         ret['success'] = syscall.fs_creategate(path, policy, app_blob, memory, runtime)
+    if op == 'create-redirect-gate':
+        path = args['path']
+        policy = args['policy']
+        redirect_path = args['redirect_path']
+        ret['success'] = syscall.fs_createredirectgate(path, policy, redirect_path)
+    elif op == 'create-blob':
+        blob = request['input-blob']
+        path = args['path']
+        label = None
+        if 'label' in args:
+            label = args['label']
+        if syscall.fs_linkblob(blob, path, label):
+            ret['success'] = True
+            #trigger_ret = None
+            #if 'triggers' in args:
+            #    trigger_ret = trigger(args['triggers'], syscall, op, path)
+            #ret['trigger_status'] = trigger_ret
+        else:
+            ret['success'] = False
     elif op == 'create-file':
         path = args['path']
         label = args['label']
-        ret['success'] = syscall.fs_createfile(path, label)
+        if syscall.fs_createfile(path, label):
+            ret['success'] = True
+            #trigger_ret = None
+            #if 'triggers' in args:
+            #    trigger(args['triggers'], syscall, op, path)
+            #    trigger_ret = trigger(args['triggers'], syscall, op, path)
+            #ret['trigger_status'] = trigger_ret
+        else:
+            ret['success'] = False
     elif op == 'read-file':
         path = args['path']
         v = syscall.fs_read(path)
@@ -56,19 +83,17 @@ def handle(request, syscall):
     else:
         ret['success'] = False
         ret['error'] = '[fsutil] unknown op'
-    #if op == 'createdir':
-    #    success = syscall.fs_createdir(args['path']) is not None
-    #elif op == 'createfile':
-    #    success = syscall.fs_createfile(['home', user_facet, 'file1'], label=user_facet)
-    #elif op == 'write':
-    #    data = bytes(req['args']['data'].encode('utf-8'))
-    #    success = syscall.fs_write(['home', user_facet, 'file1'], data)
-    #elif op == 'read':
-    #    success = syscall.fs_read(['home', user_facet, 'file1']) is not None
-    #elif op == 'list':
-    #    success = syscall.fs_list(
-    #elif op == 'deleteuserfile':
-    #    success = syscall.fs_delete(['home', user_facet, 'file1'])
-    #else:
-    #    return {'error': 'unsupported op.'}
     return ret
+
+#def trigger(triggers, syscall, op, path):
+#    ret = {'success': [], 'failure': []}
+#    for gate in triggers:
+#        payload = {
+#            'source-op': op,
+#            'object-path': path,
+#        }
+#        if syscall.invoke(gate, json.dumps(payload)):
+#            ret['success'].append(gate)
+#        else:
+#            ret['failure'].append(gate)
+#    return ret

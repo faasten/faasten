@@ -1,4 +1,5 @@
 use labeled::buckle::Buckle;
+use serde::{Deserialize, Serialize};
 
 use crate::syscall_server::pblabel_to_buckle;
 use crate::syscalls;
@@ -9,13 +10,13 @@ pub enum Error {
     InvalidFacet,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Component {
     Dscrp(String),
     Facet(Buckle),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Path {
     components: Vec<Component>,
 }

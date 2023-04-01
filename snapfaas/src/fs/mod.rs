@@ -382,6 +382,7 @@ impl From<Function> for crate::syscalls::Function {
 pub struct Gate {
     pub privilege: Component,
     weakest_privilege_required: Component,
+    redirect: bool,
     object_id: UID,
 }
 
@@ -417,6 +418,7 @@ mod errors {
     pub enum GateError {
         CannotDelegate,
         CannotInvoke,
+        Corrupted,
     }
 
     #[derive(Debug)]
@@ -512,6 +514,34 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
+    pub fn create_redirect_gate(
+        &self,
+        dpriv: Component,
+        wpr: Component,
+        redirect_path: self::path::Path,
+    ) -> Result<Gate, GateError> {
+        STAT.with(|stat| {
+            if check_delegation(&dpriv) {
+                let mut uid: UID = rand::random();
+                while !self.storage.add(
+                    &uid.to_be_bytes(),
+                    &serde_json::to_vec(&redirect_path).unwrap_or_default(),
+                ) {
+                    uid = rand::random();
+                    stat.borrow_mut().create_retry += 1;
+                }
+                Ok(Gate {
+                    privilege: dpriv,
+                    weakest_privilege_required: wpr,
+                    redirect: true,
+                    object_id: uid,
+                })
+            } else {
+                Err(GateError::CannotDelegate)
+            }
+        })
+    }
+
     pub fn create_gate(
         &self,
         dpriv: Component,
@@ -531,6 +561,7 @@ impl<S: BackingStore> FS<S> {
                 Ok(Gate {
                     privilege: dpriv,
                     weakest_privilege_required: wpr,
+                    redirect: false,
                     object_id: uid,
                 })
             } else {
@@ -841,10 +872,29 @@ impl<S: BackingStore> FS<S> {
                 .integrity
                 .implies(&gate.weakest_privilege_required)
             {
-                let raw_gate = self.storage.get(&gate.object_id.to_be_bytes());
-                Ok(raw_gate.map_or(Function::default(), |v| {
-                    serde_json::from_slice(&v).unwrap_or(Function::default())
-                }))
+                let raw_gate = self
+                    .storage
+                    .get(&gate.object_id.to_be_bytes())
+                    .ok_or(GateError::Corrupted)?;
+                Ok(serde_json::from_slice(&raw_gate).map_err(|_| GateError::Corrupted)?)
+            } else {
+                Err(GateError::CannotInvoke)
+            }
+        })
+    }
+
+    pub fn invoke_redirect(&self, gate: &Gate) -> Result<self::path::Path, GateError> {
+        CURRENT_LABEL.with(|current_label| {
+            if current_label
+                .borrow()
+                .integrity
+                .implies(&gate.weakest_privilege_required)
+            {
+                let raw_gate = self
+                    .storage
+                    .get(&gate.object_id.to_be_bytes())
+                    .ok_or(GateError::Corrupted)?;
+                Ok(serde_json::from_slice(&raw_gate).map_err(|_| GateError::Corrupted)?)
             } else {
                 Err(GateError::CannotInvoke)
             }
@@ -971,6 +1021,7 @@ pub mod utils {
     #[derive(Debug)]
     pub enum Error {
         BadPath,
+        CorruptedMemsizeFile,
         LabelError(LabelError),
         FacetedDir(FacetedDirectory, Buckle),
         GateError(GateError),
@@ -1210,6 +1261,16 @@ pub mod utils {
         }
     }
 
+    pub fn create_redirect_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
+        fs: &FS<S>,
+        base_dir: P,
+        name: String,
+        policy: Buckle,
+        redirect_path: P,
+    ) -> Result<(), Error> {
+        _create_gate(fs, base_dir, name, policy, Some(redirect_path), None)
+    }
+
     pub fn create_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
@@ -1217,29 +1278,47 @@ pub mod utils {
         policy: Buckle,
         f: Function,
     ) -> Result<(), Error> {
+        _create_gate(fs, base_dir, name, policy, None, Some(f))
+    }
+
+    fn _create_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
+        fs: &FS<S>,
+        base_dir: P,
+        name: String,
+        policy: Buckle,
+        redirect_path: Option<P>,
+        f: Option<Function>,
+    ) -> Result<(), Error> {
+        let create_gate = || -> Result<Gate, Error> {
+            if let Some(f) = f {
+                fs.create_gate(policy.secrecy, policy.integrity, f)
+                    .map_err(|e| Error::from(e))
+            } else {
+                fs.create_redirect_gate(
+                    policy.secrecy,
+                    policy.integrity,
+                    redirect_path.unwrap().into(),
+                )
+                .map_err(|e| Error::from(e))
+            }
+        };
         match read_path(&fs, base_dir) {
             Ok(DirEntry::Directory(dir)) => {
-                let gate = fs
-                    .create_gate(policy.secrecy, policy.integrity, f)
-                    .map_err(|e| Error::from(e))?;
+                let gate = create_gate()?;
                 endorse_with_full();
                 fs.link(&dir, name, DirEntry::Gate(gate))
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
             }
             Ok(DirEntry::FacetedDirectory(fdir)) => {
+                let gate = create_gate()?;
                 endorse_with_full();
-                let gate = fs
-                    .create_gate(policy.secrecy, policy.integrity, f)
-                    .map_err(|e| Error::from(e))?;
                 fs.faceted_link(&fdir, None, name, DirEntry::Gate(gate))
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
             }
             Err(Error::FacetedDir(fdir, facet)) => {
-                let gate = fs
-                    .create_gate(policy.secrecy, policy.integrity, f)
-                    .map_err(|e| Error::GateError(e))?;
+                let gate = create_gate()?;
                 endorse_with_full();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Gate(gate))
                     .map(|_| ())
@@ -1267,6 +1346,7 @@ pub mod utils {
                 let gate = Gate {
                     privilege: dpriv,
                     weakest_privilege_required: wpr,
+                    redirect: orig.redirect,
                     object_id: orig.object_id,
                 };
                 match read_path(fs, base_dir) {
@@ -1439,11 +1519,57 @@ pub mod utils {
         }
     }
 
+    pub fn invoke_redirect<S: Clone + BackingStore, P: Into<self::path::Path>>(
+        fs: &FS<S>,
+        path: P,
+    ) -> Result<(Function, Component), Error> {
+        match read_path(fs, path) {
+            Ok(DirEntry::Gate(gate)) => {
+                endorse_with_full();
+                let redirect_path = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
+                let dircontents = list(fs, redirect_path)?;
+                let app_image = match dircontents.get("app") {
+                    Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
+                    _ => Err(Error::BadPath),
+                }?;
+                let runtime_image = match dircontents.get("runtime") {
+                    Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
+                    _ => Err(Error::BadPath),
+                }?;
+                let kernel = match dircontents.get("kernel") {
+                    Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
+                    _ => Err(Error::BadPath),
+                }?;
+                let raw_memsize = match dircontents.get("memory") {
+                    Some(DirEntry::File(f)) => fs.read(f).map_err(|e| Error::from(e)),
+                    _ => Err(Error::BadPath),
+                }?;
+                if raw_memsize.len() != 8 {
+                    return Err(Error::CorruptedMemsizeFile);
+                }
+                let mut buf = [0u8; 8usize];
+                buf.copy_from_slice(&raw_memsize[0..8]);
+                let memory = usize::from_be_bytes(buf);
+                Ok((
+                    Function {
+                        memory,
+                        app_image,
+                        runtime_image,
+                        kernel,
+                    },
+                    gate.privilege,
+                ))
+            }
+            Ok(_) => Err(Error::BadPath),
+            Err(e) => Err(Error::from(e)),
+        }
+    }
+
     pub fn invoke<S: Clone + BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<(Function, Component), Error> {
-        match read_path(&fs, path) {
+        match read_path(fs, path) {
             Ok(DirEntry::Gate(gate)) => {
                 // implicit endorsement
                 endorse_with_full();
@@ -1460,7 +1586,7 @@ pub mod utils {
         fs: &FS<S>,
         path: P,
     ) -> Result<(Function, Component), Error> {
-        match read_path_check_clearance(&fs, path) {
+        match read_path_check_clearance(fs, path) {
             Ok(DirEntry::Gate(gate)) => {
                 // implicit endorsement
                 endorse_with_full();
