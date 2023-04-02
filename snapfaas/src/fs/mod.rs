@@ -7,7 +7,7 @@ use labeled::{
     Label,
 };
 use lmdb::{Cursor, Transaction, WriteFlags};
-use log::debug;
+use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -1570,33 +1570,46 @@ pub mod utils {
                 taint_with_label(b.label.clone());
                 fs.open_blob(b).map_err(|e| Error::from(e))
             }
-            _ => Err(Error::MalformedRedirectTarget),
+            _ => {
+                error!("Missing app blob entry");
+                Err(Error::MalformedRedirectTarget)
+            }
         }?;
         let runtime_image = match contents.get("runtime") {
             Some(DirEntry::Blob(b)) => {
                 taint_with_label(b.label.clone());
                 fs.open_blob(b).map_err(|e| Error::from(e))
             }
-            _ => Err(Error::MalformedRedirectTarget),
+            _ => {
+                error!("Missing runtime blob entry");
+                Err(Error::MalformedRedirectTarget)
+            }
         }?;
         let kernel = match contents.get("kernel") {
             Some(DirEntry::Blob(b)) => {
                 taint_with_label(b.label.clone());
                 fs.open_blob(b).map_err(|e| Error::from(e))
             }
-            _ => Err(Error::MalformedRedirectTarget),
+            _ => {
+                error!("Missing kernel blob entry");
+                Err(Error::MalformedRedirectTarget)
+            }
         }?;
         let raw_memsize = match contents.get("memory") {
             Some(DirEntry::File(f)) => {
                 taint_with_label(f.label.clone());
                 fs.read(f).map_err(|e| Error::from(e))
             }
-            _ => Err(Error::MalformedRedirectTarget),
+            _ => {
+                error!("Missing memory file entry");
+                Err(Error::MalformedRedirectTarget)
+            }
         }?;
         if !clearance_checker() {
             return Err(Error::ClearanceError);
         }
         if raw_memsize.len() != 8 {
+            error!("raw_memsize len {}", raw_memsize.len());
             return Err(Error::MalformedRedirectTarget);
         }
         let mut buf = [0u8; 8usize];
