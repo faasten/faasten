@@ -515,32 +515,23 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
+    /// hard link the redirect target directory
     pub fn create_redirect_gate(
         &self,
         dpriv: Component,
         wpr: Component,
-        redirect_path: self::path::Path,
+        redirect: Directory,
     ) -> Result<Gate, GateError> {
-        STAT.with(|stat| {
-            if check_delegation(&dpriv) {
-                let mut uid: UID = rand::random();
-                while !self.storage.add(
-                    &uid.to_be_bytes(),
-                    &serde_json::to_vec(&redirect_path).unwrap_or_default(),
-                ) {
-                    uid = rand::random();
-                    stat.borrow_mut().create_retry += 1;
-                }
-                Ok(Gate {
-                    privilege: dpriv,
-                    weakest_privilege_required: wpr,
-                    redirect: true,
-                    object_id: uid,
-                })
-            } else {
-                Err(GateError::CannotDelegate)
-            }
-        })
+        if check_delegation(&dpriv) {
+            Ok(Gate {
+                privilege: dpriv,
+                weakest_privilege_required: wpr,
+                redirect: true,
+                object_id: redirect.object_id,
+            })
+        } else {
+            Err(GateError::CannotDelegate)
+        }
     }
 
     pub fn create_gate(
@@ -884,18 +875,18 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
-    pub fn invoke_redirect(&self, gate: &Gate) -> Result<self::path::Path, GateError> {
+    pub fn invoke_redirect(&self, gate: &Gate) -> Result<HashMap<String, DirEntry>, GateError> {
         CURRENT_LABEL.with(|current_label| {
             if current_label
                 .borrow()
                 .integrity
                 .implies(&gate.weakest_privilege_required)
             {
-                let raw_gate = self
+                let raw_dir = self
                     .storage
                     .get(&gate.object_id.to_be_bytes())
-                    .ok_or(GateError::Corrupted)?;
-                Ok(serde_json::from_slice(&raw_gate).map_err(|_| GateError::Corrupted)?)
+                    .unwrap_or_default();
+                Ok(serde_json::from_slice(&raw_dir).unwrap_or_default())
             } else {
                 Err(GateError::CannotInvoke)
             }
@@ -1022,7 +1013,7 @@ pub mod utils {
     #[derive(Debug)]
     pub enum Error {
         BadPath,
-        CorruptedMemsizeFile,
+        MalformedRedirectTarget,
         LabelError(LabelError),
         FacetedDir(FacetedDirectory, Buckle),
         GateError(GateError),
@@ -1269,7 +1260,10 @@ pub mod utils {
         policy: Buckle,
         redirect_path: P,
     ) -> Result<(), Error> {
-        _create_gate(fs, base_dir, name, policy, Some(redirect_path), None)
+        match read_path(fs, redirect_path) {
+            Ok(DirEntry::Directory(d)) => _create_gate(fs, base_dir, name, policy, Some(d), None),
+            _ => Err(Error::BadPath),
+        }
     }
 
     pub fn create_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
@@ -1287,7 +1281,7 @@ pub mod utils {
         base_dir: P,
         name: String,
         policy: Buckle,
-        redirect_path: Option<P>,
+        redirect: Option<Directory>,
         f: Option<Function>,
     ) -> Result<(), Error> {
         let create_gate = || -> Result<Gate, Error> {
@@ -1295,12 +1289,8 @@ pub mod utils {
                 fs.create_gate(policy.secrecy, policy.integrity, f)
                     .map_err(|e| Error::from(e))
             } else {
-                fs.create_redirect_gate(
-                    policy.secrecy,
-                    policy.integrity,
-                    redirect_path.unwrap().into(),
-                )
-                .map_err(|e| Error::from(e))
+                fs.create_redirect_gate(policy.secrecy, policy.integrity, redirect.unwrap())
+                    .map_err(|e| Error::from(e))
             }
         };
         match read_path(&fs, base_dir) {
@@ -1536,26 +1526,25 @@ pub mod utils {
                         .map(|f| (f, gate.privilege))
                         .map_err(|e| Error::from(e))
                 } else {
-                    let redirect_path = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
-                    let dircontents = list(fs, redirect_path)?;
-                    let app_image = match dircontents.get("app") {
+                    let contents = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
+                    let app_image = match contents.get("app") {
                         Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                        _ => Err(Error::BadPath),
+                        _ => Err(Error::MalformedRedirectTarget),
                     }?;
-                    let runtime_image = match dircontents.get("runtime") {
+                    let runtime_image = match contents.get("runtime") {
                         Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                        _ => Err(Error::BadPath),
+                        _ => Err(Error::MalformedRedirectTarget),
                     }?;
-                    let kernel = match dircontents.get("kernel") {
+                    let kernel = match contents.get("kernel") {
                         Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                        _ => Err(Error::BadPath),
+                        _ => Err(Error::MalformedRedirectTarget),
                     }?;
-                    let raw_memsize = match dircontents.get("memory") {
+                    let raw_memsize = match contents.get("memory") {
                         Some(DirEntry::File(f)) => fs.read(f).map_err(|e| Error::from(e)),
-                        _ => Err(Error::BadPath),
+                        _ => Err(Error::MalformedRedirectTarget),
                     }?;
                     if raw_memsize.len() != 8 {
-                        return Err(Error::CorruptedMemsizeFile);
+                        return Err(Error::MalformedRedirectTarget);
                     }
                     let mut buf = [0u8; 8usize];
                     buf.copy_from_slice(&raw_memsize[0..8]);
@@ -1590,27 +1579,25 @@ pub mod utils {
                         .map(|f| (f, gate.privilege))
                         .map_err(|e| Error::from(e))
                 } else {
-                    let redirect_path = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
-                    debug!("invoke redirect path: {:?}", redirect_path);
-                    let dircontents = list(fs, redirect_path)?;
-                    let app_image = match dircontents.get("app") {
+                    let contents = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
+                    let app_image = match contents.get("app") {
                         Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                        _ => Err(Error::BadPath),
+                        _ => Err(Error::MalformedRedirectTarget),
                     }?;
-                    let runtime_image = match dircontents.get("runtime") {
+                    let runtime_image = match contents.get("runtime") {
                         Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                        _ => Err(Error::BadPath),
+                        _ => Err(Error::MalformedRedirectTarget),
                     }?;
-                    let kernel = match dircontents.get("kernel") {
+                    let kernel = match contents.get("kernel") {
                         Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                        _ => Err(Error::BadPath),
+                        _ => Err(Error::MalformedRedirectTarget),
                     }?;
-                    let raw_memsize = match dircontents.get("memory") {
+                    let raw_memsize = match contents.get("memory") {
                         Some(DirEntry::File(f)) => fs.read(f).map_err(|e| Error::from(e)),
-                        _ => Err(Error::BadPath),
+                        _ => Err(Error::MalformedRedirectTarget),
                     }?;
                     if raw_memsize.len() != 8 {
-                        return Err(Error::CorruptedMemsizeFile);
+                        return Err(Error::MalformedRedirectTarget);
                     }
                     let mut buf = [0u8; 8usize];
                     buf.copy_from_slice(&raw_memsize[0..8]);
