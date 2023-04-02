@@ -258,11 +258,14 @@ impl SyscallChannel for Vm {
 impl Drop for Vm {
     /// shutdown this vm
     fn drop(&mut self) {
-        let handle = self.handle.as_ref().unwrap();
-        if let Err(e) = handle.conn.shutdown(Shutdown::Both) {
-            error!("Failed to shut down unix connection: {:?}", e);
+        if let Some(handle) = self.handle.as_ref() {
+            if let Err(e) = handle.conn.shutdown(Shutdown::Both) {
+                error!("Failed to shut down unix connection: {:?}", e);
+            } else {
+                debug!("shutdown vm connection {:?}", handle.conn);
+            }
         } else {
-            debug!("shutdown vm connection {:?}", handle.conn);
+            debug!("dropping vm. unlaunched.")
         }
     }
 }
