@@ -1351,17 +1351,20 @@ pub mod utils {
                     object_id: orig.object_id,
                 };
                 match read_path(fs, base_dir) {
-                    Ok(entry) => match entry {
-                        DirEntry::Directory(dir) => fs
-                            .link(&dir, name, DirEntry::Gate(gate))
-                            .map(|_| ())
-                            .map_err(|e| Error::from(e)),
-                        DirEntry::FacetedDirectory(fdir) => fs
-                            .faceted_link(&fdir, None, name, DirEntry::Gate(gate))
-                            .map(|_| ())
-                            .map_err(|e| Error::from(e)),
-                        _ => Err(Error::BadPath),
-                    },
+                    Ok(entry) => {
+                        endorse_with_full();
+                        match entry {
+                            DirEntry::Directory(dir) => fs
+                                .link(&dir, name, DirEntry::Gate(gate))
+                                .map(|_| ())
+                                .map_err(|e| Error::from(e)),
+                            DirEntry::FacetedDirectory(fdir) => fs
+                                .faceted_link(&fdir, None, name, DirEntry::Gate(gate))
+                                .map(|_| ())
+                                .map_err(|e| Error::from(e)),
+                            _ => Err(Error::BadPath),
+                        }
+                    }
                     Err(Error::FacetedDir(fdir, facet)) => {
                         endorse_with_full();
                         fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Gate(gate))
