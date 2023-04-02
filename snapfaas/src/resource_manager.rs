@@ -150,6 +150,7 @@ impl ResourceManager {
 
     // Push the VM into the VM cache
     pub fn release(&mut self, vm: Vm) {
+        debug!("release vm {:?}", vm.handle);
         if let Some(l) = self.cache.get_mut(&vm.function) {
             l.push(vm);
         } else {
@@ -161,6 +162,7 @@ impl ResourceManager {
     }
 
     pub fn delete(&mut self, vm: Vm) {
+        debug!("delete vm {:?}", vm.handle);
         self.free_mem += vm.function.memory;
         drop(vm); // being explicit
         self.update_scheduler();
