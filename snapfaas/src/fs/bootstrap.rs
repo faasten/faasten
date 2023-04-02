@@ -15,7 +15,12 @@ const FSUTIL_MEMSIZE: usize = 128;
 lazy_static! {
     static ref FSTN_IMAGE_BASE: super::path::Path =
         super::path::Path::parse("home:<T,faasten>").unwrap();
-    // home:<T,faasten>:fsutil can be read by anyone but only faasten can update it.
+    static ref FSUTIL_CONFIG_DIR: super::path::Path = {
+        let mut path = FSTN_IMAGE_BASE.clone();
+        path.push_dscrp("fsutil_config".to_string());
+        path
+    };
+    // home:<T,faasten>:fsutil_config can be read by anyone but only faasten can update it.
     static ref FSUTIL_CONFIG_POLICY: buckle::Buckle =
         buckle::Buckle::parse("T,faasten").unwrap();
     static ref ROOT_PRIV: buckle::Component = buckle::Component::dc_false();
@@ -45,15 +50,13 @@ fn create_fsutil_redirect_target<S: Clone + BackingStore>(
     super::utils::create_directory(
         faasten_fs,
         FSTN_IMAGE_BASE.clone(),
-        "fsutil_config".to_string(),
+        FSUTIL_CONFIG_DIR.file_name().unwrap(),
         FSUTIL_CONFIG_POLICY.clone(),
     )
     .expect("create redirection target directory");
-    let mut target_directory = FSTN_IMAGE_BASE.clone();
-    target_directory.push_dscrp("fsutil_config".to_string());
     super::utils::create_blob(
         faasten_fs,
-        target_directory.clone(),
+        FSUTIL_CONFIG_DIR.clone(),
         "app".to_string(),
         FSUTIL_CONFIG_POLICY.clone(),
         blobname,
@@ -61,7 +64,7 @@ fn create_fsutil_redirect_target<S: Clone + BackingStore>(
     .expect("link app image blob");
     super::utils::create_blob(
         faasten_fs,
-        target_directory.clone(),
+        FSUTIL_CONFIG_DIR.clone(),
         "runtime".to_string(),
         FSUTIL_CONFIG_POLICY.clone(),
         python_blob,
@@ -69,7 +72,7 @@ fn create_fsutil_redirect_target<S: Clone + BackingStore>(
     .expect("link python image blob");
     super::utils::create_blob(
         faasten_fs,
-        target_directory.clone(),
+        FSUTIL_CONFIG_DIR.clone(),
         "kernel".to_string(),
         FSUTIL_CONFIG_POLICY.clone(),
         kernel_blob,
@@ -77,12 +80,12 @@ fn create_fsutil_redirect_target<S: Clone + BackingStore>(
     .expect("link kernel image blob");
     super::utils::create_file(
         faasten_fs,
-        target_directory.clone(),
+        FSUTIL_CONFIG_DIR.clone(),
         "memory".to_string(),
         FSUTIL_CONFIG_POLICY.clone(),
     )
     .expect("create memory size file");
-    let mut memsize_file = target_directory.clone();
+    let mut memsize_file = FSUTIL_CONFIG_DIR.clone();
     memsize_file.push_dscrp("memory".to_string());
     super::utils::write(
         faasten_fs,
@@ -124,7 +127,6 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
     let faasten_principal = vec!["faasten".to_string()];
     let faasten_priv = [buckle::Clause::new_from_vec(vec![faasten_principal])].into();
     super::utils::set_my_privilge(faasten_priv);
-    let base_dir = FSTN_IMAGE_BASE.clone();
 
     debug!("creating kernel blob...");
     let kernel_blob = {
@@ -132,7 +134,7 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
         let blobname = localfile2blob(&mut blobstore, &config.kernel);
         super::utils::create_blob(
             faasten_fs,
-            base_dir.clone(),
+            FSTN_IMAGE_BASE.clone(),
             name,
             label.clone(),
             blobname.clone(),
@@ -147,7 +149,7 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
         let name = "python".to_string();
         super::utils::create_blob(
             faasten_fs,
-            base_dir.clone(),
+            FSTN_IMAGE_BASE.clone(),
             name,
             label.clone(),
             blobname.clone(),
@@ -164,14 +166,12 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
         kernel_blob,
     );
     let fsutil_gate_policy = buckle::Buckle::parse("T,T").unwrap();
-    let mut redirect_path = FSTN_IMAGE_BASE.clone();
-    redirect_path.push_dscrp("fsutil_config".to_string());
     fs::utils::create_redirect_gate(
         faasten_fs,
-        base_dir.clone(),
+        FSTN_IMAGE_BASE.clone(),
         "fsutil_redirect_gate".to_string(),
         fsutil_gate_policy,
-        redirect_path,
+        FSUTIL_CONFIG_DIR.clone(),
     )
     .expect("create redirect gate");
 
@@ -184,8 +184,14 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
             .to_str()
             .unwrap()
             .to_string();
-        super::utils::create_blob(&faasten_fs, base_dir.clone(), name, label.clone(), blobname)
-            .expect(&format!("link {:?} blob", rt));
+        super::utils::create_blob(
+            &faasten_fs,
+            FSTN_IMAGE_BASE.clone(),
+            name,
+            label.clone(),
+            blobname,
+        )
+        .expect(&format!("link {:?} blob", rt));
     }
     super::utils::set_my_privilge(EMPTY_PRIV.clone());
     debug!("Done with bootstrapping.")
@@ -227,11 +233,8 @@ pub fn update_fsutil<S: Clone + BackingStore>(
     let faasten_priv = [buckle::Clause::new_from_vec(vec![faasten_principal])].into();
     super::utils::set_my_privilge(faasten_priv);
 
-    let mut target_directory = FSTN_IMAGE_BASE.clone();
-    target_directory.push_dscrp("fsutil".to_string());
-
     let blobname = localfile2blob(&mut blobstore, local_path);
-    let mut app_path = target_directory.clone();
+    let mut app_path = FSUTIL_CONFIG_DIR.clone();
     app_path.push_dscrp("app".to_string());
     super::utils::update_blob(fs, app_path, blobname).expect("repoint app blob");
 
@@ -253,9 +256,8 @@ pub fn update_python<S: Clone + BackingStore>(
     path.push_dscrp("python".to_string());
     super::utils::update_blob(fs, path, blobname.clone()).expect("repoint python blob");
 
-    debug!("repointing :home:<T,faasten>:fsutil:runtime...");
-    let mut fsutil_runtime_path = FSTN_IMAGE_BASE.clone();
-    fsutil_runtime_path.push_dscrp("fsutil".to_string());
+    debug!("repointing fsutil redirect target's python...");
+    let mut fsutil_runtime_path = FSUTIL_CONFIG_DIR.clone();
     fsutil_runtime_path.push_dscrp("runtime".to_string());
     super::utils::update_blob(fs, fsutil_runtime_path, blobname)
         .expect("repoint fsutil runtime blob");
