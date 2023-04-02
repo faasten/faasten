@@ -132,9 +132,10 @@ impl Vm {
                 args.push("--dump_ws");
             }
         }
-        if let Some(cmdline) = function_config.cmdline.as_ref() {
-            args.extend_from_slice(&["--kernel_args", cmdline]);
-        }
+        //if let Some(cmdline) = function_config.cmdline.as_ref() {
+        //    args.extend_from_slice(&["--kernel_args", cmdline]);
+        //}
+        args.extend_from_slice(&["--kernel_args", "console=ttyS0"]);
 
         // network config should be of the format <TAP-Name>/<MAC Address>
         let tap_name = format!("tap{}", cid - 100);
