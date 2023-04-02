@@ -1014,6 +1014,7 @@ pub mod utils {
     pub enum Error {
         BadPath,
         MalformedRedirectTarget,
+        ClearanceError,
         LabelError(LabelError),
         FacetedDir(FacetedDirectory, Buckle),
         GateError(GateError),
@@ -1090,7 +1091,7 @@ pub mod utils {
                             | super::DirEntry::File(_) => Err(Error::BadPath),
                         };
                         if res.is_ok() && !clearance_checker() {
-                            return Err(Error::LabelError(LabelError::CannotRead));
+                            return Err(Error::ClearanceError);
                         }
                         res
                     })?;
@@ -1127,7 +1128,7 @@ pub mod utils {
                 }
             };
             if res.is_ok() && !clearance_checker() {
-                return Err(Error::LabelError(LabelError::CannotRead));
+                return Err(Error::ClearanceError);
             }
             res
         } else {
@@ -1512,7 +1513,6 @@ pub mod utils {
             Err(e) => Err(e),
         }
     }
-
     pub fn invoke<S: Clone + BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
@@ -1527,37 +1527,8 @@ pub mod utils {
                         .map_err(|e| Error::from(e))
                 } else {
                     let contents = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
-                    let app_image = match contents.get("app") {
-                        Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                        _ => Err(Error::MalformedRedirectTarget),
-                    }?;
-                    let runtime_image = match contents.get("runtime") {
-                        Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                        _ => Err(Error::MalformedRedirectTarget),
-                    }?;
-                    let kernel = match contents.get("kernel") {
-                        Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                        _ => Err(Error::MalformedRedirectTarget),
-                    }?;
-                    let raw_memsize = match contents.get("memory") {
-                        Some(DirEntry::File(f)) => fs.read(f).map_err(|e| Error::from(e)),
-                        _ => Err(Error::MalformedRedirectTarget),
-                    }?;
-                    if raw_memsize.len() != 8 {
-                        return Err(Error::MalformedRedirectTarget);
-                    }
-                    let mut buf = [0u8; 8usize];
-                    buf.copy_from_slice(&raw_memsize[0..8]);
-                    let memory = usize::from_be_bytes(buf);
-                    Ok((
-                        Function {
-                            memory,
-                            app_image,
-                            runtime_image,
-                            kernel,
-                        },
-                        gate.privilege,
-                    ))
+                    let f = parse_redirect_contents(fs, contents, noop)?;
+                    Ok((f, gate.privilege))
                 }
             }
             Ok(_) => Err(Error::BadPath),
@@ -1580,42 +1551,63 @@ pub mod utils {
                         .map_err(|e| Error::from(e))
                 } else {
                     let contents = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
-                    let app_image = match contents.get("app") {
-                        Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                        _ => Err(Error::MalformedRedirectTarget),
-                    }?;
-                    let runtime_image = match contents.get("runtime") {
-                        Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                        _ => Err(Error::MalformedRedirectTarget),
-                    }?;
-                    let kernel = match contents.get("kernel") {
-                        Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
-                        _ => Err(Error::MalformedRedirectTarget),
-                    }?;
-                    let raw_memsize = match contents.get("memory") {
-                        Some(DirEntry::File(f)) => fs.read(f).map_err(|e| Error::from(e)),
-                        _ => Err(Error::MalformedRedirectTarget),
-                    }?;
-                    if raw_memsize.len() != 8 {
-                        return Err(Error::MalformedRedirectTarget);
-                    }
-                    let mut buf = [0u8; 8usize];
-                    buf.copy_from_slice(&raw_memsize[0..8]);
-                    let memory = usize::from_be_bytes(buf);
-                    Ok((
-                        Function {
-                            memory,
-                            app_image,
-                            runtime_image,
-                            kernel,
-                        },
-                        gate.privilege,
-                    ))
+                    let f = parse_redirect_contents(fs, contents, check_clearance)?;
+                    Ok((f, gate.privilege))
                 }
             }
             Ok(_) => Err(Error::BadPath),
             Err(e) => Err(Error::from(e)),
         }
+    }
+
+    fn parse_redirect_contents<S: Clone + BackingStore>(
+        fs: &FS<S>,
+        contents: HashMap<String, DirEntry>,
+        clearance_checker: fn() -> bool,
+    ) -> Result<Function, Error> {
+        let app_image = match contents.get("app") {
+            Some(DirEntry::Blob(b)) => {
+                taint_with_label(b.label.clone());
+                fs.open_blob(b).map_err(|e| Error::from(e))
+            }
+            _ => Err(Error::MalformedRedirectTarget),
+        }?;
+        let runtime_image = match contents.get("runtime") {
+            Some(DirEntry::Blob(b)) => {
+                taint_with_label(b.label.clone());
+                fs.open_blob(b).map_err(|e| Error::from(e))
+            }
+            _ => Err(Error::MalformedRedirectTarget),
+        }?;
+        let kernel = match contents.get("kernel") {
+            Some(DirEntry::Blob(b)) => {
+                taint_with_label(b.label.clone());
+                fs.open_blob(b).map_err(|e| Error::from(e))
+            }
+            _ => Err(Error::MalformedRedirectTarget),
+        }?;
+        let raw_memsize = match contents.get("memory") {
+            Some(DirEntry::File(f)) => {
+                taint_with_label(f.label.clone());
+                fs.read(f).map_err(|e| Error::from(e))
+            }
+            _ => Err(Error::MalformedRedirectTarget),
+        }?;
+        if !clearance_checker() {
+            return Err(Error::ClearanceError);
+        }
+        if raw_memsize.len() != 8 {
+            return Err(Error::MalformedRedirectTarget);
+        }
+        let mut buf = [0u8; 8usize];
+        buf.copy_from_slice(&raw_memsize[0..8]);
+        let memory = usize::from_be_bytes(buf);
+        Ok(Function {
+            memory,
+            app_image,
+            runtime_image,
+            kernel,
+        })
     }
 
     pub fn check_clearance() -> bool {
