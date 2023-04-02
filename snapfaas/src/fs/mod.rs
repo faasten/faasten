@@ -413,8 +413,9 @@ impl From<reqwest::Method> for HttpVerb {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceInfo {
+    pub label: Buckle,
     pub url: String,
     pub verb: HttpVerb,
     pub headers: HashMap<String, Vec<u8>>,

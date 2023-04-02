@@ -231,30 +231,6 @@ message FSCreateGate {
   string runtime = 5;
 }
 
-<<<<<<< HEAD
-message FSCreateRedirectGate {
-  string path = 1;
-  string policy = 2;
-  // fs path
-  string redirectPath = 3;
-=======
-message ReadService {
-  repeated PathComponent serv = 1;
-  optional string route = 2;
-}
-
-message WriteService {
-  repeated PathComponent serv = 1;
-  optional string route = 2;
-  optional string body = 3;
-}
-
-message ServiceResponse {
-  bytes data = 1;
-  uint32 status = 2;
->>>>>>> 5a1eb1f (service gate)
-}
-
 message Syscall {
   oneof syscall {
     Response response = 1;
@@ -283,19 +259,9 @@ message Syscall {
     TokenList subPrivilege = 24;
     string buckleParse = 25;
     FSDelete fsDelete = 26;
-<<<<<<< HEAD
     FSCreateGate fsCreateGate = 27;
     InvokeFunction invokeFunction = 28;
     FSCreateBlobByName fsCreateBlobByName = 29;
-<<<<<<< HEAD
     FSCreateRedirectGate fsCreateRedirectGate = 30;
     InvokeService invokeService = 31;
-=======
-    InvokeService invokeService = 30;
-=======
-    ReadService readService = 27;
-    WriteService writeService = 28;
->>>>>>> 6217537 (service gate)
->>>>>>> 5a1eb1f (service gate)
-  }
 }

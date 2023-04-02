@@ -257,11 +257,12 @@ fn main() {
                     .help("HTTP Verb."),
             )
             .arg(
-                Arg::with_name("token")
-                    .value_name("AUTH TOKEN")
-                    .long("token")
+                Arg::with_name("policy")
+                    .value_name("POLICY")
+                    .long("policy")
                     .takes_value(true)
-                    .help("Authentication token."),
+                    .required(true)
+                    .help("A parsable Buckle string piggybacking the gate's policy. The secrecy should be the gate's privilege. The integrity should be the gate's integrity."),
             )
         )
         .get_matches();
@@ -451,10 +452,13 @@ fn main() {
             let url = sub_m.value_of("url").filter(|&u| reqwest::Url::parse(u).is_ok()).unwrap().to_string();
             let verb = sub_m.value_of("verb").and_then(|v| reqwest::Method::from_bytes(v.as_bytes()).ok()).unwrap();
             let name = sub_m.value_of("service-name").unwrap().to_string();
-            let token = sub_m.value_of("token").map(|t| t.to_string());
             let label = sub_m.value_of("label").and_then(|s|
                 buckle::Buckle::parse(s).ok()
             ).unwrap();
+            let policy = sub_m.value_of("policy").and_then(|s|
+                buckle::Buckle::parse(s).ok()
+            ).unwrap();
+
 
             let headers = DEFAULT_HEADERS
                 .iter()
@@ -471,11 +475,12 @@ fn main() {
                 url,
                 verb: verb.into(),
                 headers,
+                label,
             };
 
             let base_dir = sub_m.values_of("base-dir").unwrap().collect::<Vec<&str>>();
             let base_dir = parse_path_vec(base_dir);
-            if let Err(e) = fs::utils::create_service(&fs, &base_dir, name, label, service_info) {
+            if let Err(e) = fs::utils::create_service(&fs, &base_dir, name, policy, service_info) {
                 eprintln!("Cannot create the service: {:?}", e);
             }
         },
@@ -491,6 +496,6 @@ fn main() {
         let file = std::fs::File::create(fname).unwrap();
         serde_json::to_writer(file, &val).unwrap();
     } else {
-        serde_json::to_writer_pretty(io::stdout(), &val).unwrap();
+        // serde_json::to_writer_pretty(io::stdout(), &val).unwrap();
     }
 }
