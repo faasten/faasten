@@ -25,6 +25,10 @@ lazy_static! {
         buckle::Buckle::parse("T,faasten").unwrap();
     static ref ROOT_PRIV: buckle::Component = buckle::Component::dc_false();
     static ref EMPTY_PRIV: buckle::Component = buckle::Component::dc_true();
+    pub static ref FAASTEN_PRIV: buckle::Component = {
+        let faasten_principal = vec!["faasten".to_string()];
+        [buckle::Clause::new_from_vec(vec![faasten_principal])].into()
+    };
 }
 
 fn localfile2blob(blobstore: &mut Blobstore, local_path: &str) -> String {
@@ -124,9 +128,7 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
         .expect("create ``home'' faceted directory");
 
     // start acting as `faasten`
-    let faasten_principal = vec!["faasten".to_string()];
-    let faasten_priv = [buckle::Clause::new_from_vec(vec![faasten_principal])].into();
-    super::utils::set_my_privilge(faasten_priv);
+    super::utils::set_my_privilge(FAASTEN_PRIV.clone());
 
     debug!("creating kernel blob...");
     let kernel_blob = {
@@ -229,9 +231,7 @@ pub fn update_fsutil<S: Clone + BackingStore>(
     mut blobstore: Blobstore,
     local_path: &str,
 ) {
-    let faasten_principal = vec!["faasten".to_string()];
-    let faasten_priv = [buckle::Clause::new_from_vec(vec![faasten_principal])].into();
-    super::utils::set_my_privilge(faasten_priv);
+    super::utils::set_my_privilge(FAASTEN_PRIV.clone());
 
     let blobname = localfile2blob(&mut blobstore, local_path);
     let mut app_path = FSUTIL_CONFIG_DIR.clone();
@@ -246,9 +246,7 @@ pub fn update_python<S: Clone + BackingStore>(
     mut blobstore: Blobstore,
     local_path: &str,
 ) {
-    let faasten_principal = vec!["faasten".to_string()];
-    let faasten_priv = [buckle::Clause::new_from_vec(vec![faasten_principal])].into();
-    super::utils::set_my_privilge(faasten_priv);
+    super::utils::set_my_privilge(FAASTEN_PRIV.clone());
 
     debug!("repointing :home:<T,faasten>:python...");
     let blobname = localfile2blob(&mut blobstore, local_path);

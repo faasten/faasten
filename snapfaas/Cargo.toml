@@ -37,8 +37,8 @@ name = "sfblob"
 path = "bins/sfblob/main.rs"
 
 [[bin]]
-name = "prepare_fs"
-path = "bins/prepare_fs/main.rs"
+name = "admin_fstools"
+path = "bins/admin_fstools/main.rs"
 
 [lib]
 

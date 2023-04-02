@@ -8,15 +8,16 @@ use snapfaas::blobstore;
 
 pub fn main() {
     env_logger::init();
-    let matches = App::new("Faasten FS preparer")
+    let matches = App::new("Faasten FS Admin Tools")
         .args_from_usage(
-            "--config        [YAML] 'YAML file specifying where images are at'
+            "--bootstrap     [YAML] 'YAML file for bootstraping an empty Faasten-FS'
              --update_fsutil [PATH] 'PATH to updated fsutil image'
-             --update_python [PATH] 'PATH to updated python image'",
+             --update_python [PATH] 'PATH to updated python image'
+             --list          [PATH] 'PATH to a directory or a faceted directory, acting as [faasten]'",
         )
         .group(
             ArgGroup::with_name("input")
-                .args(&["config", "update_fsutil", "update_python"])
+                .args(&["bootstrap", "update_fsutil", "update_python", "list"])
                 .required(true),
         )
         .get_matches();
@@ -37,6 +38,20 @@ pub fn main() {
             blobstore,
             matches.value_of("update_python").unwrap(),
         );
+    } else if matches.is_present("list") {
+        let clearance = labeled::buckle::Buckle::parse("faasten,T").unwrap();
+        snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
+        snapfaas::fs::utils::set_clearance(clearance);
+
+        let path = snapfaas::fs::path::Path::parse(matches.value_of("list").unwrap()).unwrap();
+        match snapfaas::fs::utils::list(&fs, path) {
+            Ok(entries) => {
+                for (name, dent) in entries {
+                    println!("{}\t{:?}", name, dent);
+                }
+            }
+            Err(e) => log::warn!("Failed to list. {:?}", e),
+        }
     } else {
         log::warn!("Noop.");
     }
