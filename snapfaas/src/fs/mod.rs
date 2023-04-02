@@ -7,14 +7,15 @@ use labeled::{
     Label,
 };
 use lmdb::{Cursor, Transaction, WriteFlags};
+use log::debug;
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
-
-use serde_with::serde_as;
 
 use crate::configs::FunctionConfig;
 
@@ -382,6 +383,7 @@ impl From<Function> for crate::syscalls::Function {
 pub struct Gate {
     pub privilege: Component,
     weakest_privilege_required: Component,
+    redirect: bool,
     object_id: UID,
 }
 
@@ -417,6 +419,7 @@ mod errors {
     pub enum GateError {
         CannotDelegate,
         CannotInvoke,
+        Corrupted,
     }
 
     #[derive(Debug)]
@@ -512,6 +515,25 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
+    /// hard link the redirect target directory
+    pub fn create_redirect_gate(
+        &self,
+        dpriv: Component,
+        wpr: Component,
+        redirect: Directory,
+    ) -> Result<Gate, GateError> {
+        if check_delegation(&dpriv) {
+            Ok(Gate {
+                privilege: dpriv,
+                weakest_privilege_required: wpr,
+                redirect: true,
+                object_id: redirect.object_id,
+            })
+        } else {
+            Err(GateError::CannotDelegate)
+        }
+    }
+
     pub fn create_gate(
         &self,
         dpriv: Component,
@@ -531,6 +553,7 @@ impl<S: BackingStore> FS<S> {
                 Ok(Gate {
                     privilege: dpriv,
                     weakest_privilege_required: wpr,
+                    redirect: false,
                     object_id: uid,
                 })
             } else {
@@ -841,10 +864,29 @@ impl<S: BackingStore> FS<S> {
                 .integrity
                 .implies(&gate.weakest_privilege_required)
             {
-                let raw_gate = self.storage.get(&gate.object_id.to_be_bytes());
-                Ok(raw_gate.map_or(Function::default(), |v| {
-                    serde_json::from_slice(&v).unwrap_or(Function::default())
-                }))
+                let raw_gate = self
+                    .storage
+                    .get(&gate.object_id.to_be_bytes())
+                    .ok_or(GateError::Corrupted)?;
+                Ok(serde_json::from_slice(&raw_gate).map_err(|_| GateError::Corrupted)?)
+            } else {
+                Err(GateError::CannotInvoke)
+            }
+        })
+    }
+
+    pub fn invoke_redirect(&self, gate: &Gate) -> Result<HashMap<String, DirEntry>, GateError> {
+        CURRENT_LABEL.with(|current_label| {
+            if current_label
+                .borrow()
+                .integrity
+                .implies(&gate.weakest_privilege_required)
+            {
+                let raw_dir = self
+                    .storage
+                    .get(&gate.object_id.to_be_bytes())
+                    .unwrap_or_default();
+                Ok(serde_json::from_slice(&raw_dir).unwrap_or_default())
             } else {
                 Err(GateError::CannotInvoke)
             }
@@ -971,6 +1013,8 @@ pub mod utils {
     #[derive(Debug)]
     pub enum Error {
         BadPath,
+        MalformedRedirectTarget,
+        ClearanceError,
         LabelError(LabelError),
         FacetedDir(FacetedDirectory, Buckle),
         GateError(GateError),
@@ -1047,7 +1091,7 @@ pub mod utils {
                             | super::DirEntry::File(_) => Err(Error::BadPath),
                         };
                         if res.is_ok() && !clearance_checker() {
-                            return Err(Error::LabelError(LabelError::CannotRead));
+                            return Err(Error::ClearanceError);
                         }
                         res
                     })?;
@@ -1084,7 +1128,7 @@ pub mod utils {
                 }
             };
             if res.is_ok() && !clearance_checker() {
-                return Err(Error::LabelError(LabelError::CannotRead));
+                return Err(Error::ClearanceError);
             }
             res
         } else {
@@ -1210,6 +1254,19 @@ pub mod utils {
         }
     }
 
+    pub fn create_redirect_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
+        fs: &FS<S>,
+        base_dir: P,
+        name: String,
+        policy: Buckle,
+        redirect_path: P,
+    ) -> Result<(), Error> {
+        match read_path(fs, redirect_path) {
+            Ok(DirEntry::Directory(d)) => _create_gate(fs, base_dir, name, policy, Some(d), None),
+            _ => Err(Error::BadPath),
+        }
+    }
+
     pub fn create_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
@@ -1217,29 +1274,43 @@ pub mod utils {
         policy: Buckle,
         f: Function,
     ) -> Result<(), Error> {
+        _create_gate(fs, base_dir, name, policy, None, Some(f))
+    }
+
+    fn _create_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
+        fs: &FS<S>,
+        base_dir: P,
+        name: String,
+        policy: Buckle,
+        redirect: Option<Directory>,
+        f: Option<Function>,
+    ) -> Result<(), Error> {
+        let create_gate = || -> Result<Gate, Error> {
+            if let Some(f) = f {
+                fs.create_gate(policy.secrecy, policy.integrity, f)
+                    .map_err(|e| Error::from(e))
+            } else {
+                fs.create_redirect_gate(policy.secrecy, policy.integrity, redirect.unwrap())
+                    .map_err(|e| Error::from(e))
+            }
+        };
         match read_path(&fs, base_dir) {
             Ok(DirEntry::Directory(dir)) => {
-                let gate = fs
-                    .create_gate(policy.secrecy, policy.integrity, f)
-                    .map_err(|e| Error::from(e))?;
+                let gate = create_gate()?;
                 endorse_with_full();
                 fs.link(&dir, name, DirEntry::Gate(gate))
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
             }
             Ok(DirEntry::FacetedDirectory(fdir)) => {
+                let gate = create_gate()?;
                 endorse_with_full();
-                let gate = fs
-                    .create_gate(policy.secrecy, policy.integrity, f)
-                    .map_err(|e| Error::from(e))?;
                 fs.faceted_link(&fdir, None, name, DirEntry::Gate(gate))
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
             }
             Err(Error::FacetedDir(fdir, facet)) => {
-                let gate = fs
-                    .create_gate(policy.secrecy, policy.integrity, f)
-                    .map_err(|e| Error::GateError(e))?;
+                let gate = create_gate()?;
                 endorse_with_full();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Gate(gate))
                     .map(|_| ())
@@ -1267,20 +1338,24 @@ pub mod utils {
                 let gate = Gate {
                     privilege: dpriv,
                     weakest_privilege_required: wpr,
+                    redirect: orig.redirect,
                     object_id: orig.object_id,
                 };
                 match read_path(fs, base_dir) {
-                    Ok(entry) => match entry {
-                        DirEntry::Directory(dir) => fs
-                            .link(&dir, name, DirEntry::Gate(gate))
-                            .map(|_| ())
-                            .map_err(|e| Error::from(e)),
-                        DirEntry::FacetedDirectory(fdir) => fs
-                            .faceted_link(&fdir, None, name, DirEntry::Gate(gate))
-                            .map(|_| ())
-                            .map_err(|e| Error::from(e)),
-                        _ => Err(Error::BadPath),
-                    },
+                    Ok(entry) => {
+                        endorse_with_full();
+                        match entry {
+                            DirEntry::Directory(dir) => fs
+                                .link(&dir, name, DirEntry::Gate(gate))
+                                .map(|_| ())
+                                .map_err(|e| Error::from(e)),
+                            DirEntry::FacetedDirectory(fdir) => fs
+                                .faceted_link(&fdir, None, name, DirEntry::Gate(gate))
+                                .map(|_| ())
+                                .map_err(|e| Error::from(e)),
+                            _ => Err(Error::BadPath),
+                        }
+                    }
                     Err(Error::FacetedDir(fdir, facet)) => {
                         endorse_with_full();
                         fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Gate(gate))
@@ -1438,18 +1513,23 @@ pub mod utils {
             Err(e) => Err(e),
         }
     }
-
     pub fn invoke<S: Clone + BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<(Function, Component), Error> {
-        match read_path(&fs, path) {
+        match read_path(fs, path) {
             Ok(DirEntry::Gate(gate)) => {
                 // implicit endorsement
                 endorse_with_full();
-                fs.invoke(&gate)
-                    .map(|f| (f, gate.privilege))
-                    .map_err(|e| Error::from(e))
+                if !gate.redirect {
+                    fs.invoke(&gate)
+                        .map(|f| (f, gate.privilege))
+                        .map_err(|e| Error::from(e))
+                } else {
+                    let contents = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
+                    let f = parse_redirect_contents(fs, contents, noop)?;
+                    Ok((f, gate.privilege))
+                }
             }
             Ok(_) => Err(Error::BadPath),
             Err(e) => Err(Error::from(e)),
@@ -1460,17 +1540,74 @@ pub mod utils {
         fs: &FS<S>,
         path: P,
     ) -> Result<(Function, Component), Error> {
-        match read_path_check_clearance(&fs, path) {
+        match read_path_check_clearance(fs, path) {
             Ok(DirEntry::Gate(gate)) => {
                 // implicit endorsement
+                debug!("invoke gate entry: {:?}", gate);
                 endorse_with_full();
-                fs.invoke(&gate)
-                    .map(|f| (f, gate.privilege))
-                    .map_err(|e| Error::from(e))
+                if !gate.redirect {
+                    fs.invoke(&gate)
+                        .map(|f| (f, gate.privilege))
+                        .map_err(|e| Error::from(e))
+                } else {
+                    let contents = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
+                    let f = parse_redirect_contents(fs, contents, check_clearance)?;
+                    Ok((f, gate.privilege))
+                }
             }
             Ok(_) => Err(Error::BadPath),
             Err(e) => Err(Error::from(e)),
         }
+    }
+
+    fn parse_redirect_contents<S: Clone + BackingStore>(
+        fs: &FS<S>,
+        contents: HashMap<String, DirEntry>,
+        clearance_checker: fn() -> bool,
+    ) -> Result<Function, Error> {
+        let app_image = match contents.get("app") {
+            Some(DirEntry::Blob(b)) => {
+                taint_with_label(b.label.clone());
+                fs.open_blob(b).map_err(|e| Error::from(e))
+            }
+            _ => Err(Error::MalformedRedirectTarget),
+        }?;
+        let runtime_image = match contents.get("runtime") {
+            Some(DirEntry::Blob(b)) => {
+                taint_with_label(b.label.clone());
+                fs.open_blob(b).map_err(|e| Error::from(e))
+            }
+            _ => Err(Error::MalformedRedirectTarget),
+        }?;
+        let kernel = match contents.get("kernel") {
+            Some(DirEntry::Blob(b)) => {
+                taint_with_label(b.label.clone());
+                fs.open_blob(b).map_err(|e| Error::from(e))
+            }
+            _ => Err(Error::MalformedRedirectTarget),
+        }?;
+        let raw_memsize = match contents.get("memory") {
+            Some(DirEntry::File(f)) => {
+                taint_with_label(f.label.clone());
+                fs.read(f).map_err(|e| Error::from(e))
+            }
+            _ => Err(Error::MalformedRedirectTarget),
+        }?;
+        if !clearance_checker() {
+            return Err(Error::ClearanceError);
+        }
+        if raw_memsize.len() != 8 {
+            return Err(Error::MalformedRedirectTarget);
+        }
+        let mut buf = [0u8; 8usize];
+        buf.copy_from_slice(&raw_memsize[0..8]);
+        let memory = usize::from_be_bytes(buf);
+        Ok(Function {
+            memory,
+            app_image,
+            runtime_image,
+            kernel,
+        })
     }
 
     pub fn check_clearance() -> bool {
@@ -1491,8 +1628,7 @@ pub mod utils {
     pub fn check_delegation(delegated: &Component) -> bool {
         STAT.with(|stat| {
             PRIVILEGE.with(|p| {
-                use log::debug;
-                debug!("my_privilege: {:?}, to be delegated: {:?}", p, delegated);
+                debug!("my_privilege: {:?}, delegated: {:?}", p, delegated);
                 let now = Instant::now();
                 let res = p.borrow().implies(delegated);
                 stat.borrow_mut().label_tracking += now.elapsed();

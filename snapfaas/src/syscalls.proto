@@ -212,9 +212,19 @@ message FSCreateFacetedDir {
 message FSCreateGate {
   string path = 1;
   string policy = 2;
+  // blobname, direct pointer to the image
   string appImage = 3;
   uint64 memory = 4;
+  // Legal values are Faasten-supported language runtimes
+  // currently just python
   string runtime = 5;
+}
+
+message FSCreateRedirectGate {
+  string path = 1;
+  string policy = 2;
+  // fs path
+  string redirectPath = 3;
 }
 
 message Syscall {
@@ -248,5 +258,6 @@ message Syscall {
     FSCreateGate fsCreateGate = 27;
     InvokeFunction invokeFunction = 28;
     FSCreateBlobByName fsCreateBlobByName = 29;
+    FSCreateRedirectGate fsCreateRedirectGate = 30;
   }
 }

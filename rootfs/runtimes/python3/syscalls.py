@@ -241,7 +241,7 @@ class Syscall():
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_createblobbyname(self, path, blobname: str, label: syscalls_pb2.Buckle=None):
+    def fs_linkblob(self, path, blobname: str, label: str=None):
         """Link `blobname` into the file system at `path`."""
         req = syscalls_pb2.Syscall(fsLinkBlob=syscalls_pb2.FSLinkBlob(path=path, blobname=blobname, label=label))
         self._send(req)
@@ -250,6 +250,12 @@ class Syscall():
 
     def fs_creategate(self, path: str, policy: str, app: str, memory: int, runtime: str):
         req = syscalls_pb2.Syscall(fsCreateGate=syscalls_pb2.FSCreateGate(path=path, policy=policy, appImage=app, memory=memory, runtime=runtime))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+    def fs_createredirectgate(self, path: str, policy: str, redirect_path: str):
+        req = syscalls_pb2.Syscall(fsCreateRedirectGate=syscalls_pb2.FSCreateRedirectGate(path=path, policy=policy, redirectPath=redirect_path))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success

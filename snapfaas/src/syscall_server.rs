@@ -218,6 +218,7 @@ impl SyscallProcessor {
                             syscalls::WriteKeyResponse { success: false }
                         }
                         Some(sched_conn) => {
+                            // FIXME change to string path
                             let ret = fs::utils::invoke(&env.fs, i.gate).ok();
                             let result = syscalls::WriteKeyResponse {
                                 success: ret.is_some(),
@@ -351,6 +352,38 @@ impl SyscallProcessor {
                                         debug!("fs-create-gate failed: {:?}", value.unwrap_err());
                                     } else {
                                         success = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let result = syscalls::WriteKeyResponse { success };
+                    s.send(result.encode_to_vec())?;
+                }
+                Some(SC::FsCreateRedirectGate(crg)) => {
+                    let mut success = false;
+                    if let Ok(path) = fs::path::Path::parse(&crg.path) {
+                        if let Some(base_dir) = path.parent() {
+                            if let Some(name) = path.file_name() {
+                                if let Ok(policy) = buckle::Buckle::parse(&crg.policy) {
+                                    if let Ok(redirect_path) =
+                                        fs::path::Path::parse(&crg.redirect_path)
+                                    {
+                                        let value = fs::utils::create_redirect_gate(
+                                            &env.fs,
+                                            base_dir,
+                                            name,
+                                            policy,
+                                            redirect_path,
+                                        );
+                                        if value.is_err() {
+                                            debug!(
+                                                "fs-create-redirect-gate failed: {:?}",
+                                                value.unwrap_err()
+                                            );
+                                        } else {
+                                            success = true;
+                                        }
                                     }
                                 }
                             }
