@@ -11,7 +11,7 @@ def handle(request, syscall):
         memory = args['memory']
         runtime = args['runtime']
         ret['success'] = syscall.fs_creategate(path, policy, app_blob, memory, runtime)
-    if op == 'create-redirect-gate':
+    elif op == 'create-redirect-gate':
         path = args['path']
         policy = args['policy']
         redirect_path = args['redirect_path']
