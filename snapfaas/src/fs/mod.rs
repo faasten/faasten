@@ -7,14 +7,15 @@ use labeled::{
     Label,
 };
 use lmdb::{Cursor, Transaction, WriteFlags};
+use log::debug;
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
-
-use serde_with::serde_as;
 
 use crate::configs::FunctionConfig;
 
@@ -1579,6 +1580,7 @@ pub mod utils {
         match read_path_check_clearance(fs, path) {
             Ok(DirEntry::Gate(gate)) => {
                 // implicit endorsement
+                debug!("invoke gate entry: {:?}", gate);
                 endorse_with_full();
                 if !gate.redirect {
                     fs.invoke(&gate)
@@ -1586,6 +1588,7 @@ pub mod utils {
                         .map_err(|e| Error::from(e))
                 } else {
                     let redirect_path = fs.invoke_redirect(&gate).map_err(|e| Error::from(e))?;
+                    debug!("invoke redirect path: {:?}", redirect_path);
                     let dircontents = list(fs, redirect_path)?;
                     let app_image = match dircontents.get("app") {
                         Some(DirEntry::Blob(b)) => fs.open_blob(b).map_err(|e| Error::from(e)),
@@ -1643,8 +1646,7 @@ pub mod utils {
     pub fn check_delegation(delegated: &Component) -> bool {
         STAT.with(|stat| {
             PRIVILEGE.with(|p| {
-                use log::debug;
-                debug!("my_privilege: {:?}, to be delegated: {:?}", p, delegated);
+                debug!("my_privilege: {:?}, delegated: {:?}", p, delegated);
                 let now = Instant::now();
                 let res = p.borrow().implies(delegated);
                 stat.borrow_mut().label_tracking += now.elapsed();
