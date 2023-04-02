@@ -116,24 +116,24 @@ impl Vm {
         }
         if let Some(load_dir) = function_config.load_dir.as_ref() {
             args.extend_from_slice(&["--load_from", load_dir]);
+            if function_config.copy_base {
+                args.push("--copy_base");
+            }
+            if function_config.copy_diff {
+                args.push("--copy_diff");
+            }
+            if function_config.load_ws {
+                args.push("--load_ws");
+            }
         }
         if let Some(dump_dir) = function_config.dump_dir.as_ref() {
             args.extend_from_slice(&["--dump_to", dump_dir]);
+            if function_config.dump_ws {
+                args.push("--dump_ws");
+            }
         }
         if let Some(cmdline) = function_config.cmdline.as_ref() {
             args.extend_from_slice(&["--kernel_args", cmdline]);
-        }
-        if function_config.dump_ws {
-            args.push("--dump_ws");
-        }
-        if function_config.load_ws {
-            args.push("--load_ws");
-        }
-        if function_config.copy_base {
-            args.push("--copy_base");
-        }
-        if function_config.copy_diff {
-            args.push("--copy_diff");
         }
 
         // network config should be of the format <TAP-Name>/<MAC Address>
