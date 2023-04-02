@@ -1,6 +1,7 @@
 pub mod bootstrap;
 ///! Labeled File System
 pub mod path;
+pub mod tikv;
 
 use labeled::{
     buckle::{Buckle, Component, Principal},
@@ -67,7 +68,7 @@ pub trait BackingStore {
     fn add(&self, key: &[u8], value: &[u8]) -> bool;
     fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8])
         -> Result<(), Option<Vec<u8>>>;
-    fn del(&self, key: &[u8]) -> bool;
+    fn del(&self, key: &[u8]);
     fn get_keys(&self) -> Option<Vec<&[u8]>>;
 }
 
@@ -143,13 +144,12 @@ impl BackingStore for &lmdb::Environment {
         })
     }
 
-    fn del(&self, key: &[u8]) -> bool {
+    fn del(&self, key: &[u8]) {
         STAT.with(|_stat| {
             let db = self.open_db(None).unwrap();
             let mut txn = self.begin_rw_txn().unwrap();
-            let res = txn.del(db, &key, None).is_ok();
+            let _ = txn.del(db, &key, None);
             txn.commit().unwrap();
-            res
         })
     }
 
