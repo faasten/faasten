@@ -1,4 +1,5 @@
 import json
+import base64
 
 def handle(request, syscall):
     args = request['input']['args']
@@ -48,8 +49,12 @@ def handle(request, syscall):
         if v is None:
             ret['success'] = False
         else:
+            # return value type is bytes
+            # encode it into utf-8 string
             ret['success'] = True
-            ret['value'] = v
+            encoded = base64.b64encode(v)
+            s = encoded.decode()
+            ret['value'] = s
     elif op == 'write-file':
         path = args['path']
         data = args['data']

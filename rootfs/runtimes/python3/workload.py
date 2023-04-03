@@ -4,10 +4,8 @@ from importlib import import_module
 import json
 import time
 import socket
-import os
 import sys
 import traceback
-from subprocess import run, Popen
 from syscalls import Syscall
 
 # vsock to communicate with the host
@@ -20,10 +18,10 @@ app = import_module('workload')
 sock.connect(hostaddr)
 sc = Syscall(sock)
 while True:
-    request = sc.request()
-
-    start = time.monotonic_ns()
     try:
+        request = sc.request()
+
+        start = time.monotonic_ns()
         # return value from Lambda can be not JSON serializable
         response = app.handle(json.loads(request.payload), sc)
         response['duration'] = time.monotonic_ns() - start

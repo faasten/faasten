@@ -40,11 +40,7 @@ pub fn get(stream: &mut TcpStream) -> Result<Response, Error> {
 }
 
 /// This method is for workers to return the result of a HTTP request
-pub fn finish(
-    stream: &mut TcpStream,
-    task_id: String,
-    result: TaskReturn,
-) -> Result<Response, Error> {
+pub fn finish(stream: &mut TcpStream, task_id: String, result: TaskReturn) -> Result<(), Error> {
     let req = Request {
         kind: Some(ReqKind::FinishTask(message::FinishTask {
             task_id,
@@ -52,8 +48,8 @@ pub fn finish(
         })),
     };
     message::write(stream, &req)?;
-    let response = message::read_response(stream)?;
-    Ok(response)
+    //let response = message::read_response(stream)?;
+    Ok(())
 }
 
 /// This method is for workers to invoke a function
@@ -82,15 +78,15 @@ pub fn unlabeled_invoke(
     Ok(())
 }
 
-/// This method is to terminate all workers (for debug)
-pub fn terminate_all(stream: &mut TcpStream) -> Result<(), Error> {
-    let req = Request {
-        kind: Some(ReqKind::TerminateAll(message::TerminateAll {})),
-    };
-    message::write(stream, &req)?;
-    let _ = message::read_response(stream)?;
-    Ok(())
-}
+///// This method is to terminate all workers (for debug)
+//pub fn terminate_all(stream: &mut TcpStream) -> Result<(), Error> {
+//    let req = Request {
+//        kind: Some(ReqKind::TerminateAll(message::TerminateAll {})),
+//    };
+//    message::write(stream, &req)?;
+//    //let _ = message::read_response(stream)?;
+//    Ok(())
+//}
 
 /// This method is for local resource managers to update it's
 /// resource status, such as number of cached VMs per function
@@ -100,7 +96,7 @@ pub fn update_resource(stream: &mut TcpStream, info: ResourceInfo) -> Result<(),
         kind: Some(ReqKind::UpdateResource(message::UpdateResource { info })),
     };
     message::write(stream, &req)?;
-    let _ = message::read_response(stream)?;
+    //let _ = message::read_response(stream)?;
     Ok(())
 }
 
@@ -110,7 +106,7 @@ pub fn drop_resource(stream: &mut TcpStream) -> Result<(), Error> {
         kind: Some(ReqKind::DropResource(message::DropResource {})),
     };
     message::write(stream, &req)?;
-    let _ = message::read_response(stream)?;
+    //let _ = message::read_response(stream)?;
     Ok(())
 }
 

@@ -54,7 +54,6 @@ pub struct OdirectOption {
 #[derive(Debug)]
 pub struct VmHandle {
     conn: UnixStream,
-    //currently every VM instance opens a connection to the REST server
     #[allow(dead_code)]
     // This field is never used, but we need to it make sure the Child isn't dropped and, thus,
     // killed, before the VmHandle is dropped.
@@ -117,24 +116,24 @@ impl Vm {
         }
         if let Some(load_dir) = function_config.load_dir.as_ref() {
             args.extend_from_slice(&["--load_from", load_dir]);
+            if function_config.copy_base {
+                args.push("--copy_base");
+            }
+            if function_config.copy_diff {
+                args.push("--copy_diff");
+            }
+            if function_config.load_ws {
+                args.push("--load_ws");
+            }
         }
         if let Some(dump_dir) = function_config.dump_dir.as_ref() {
             args.extend_from_slice(&["--dump_to", dump_dir]);
+            if function_config.dump_ws {
+                args.push("--dump_ws");
+            }
         }
         if let Some(cmdline) = function_config.cmdline.as_ref() {
             args.extend_from_slice(&["--kernel_args", cmdline]);
-        }
-        if function_config.dump_ws {
-            args.push("--dump_ws");
-        }
-        if function_config.load_ws {
-            args.push("--load_ws");
-        }
-        if function_config.copy_base {
-            args.push("--copy_base");
-        }
-        if function_config.copy_diff {
-            args.push("--copy_diff");
         }
 
         // network config should be of the format <TAP-Name>/<MAC Address>
@@ -224,11 +223,11 @@ impl SyscallChannel for Vm {
         let mut conn = &self.handle.as_ref().unwrap().conn;
         conn.write_all(&(bytes.len() as u32).to_be_bytes())
             .map_err(|e| {
-                error!("{:?}", e);
+                error!("write_all size {:?}", e);
                 SyscallChannelError::Write
             })?;
         conn.write_all(bytes.as_ref()).map_err(|e| {
-            error!("{:?}", e);
+            error!("write_all contents {:?}", e);
             SyscallChannelError::Write
         })
     }
@@ -237,18 +236,18 @@ impl SyscallChannel for Vm {
         let mut lenbuf = [0; 4];
         let mut conn = &self.handle.as_ref().unwrap().conn;
         conn.read_exact(&mut lenbuf).map_err(|e| {
-            error!("{:?}", e);
+            error!("read_exact size {:?}", e);
             SyscallChannelError::Read
         })?;
         let size = u32::from_be_bytes(lenbuf);
         let mut buf = vec![0u8; size as usize];
         conn.read_exact(&mut buf).map_err(|e| {
-            error!("{:?}", e);
+            error!("read_exact contents {:?}", e);
             SyscallChannelError::Read
         })?;
         let ret = syscalls::Syscall::decode(buf.as_ref())
             .map_err(|e| {
-                error!("{:?}", e);
+                error!("decode syscall {:?}", e);
                 SyscallChannelError::Decode
             })?
             .syscall;
@@ -259,9 +258,14 @@ impl SyscallChannel for Vm {
 impl Drop for Vm {
     /// shutdown this vm
     fn drop(&mut self) {
-        let handle = self.handle.as_ref().unwrap();
-        if let Err(e) = handle.conn.shutdown(Shutdown::Both) {
-            error!("Failed to shut down unix connection: {:?}", e);
+        if let Some(handle) = self.handle.as_ref() {
+            if let Err(e) = handle.conn.shutdown(Shutdown::Both) {
+                error!("Failed to shut down unix connection: {:?}", e);
+            } else {
+                debug!("shutdown vm connection {:?}", handle.conn);
+            }
+        } else {
+            debug!("dropping vm. unlaunched.")
         }
     }
 }

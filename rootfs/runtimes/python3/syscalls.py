@@ -2,6 +2,7 @@ import syscalls_pb2
 import socket
 import struct
 import json
+from google.protobuf.json_format import MessageToJson
 from contextlib import contextmanager
 
 ### helper functions ###
@@ -170,16 +171,22 @@ class Syscall():
 
     ###  amed data object syscalls ###
     def fs_list(self, path: str):
+        """Returns a JSON object"""
         req = syscalls_pb2.Syscall(fsList = syscalls_pb2.FSList(path=path))
         self._send(req)
         response = self._recv(syscalls_pb2.FSListResponse())
-        return response.value
+        if response.value is not None:
+            return json.loads(MessageToJson(response.value))
+        return None
 
     def fs_faceted_list(self, path: str):
-        req = syscalls_pb2.Syscall(fsList = syscalls_pb2.FSFacetedList(path=path))
+        """Returns a JSON object"""
+        req = syscalls_pb2.Syscall(fsFacetedList = syscalls_pb2.FSFacetedList(path=path))
         self._send(req)
         response = self._recv(syscalls_pb2.FSFacetedListResponse())
-        return response.value
+        if response.value is not None:
+            return MessageToJson(response.value)
+        return None
 
     def fs_read(self, path: str):
         """Read the file at the `path`.

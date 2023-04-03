@@ -66,7 +66,7 @@ impl RpcServer {
                     let _ = message::write(&mut stream, &res);
                 }
                 Some(Kind::GetTask(r)) => {
-                    debug!("RPC GET received {:?}", r.thread_id);
+                    debug!("RPC GET from {:?}", r.thread_id);
                     manager
                         .lock()
                         .unwrap()
@@ -74,10 +74,10 @@ impl RpcServer {
                     cvar.notify_one();
                 }
                 Some(Kind::FinishTask(r)) => {
-                    debug!("RPC FINISH received {:?}", r.result);
-                    let res = Response { kind: None };
-                    let _ = message::write(&mut stream, &res);
+                    //let res = Response { kind: None };
+                    //let _ = message::write(&mut stream, &res);
                     let result = r.result.unwrap();
+                    debug!("RPC FINISH result {:?}", result);
                     if let Ok(uuid) = uuid::Uuid::parse_str(&r.task_id) {
                         if !uuid.is_nil() {
                             let mut manager = manager.lock().unwrap();
@@ -146,12 +146,13 @@ impl RpcServer {
                     if let Ok(info) = info {
                         let addr = stream.peer_addr().unwrap().ip();
                         manager.update(addr, info);
-                        let res = Response { kind: None };
-                        let _ = message::write(&mut stream, &res);
+                        //let res = Response { kind: None };
+                        //let _ = message::write(&mut stream, &res);
                     } else {
                         // TODO Send error code
-                        let res = Response { kind: None };
-                        let _ = message::write(&mut stream, &res);
+                        error!("Failed to deserialize ResourceInfo")
+                        //let res = Response { kind: None };
+                        //let _ = message::write(&mut stream, &res);
                     }
                     cvar.notify_one();
                 }
@@ -160,13 +161,13 @@ impl RpcServer {
                     let manager = &mut manager.lock().unwrap();
                     let addr = stream.peer_addr().unwrap().ip();
                     manager.remove(addr);
-                    let res = Response { kind: None };
-                    let _ = message::write(&mut stream, &res);
+                    //let res = Response { kind: None };
+                    //let _ = message::write(&mut stream, &res);
                     break;
                 }
                 _ => {}
             }
         }
-        error!("RPC GET failed.");
+        error!("Peer disconnected {:?}", stream.peer_addr());
     }
 }

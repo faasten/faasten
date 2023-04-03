@@ -170,11 +170,48 @@ fn wait_for_completion(
 
     debug!("waiting...");
     // wait for the return
-    let ret = sched::message::read_u8(sched_conn).map_err(|_| {
+    let bs = sched::message::read_u8(sched_conn).map_err(|_| {
         Response::json(&serde_json::json!({
             "error": "failed to read the task return",
         }))
         .with_status_code(500)
     })?;
+
+    use prost::Message;
+    use snapfaas::sched::message::{ReturnCode, TaskReturn};
+    let ret = match TaskReturn::decode(bs.as_slice()) {
+        Ok(TaskReturn { code, payload }) => match ReturnCode::from_i32(code) {
+            Some(ReturnCode::QueueFull) => Err(Response::json(&serde_json::json!({
+                "error": "queue full"
+            }))
+            .with_status_code(500)),
+            Some(ReturnCode::LaunchFailed) => Err(Response::json(&serde_json::json!({
+                "error": "failed to launch the VM"
+            }))
+            .with_status_code(500)),
+            Some(ReturnCode::GateNotExist) => Err(Response::json(&serde_json::json!({
+                "error": "gate does not exist"
+            }))
+            .with_status_code(500)),
+            Some(ReturnCode::ResourceExhausted) => Err(Response::json(&serde_json::json!({
+                "error": "resource exhausted"
+            }))
+            .with_status_code(500)),
+            Some(ReturnCode::ProcessRequestFailed) => Err(Response::json(&serde_json::json!({
+                "error": "failed to process request"
+            }))
+            .with_status_code(500)),
+            Some(ReturnCode::Success) => Ok(payload.unwrap()),
+            None => Err(Response::json(&serde_json::json!({
+                "error": "unknown return code"
+            }))
+            .with_status_code(500)),
+        },
+        Err(_) => Err(Response::json(&serde_json::json!({
+            "error": "failed to decode return from Faasten core"
+        }))
+        .with_status_code(500)),
+    }?;
+
     Ok(Response::from_data("application/octet-stream", ret))
 }
