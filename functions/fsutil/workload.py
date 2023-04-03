@@ -85,6 +85,14 @@ def handle(request, syscall):
     elif op == 'delete':
         path = args['path']
         ret['success'] = syscall.fs_delete(path)
+    elif op == 'create-service':
+        path    = args['path']
+        policy  = args['policy']
+        label   = args['label']
+        url     = args['url']
+        verb    = args['verb']
+        headers = args['headers']
+        ret['success'] = syscall.create_service(path, policy, label, url, verb, headers)
     else:
         ret['success'] = False
         ret['error'] = '[fsutil] unknown op'

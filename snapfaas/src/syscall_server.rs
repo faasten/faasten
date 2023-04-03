@@ -204,7 +204,7 @@ impl SyscallProcessor {
             .iter()
             .map(|(a, b)| (
                 reqwest::header::HeaderName::from_bytes(a.as_bytes()).unwrap(),
-                reqwest::header::HeaderValue::from_bytes(b).unwrap()
+                reqwest::header::HeaderValue::from_bytes(b.as_bytes()).unwrap()
             ))
             .collect::<reqwest::header::HeaderMap>();
         let mut request = self.http_client.request(method, url).headers(headers);
@@ -430,6 +430,57 @@ impl SyscallProcessor {
                                             );
                                         } else {
                                             success = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let result = syscalls::WriteKeyResponse { success };
+                    s.send(result.encode_to_vec())?;
+                }
+                Some(SC::FsCreateService(cs)) => {
+                    let mut success = false;
+                    if let Ok(path) = fs::path::Path::parse(&cs.path) {
+                        if let Some(base_dir) = path.parent() {
+                            if let Some(name) = path.file_name() {
+                                if let Ok(policy) = buckle::Buckle::parse(&cs.policy) {
+                                    if let Ok(label) = buckle::Buckle::parse(&cs.label) {
+                                        if let Ok(url) = reqwest::Url::parse(&cs.url).map(|u| u.to_string()) {
+                                            if let Ok(verb) = reqwest::Method::from_bytes(cs.verb.as_bytes()) {
+                                                const DEFAULT_HEADERS: &[(&str, &str)] = &[
+                                                    ("ACCEPT", "*/*"),
+                                                    ("USER_AGENT", "faasten"),
+                                                ];
+                                                let headers = cs.headers
+                                                    .map_or_else(
+                                                    || {
+                                                        Ok(DEFAULT_HEADERS
+                                                            .iter()
+                                                            .map(|(n, v)| (n.to_string(), v.to_string()))
+                                                            .collect::<HashMap<_, _>>())
+                                                    },
+                                                    |hs| {
+                                                        serde_json::from_str(&hs)
+                                                    });
+                                                if let Ok(headers) = headers {
+                                                    let value = fs::utils::create_service(
+                                                        &env.fs,
+                                                        base_dir,
+                                                        name,
+                                                        policy,
+                                                        label,
+                                                        url,
+                                                        verb,
+                                                        headers,
+                                                    );
+                                                    if value.is_err() {
+                                                        debug!("fs-create-service failed: {:?}", value.unwrap_err());
+                                                    } else {
+                                                        success = true;
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }

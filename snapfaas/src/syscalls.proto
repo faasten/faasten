@@ -237,6 +237,15 @@ message FSCreateRedirectGate {
   string redirectPath = 3;
 }
 
+message FSCreateService {
+  string path = 1;
+  string policy = 2;
+  string label = 3;
+  string url = 4;
+  string verb = 5;
+  optional string headers = 6;
+}
+
 message Syscall {
   oneof syscall {
     Response response = 1;
@@ -269,6 +278,7 @@ message Syscall {
     InvokeFunction invokeFunction = 28;
     FSCreateBlobByName fsCreateBlobByName = 29;
     FSCreateRedirectGate fsCreateRedirectGate = 30;
-    InvokeService invokeService = 31;
+    FSCreateService fsCreateService = 31;
+    InvokeService invokeService = 32;
   }
 }

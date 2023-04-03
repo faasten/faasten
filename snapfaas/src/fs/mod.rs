@@ -419,7 +419,7 @@ pub struct ServiceInfo {
     pub label: Buckle,
     pub url: String,
     pub verb: HttpVerb,
-    pub headers: HashMap<String, Vec<u8>>,
+    pub headers: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1617,16 +1617,21 @@ pub mod utils {
         }
     }
 
-    pub fn create_service<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_service<
+        S: Clone + BackingStore,
+        P: Into<self::path::Path>,
+        V: Into<self::HttpVerb>,
+    >(
         fs: &FS<S>,
         base_dir: P,
         name: String,
         policy: Buckle,
         label: Buckle,
         url: String,
-        verb: HttpVerb,
-        headers: HashMap<String, Vec<u8>>,
+        verb: V,
+        headers: HashMap<String, String>,
     ) -> Result<(), Error> {
+        let verb = verb.into();
         // raise the integrity to true
         match read_path(&fs, base_dir) {
             Ok(entry) => match entry {
