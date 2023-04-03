@@ -211,7 +211,7 @@ struct FacetedDirectoryInner {
 impl FacetedDirectoryInner {
     // a helper function that indexes into the faceted directoryno
     // no label checks, label checks should be done by the caller
-    pub fn open_facet(&self, facet: &Buckle) -> Result<Directory, FacetError> {
+    pub fn get_facet(&self, facet: &Buckle) -> Result<Directory, FacetError> {
         STAT.with(|stat| {
             let now = Instant::now();
             let jsonfacet = serde_json::to_string(facet).unwrap();
@@ -683,7 +683,7 @@ impl<S: BackingStore> FS<S> {
                         let inner: FacetedDirectoryInner = serde_json::from_slice(bs.as_slice())
                             .map_err(|_| FacetError::Corrupted)?;
                         stat.borrow_mut().de_faceted += now.elapsed();
-                        inner.open_facet(facet)
+                        inner.get_facet(facet)
                     }
                     None => Err(FacetError::NoneValue),
                 }
@@ -830,7 +830,7 @@ impl<S: BackingStore> FS<S> {
                             res
                         })
                         .unwrap_or_default();
-                    match fdir_contents.open_facet(facet) {
+                    match fdir_contents.get_facet(facet) {
                         Ok(dir) => return Ok(self.link(&dir, name.clone(), direntry.clone())?),
                         Err(FacetError::Unallocated) => {
                             let dir = self.create_directory(current_label.borrow().clone());
@@ -881,7 +881,7 @@ impl<S: BackingStore> FS<S> {
                         res
                     })
                     .unwrap_or_default();
-                match fdir_contents.open_facet(facet) {
+                match fdir_contents.get_facet(facet) {
                     Ok(dir) => self.unlink(&dir, name.clone()),
                     Err(FacetError::Unallocated) => Err(UnlinkError::DoesNotExists),
                     // should never come here
