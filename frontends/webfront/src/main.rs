@@ -86,13 +86,13 @@ fn main() -> Result<(), std::io::Error> {
         )
         .get_matches();
 
-    let dbenv = lmdb::Environment::new()
-        .set_map_size(100 * 1024 * 1024 * 1024)
-        .set_max_dbs(2)
-        .open(&std::path::Path::new(
-            matches.value_of("storage path").unwrap(),
-        ))
-        .unwrap();
+    //let dbenv = lmdb::Environment::new()
+    //    .set_map_size(100 * 1024 * 1024 * 1024)
+    //    .set_max_dbs(2)
+    //    .open(&std::path::Path::new(
+    //        matches.value_of("storage path").unwrap(),
+    //    ))
+    //    .unwrap();
     let public_key_bytes = std::fs::read(matches.value_of("public key").expect("public key"))?;
     let private_key_bytes = std::fs::read(matches.value_of("secret key").expect("private key"))?;
     let base_url = matches.value_of("base url").expect("base url").to_string();
@@ -112,7 +112,7 @@ fn main() -> Result<(), std::io::Error> {
         },
         PKey::private_key_from_pem(private_key_bytes.as_slice()).unwrap(),
         PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
-        dbenv,
+        //dbenv,
         blobstore,
         fs,
         base_url,
