@@ -28,8 +28,7 @@ message InvokeFunction {
 
 message InvokeService {
   repeated PathComponent serv = 1;
-  repeated string urlArgs = 2;
-  optional string body = 3;
+  optional string body = 2;
 }
 
 message ServiceResponse {
