@@ -1,15 +1,13 @@
-use std::collections::{HashMap, HashSet};
-use std::io::{Read, Seek, Write};
 ///! secure runtime that holds the handles to the VM and the global file system
+use std::collections::HashMap;
+use std::io::{Read, Seek, Write};
 use std::net::TcpStream;
 
 use labeled::buckle::{self, Buckle, Clause, Component};
-use lmdb::{Transaction, WriteFlags};
 use log::{debug, error, warn};
 
 use crate::blobstore::{self, Blobstore};
-use crate::fs::{self, Function, FS};
-use crate::labeled_fs::DBENV;
+use crate::fs::{self, FS, BackingStore};
 use crate::sched::{
     self,
     message::{ReturnCode, TaskReturn},
@@ -102,10 +100,9 @@ impl From<SyscallChannelError> for SyscallProcessorError {
 }
 
 #[derive(Debug)]
-pub struct SyscallGlobalEnv {
+pub struct SyscallGlobalEnv<B: BackingStore> {
     pub sched_conn: Option<TcpStream>,
-    pub db: lmdb::Database,
-    pub fs: FS<&'static lmdb::Environment>,
+    pub fs: FS<B>,
     pub blobstore: Blobstore,
 }
 
@@ -192,9 +189,9 @@ impl SyscallProcessor {
         }
     }
 
-    pub fn run(
+    pub fn run<B: BackingStore>(
         mut self,
-        env: &mut SyscallGlobalEnv,
+        env: &mut SyscallGlobalEnv<B>,
         payload: String,
         s: &mut impl SyscallChannel,
     ) -> Result<TaskReturn, SyscallProcessorError> {
@@ -234,40 +231,6 @@ impl SyscallProcessor {
                                     sync: false,
                                 };
                                 sched::rpc::labeled_invoke(sched_conn, sched_invoke).map_err(
-                                    |e| {
-                                        error!("{:?}", e);
-                                        SyscallProcessorError::UnreachableScheduler
-                                    },
-                                )?;
-                            }
-                            result
-                        }
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::InvokeFunction(i)) => {
-                    let result = match env.sched_conn.as_mut() {
-                        None => {
-                            warn!("No scheduler presents. Syscall invoke is noop.");
-                            syscalls::WriteKeyResponse { success: false }
-                        }
-                        Some(sched_conn) => {
-                            // read key i.function
-                            let txn = DBENV.begin_ro_txn().unwrap();
-                            let val = txn.get(env.db, &i.function).ok();
-                            let result = syscalls::WriteKeyResponse {
-                                success: val.is_some(),
-                            };
-                            if let Some(val) = val {
-                                let f: Function = serde_json::from_slice(val).map_err(|e| {
-                                    error!("{}", e.to_string());
-                                    SyscallProcessorError::BadStrPath
-                                })?;
-                                let sched_invoke = sched::message::UnlabeledInvoke {
-                                    function: Some(f.into()),
-                                    payload: i.payload,
-                                };
-                                sched::rpc::unlabeled_invoke(sched_conn, sched_invoke).map_err(
                                     |e| {
                                         error!("{:?}", e);
                                         SyscallProcessorError::UnreachableScheduler
@@ -390,61 +353,6 @@ impl SyscallProcessor {
                         }
                     }
                     let result = syscalls::WriteKeyResponse { success };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::ReadKey(rk)) => {
-                    let txn = DBENV.begin_ro_txn().unwrap();
-                    let result = syscalls::ReadKeyResponse {
-                        value: txn.get(env.db, &rk.key).ok().map(Vec::from),
-                    };
-                    let _ = txn.commit();
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::WriteKey(wk)) => {
-                    let mut txn = DBENV.begin_rw_txn().unwrap();
-                    let result = syscalls::WriteKeyResponse {
-                        success: txn
-                            .put(env.db, &wk.key, &wk.value, WriteFlags::empty())
-                            .is_ok(),
-                    };
-                    let _ = txn.commit();
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::ReadDir(req)) => {
-                    use lmdb::Cursor;
-                    let mut keys: HashSet<Vec<u8>> = HashSet::new();
-
-                    let txn = DBENV.begin_ro_txn().unwrap();
-                    {
-                        let mut dir = req.dir;
-                        if !dir.ends_with(b"/") {
-                            dir.push(b'/');
-                        }
-                        let mut cursor = txn
-                            .open_ro_cursor(env.db)
-                            .or(Err(SyscallProcessorError::Database))?
-                            .iter_from(&dir);
-                        while let Some(Ok((key, _))) = cursor.next() {
-                            if !key.starts_with(&dir) {
-                                break;
-                            }
-                            if let Some(entry) = key
-                                .split_at(dir.len())
-                                .1
-                                .split_inclusive(|c| *c == b'/')
-                                .next()
-                            {
-                                if !entry.is_empty() {
-                                    keys.insert(entry.into());
-                                }
-                            }
-                        }
-                    }
-                    let _ = txn.commit();
-
-                    let result = syscalls::ReadDirResponse {
-                        keys: keys.drain().collect(),
-                    };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsRead(rd)) => {

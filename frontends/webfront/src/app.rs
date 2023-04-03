@@ -36,11 +36,11 @@ struct Claims {
 }
 
 #[derive(Clone)]
-pub struct App<S: Clone + BackingStore> {
+pub struct App<S: BackingStore> {
     gh_creds: GithubOAuthCredentials,
     pkey: PKey<pkey::Private>,
     pubkey: PKey<pkey::Public>,
-    dbenv: Arc<lmdb::Environment>,
+    dbenv: &'static lmdb::Environment,
     default_db: Arc<lmdb::Database>,
     blobstore: Arc<Mutex<Blobstore>>,
     fs: Arc<FS<S>>,
@@ -48,18 +48,17 @@ pub struct App<S: Clone + BackingStore> {
     conn: r2d2::Pool<Scheduler>,
 }
 
-impl<S: Clone + BackingStore> App<S> {
+impl<S: BackingStore> App<S> {
     pub fn new(
         gh_creds: GithubOAuthCredentials,
         pkey: PKey<pkey::Private>,
         pubkey: PKey<pkey::Public>,
-        dbenv: lmdb::Environment,
+        dbenv: &'static lmdb::Environment,
         blobstore: Blobstore,
         fs: FS<S>,
         base_url: String,
         addr: String,
     ) -> App<S> {
-        let dbenv = Arc::new(dbenv);
         let default_db = Arc::new(dbenv.open_db(None).unwrap());
 
         let conn = r2d2::Pool::builder()

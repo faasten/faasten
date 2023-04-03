@@ -12,7 +12,7 @@
 use clap::{App, Arg};
 use log::warn;
 use snapfaas::resource_manager::ResourceManager;
-use snapfaas::sched;
+use snapfaas::{sched, labeled_fs};
 use snapfaas::worker::Worker;
 
 use std::net::{SocketAddr, TcpStream};
@@ -76,11 +76,12 @@ fn main() {
     let pool_size = manager.total_mem_in_mb() / 128;
     let pool = threadpool::ThreadPool::new(pool_size);
     let manager = Arc::new(Mutex::new(manager));
+    let db = &*labeled_fs::DBENV;
     for i in 0..pool_size as u32 {
         let sched_addr_dup = sched_addr.clone();
         let manager_dup = Arc::clone(&manager);
         pool.execute(move || {
-            Worker::new(i + 100, sched_addr_dup, manager_dup).wait_and_process();
+            Worker::new(i + 100, sched_addr_dup, manager_dup, db).wait_and_process();
         });
     }
 

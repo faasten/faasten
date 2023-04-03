@@ -1,6 +1,6 @@
 use clap::{App, Arg};
 use openssl::pkey::PKey;
-use snapfaas::{blobstore::Blobstore, labeled_fs};
+use snapfaas::blobstore::Blobstore;
 
 mod app;
 pub mod init;
@@ -86,13 +86,13 @@ fn main() -> Result<(), std::io::Error> {
         )
         .get_matches();
 
-    let dbenv = lmdb::Environment::new()
+    let dbenv = std::boxed::Box::leak(Box::new(lmdb::Environment::new()
         .set_map_size(100 * 1024 * 1024 * 1024)
         .set_max_dbs(2)
         .open(&std::path::Path::new(
             matches.value_of("storage path").unwrap(),
         ))
-        .unwrap();
+        .unwrap()));
     let public_key_bytes = std::fs::read(matches.value_of("public key").expect("public key"))?;
     let private_key_bytes = std::fs::read(matches.value_of("secret key").expect("private key"))?;
     let base_url = matches.value_of("base url").expect("base url").to_string();
@@ -104,7 +104,7 @@ fn main() -> Result<(), std::io::Error> {
         matches.value_of("blob path").unwrap().into(),
         matches.value_of("tmp path").unwrap().into(),
     );
-    let fs = snapfaas::fs::FS::new(&*labeled_fs::DBENV);
+    let fs = snapfaas::fs::FS::new(&*dbenv);
     let app = app::App::new(
         app::GithubOAuthCredentials {
             client_id: github_client_id,

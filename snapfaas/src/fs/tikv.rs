@@ -1,12 +1,15 @@
+use std::sync::Arc;
+
 use tikv_client::RawClient;
 
+#[derive(Clone)]
 pub struct TikvClient {
-    tokio_runtime: tokio::runtime::Runtime,
+    tokio_runtime: Arc<tokio::runtime::Runtime>,
     client: RawClient,
 }
 
 impl TikvClient {
-    pub const fn new(client: RawClient, tokio_runtime: tokio::runtime::Runtime) -> Self {
+    pub const fn new(client: RawClient, tokio_runtime: Arc<tokio::runtime::Runtime> ) -> Self {
         TikvClient { tokio_runtime, client }
     }
 }

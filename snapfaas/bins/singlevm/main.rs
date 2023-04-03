@@ -269,7 +269,6 @@ fn main() {
 
     let mut env = SyscallGlobalEnv {
         sched_conn: None,
-        db: DBENV.open_db(None).expect("open default db"),
         fs: FS::new(&*DBENV),
         blobstore: Blobstore::default(),
     };

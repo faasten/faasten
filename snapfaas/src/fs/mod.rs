@@ -62,7 +62,7 @@ pub mod metrics {
     }
 }
 
-pub trait BackingStore {
+pub trait BackingStore: Clone {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>>;
     fn put(&self, key: &[u8], value: &[u8]);
     fn add(&self, key: &[u8], value: &[u8]) -> bool;
@@ -1053,7 +1053,7 @@ pub mod utils {
         }
     }
 
-    pub fn _read_path<S: Clone + BackingStore>(
+    pub fn _read_path<S: BackingStore>(
         fs: &FS<S>,
         path: self::path::Path,
         clearance_checker: fn() -> bool,
@@ -1137,21 +1137,21 @@ pub mod utils {
         }
     }
 
-    pub fn read_path<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn read_path<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<DirEntry, Error> {
         _read_path(fs, path.into(), noop)
     }
 
-    pub fn read_path_check_clearance<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn read_path_check_clearance<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<DirEntry, Error> {
         _read_path(fs, path.into(), check_clearance)
     }
 
-    pub fn list<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn list<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<HashMap<String, DirEntry>, Error> {
@@ -1162,7 +1162,7 @@ pub mod utils {
         }
     }
 
-    pub fn faceted_list<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn faceted_list<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<HashMap<String, HashMap<String, DirEntry>>, Error> {
@@ -1173,7 +1173,7 @@ pub mod utils {
         }
     }
 
-    pub fn read<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn read<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<Vec<u8>, Error> {
@@ -1187,7 +1187,7 @@ pub mod utils {
         }
     }
 
-    pub fn open_blob<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn open_blob<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<String, Error> {
@@ -1201,7 +1201,7 @@ pub mod utils {
         }
     }
 
-    pub fn update_blob<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn update_blob<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
         blobname: String,
@@ -1216,7 +1216,7 @@ pub mod utils {
         }
     }
 
-    pub fn write<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn write<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
         data: Vec<u8>,
@@ -1231,7 +1231,7 @@ pub mod utils {
         }
     }
 
-    pub fn delete<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn delete<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1254,7 +1254,7 @@ pub mod utils {
         }
     }
 
-    pub fn create_redirect_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_redirect_gate<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1267,7 +1267,7 @@ pub mod utils {
         }
     }
 
-    pub fn create_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_gate<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1321,7 +1321,7 @@ pub mod utils {
         }
     }
 
-    pub fn dup_gate<S: BackingStore + Clone, P: Into<self::path::Path>>(
+    pub fn dup_gate<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         orig: P,
         base_dir: P,
@@ -1369,7 +1369,7 @@ pub mod utils {
         })
     }
 
-    pub fn create_directory<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_directory<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1404,7 +1404,7 @@ pub mod utils {
         }
     }
 
-    pub fn create_file<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_file<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1439,7 +1439,7 @@ pub mod utils {
         }
     }
 
-    pub fn create_blob<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_blob<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1475,7 +1475,7 @@ pub mod utils {
         }
     }
 
-    pub fn create_faceted<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_faceted<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1513,7 +1513,8 @@ pub mod utils {
             Err(e) => Err(e),
         }
     }
-    pub fn invoke<S: Clone + BackingStore, P: Into<self::path::Path>>(
+
+    pub fn invoke<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<(Function, Component), Error> {
@@ -1536,7 +1537,7 @@ pub mod utils {
         }
     }
 
-    pub fn invoke_clearance_check<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn invoke_clearance_check<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<(Function, Component), Error> {
@@ -1793,7 +1794,7 @@ mod test {
             .unwrap();
 
         utils::taint_with_label(Buckle::top());
-        let mut fs = FS::new(&dbenv);
+        let mut fs = FS::new(dbenv);
         fs.initialize();
 
         let objects = vec![
