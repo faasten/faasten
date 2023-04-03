@@ -112,7 +112,6 @@ fn main() -> Result<(), std::io::Error> {
         },
         PKey::private_key_from_pem(private_key_bytes.as_slice()).unwrap(),
         PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
-        dbenv,
         blobstore,
         fs,
         base_url,
