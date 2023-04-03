@@ -388,8 +388,8 @@ pub struct Gate {
     object_id: UID,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub enum HttpVerb { #[default] GET, POST, PUT, DELETE }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum HttpVerb { GET, POST, PUT, DELETE }
 
 impl From<HttpVerb> for reqwest::Method {
     fn from(verb: HttpVerb) -> Self {
@@ -425,7 +425,7 @@ pub struct ServiceInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Service {
     pub privilege: Component,
-    invoking: Component,
+    weakest_privilege_required: Component,
     object_id: UID,
 }
 
@@ -612,7 +612,7 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
-    pub fn create_service(&self, dpriv: Component, invoking: Component, service_info: ServiceInfo) -> Service {
+    pub fn create_service(&self, dpriv: Component, wpr: Component, service_info: ServiceInfo) -> Service {
         STAT.with(|stat| {
             let mut uid: UID = rand::random();
             let service_info_bytes = serde_json::ser::to_vec(&service_info).unwrap();
@@ -622,7 +622,7 @@ impl<S: BackingStore> FS<S> {
             }
             Service {
                 privilege: dpriv,
-                invoking,
+                weakest_privilege_required: wpr,
                 object_id: uid,
             }
         })
@@ -964,10 +964,10 @@ impl<S: BackingStore> FS<S> {
             if current_label
                 .borrow()
                 .integrity
-                .implies(&service.invoking)
+                .implies(&service.weakest_privilege_required)
                && current_label
                 .borrow()
-                .can_flow_to_with_privilege(&Buckle::public(), &utils::my_privilege())
+                .can_flow_to_with_privilege(&Buckle::public(), &service.privilege)
             {
                 match self.storage.get(&service.object_id.to_be_bytes()) {
                     Some(bs) => {
