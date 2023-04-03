@@ -5,6 +5,7 @@
 
 use clap::{App, ArgGroup};
 use snapfaas::blobstore;
+use std::io::{Write, stdout};
 
 pub fn main() {
     env_logger::init();
@@ -13,19 +14,20 @@ pub fn main() {
             "--bootstrap     [YAML] 'YAML file for bootstraping an empty Faasten-FS'
              --update_fsutil [PATH] 'PATH to updated fsutil image'
              --update_python [PATH] 'PATH to updated python image'
-             --list          [PATH] 'PATH to a directory or a faceted directory, acting as [faasten]'",
+             --list          [PATH] 'PATH to a directory or a faceted directory, acting as [faasten]'
+             --read          [PATH] 'PATH to a file, acting as [faasten]'",
         )
         .group(
             ArgGroup::with_name("input")
-                .args(&["bootstrap", "update_fsutil", "update_python", "list"])
+                .args(&["bootstrap", "update_fsutil", "update_python", "list", "read"])
                 .required(true),
         )
         .get_matches();
 
     let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
     let blobstore = blobstore::Blobstore::default();
-    if matches.is_present("config") {
-        snapfaas::fs::bootstrap::prepare_fs(&fs, matches.value_of("config").unwrap());
+    if matches.is_present("bootstrap") {
+        snapfaas::fs::bootstrap::prepare_fs(&fs, matches.value_of("bootstrap").unwrap());
     } else if matches.is_present("update_fsutil") {
         snapfaas::fs::bootstrap::update_fsutil(
             &fs,
@@ -50,7 +52,19 @@ pub fn main() {
                     println!("{}\t{:?}", name, dent);
                 }
             }
-            Err(e) => log::warn!("Failed to list. {:?}", e),
+            Err(e) => log::warn!("Failed list. {:?}", e),
+        }
+    } else if matches.is_present("read") {
+        let clearance = labeled::buckle::Buckle::parse("faasten,T").unwrap();
+        snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
+        snapfaas::fs::utils::set_clearance(clearance);
+
+        let path = snapfaas::fs::path::Path::parse(matches.value_of("read").unwrap()).unwrap();
+        match snapfaas::fs::utils::read(&fs, path) {
+            Ok(mut data) => {
+                stdout().write(&mut data).unwrap();
+            }
+            Err(e) => log::warn!("Failed read. {:?}", e),
         }
     } else {
         log::warn!("Noop.");
