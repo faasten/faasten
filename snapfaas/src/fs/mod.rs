@@ -422,14 +422,6 @@ pub struct ServiceInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceInfo {
-    pub label: Buckle,
-    pub url: String,
-    pub verb: HttpVerb,
-    pub headers: HashMap<String, Vec<u8>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Service {
     pub privilege: Component,
     invoking: Component,
