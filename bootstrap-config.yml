@@ -1,0 +1,4 @@
+kernel: /home/yuetan/faasten/resources/images/vmlinux-4.20.0
+python: /home/yuetan/faasten/rootfs/python3.ext4
+fsutil: /home/yuetan/faasten/functions/output/fsutil.img
+other_runtimes: []
