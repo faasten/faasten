@@ -1605,16 +1605,16 @@ pub mod utils {
                 Err(Error::MalformedRedirectTarget)
             }
         }?;
+        use std::str::FromStr;
+        let memory = usize::from_str(
+            String::from_utf8(raw_memsize)
+                .map_err(|_| Error::MalformedRedirectTarget)?
+                .as_str(),
+        )
+        .map_err(|_| Error::MalformedRedirectTarget)?;
         if !clearance_checker() {
             return Err(Error::ClearanceError);
         }
-        if raw_memsize.len() != 8 {
-            error!("raw_memsize len {}", raw_memsize.len());
-            return Err(Error::MalformedRedirectTarget);
-        }
-        let mut buf = [0u8; 8usize];
-        buf.copy_from_slice(&raw_memsize[0..8]);
-        let memory = usize::from_be_bytes(buf);
         Ok(Function {
             memory,
             app_image,

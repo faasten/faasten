@@ -94,7 +94,7 @@ fn create_fsutil_redirect_target<S: Clone + BackingStore>(
     super::utils::write(
         faasten_fs,
         memsize_file,
-        FSUTIL_MEMSIZE.to_be_bytes().to_vec(),
+        FSUTIL_MEMSIZE.to_string().into_bytes(),
     )
     .expect("write memory size file");
 }
