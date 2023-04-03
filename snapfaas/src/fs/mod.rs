@@ -1,13 +1,13 @@
-pub mod bootstrap;
 ///! Labeled File System
+pub mod bootstrap;
 pub mod path;
 pub mod tikv;
+pub mod lmdb;
 
 use labeled::{
     buckle::{Buckle, Component, Principal},
     Label,
 };
-use lmdb::{Cursor, Transaction, WriteFlags};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -62,7 +62,7 @@ pub mod metrics {
     }
 }
 
-pub trait BackingStore: Clone {
+pub trait BackingStore {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>>;
     fn put(&self, key: &[u8], value: &[u8]);
     fn add(&self, key: &[u8], value: &[u8]) -> bool;
@@ -72,100 +72,25 @@ pub trait BackingStore: Clone {
     fn get_keys(&self) -> Option<Vec<&[u8]>>;
 }
 
-impl BackingStore for &lmdb::Environment {
+impl<B: BackingStore> BackingStore for &B {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        STAT.with(|stat| {
-            let now = Instant::now();
-            let db = self.open_db(None).ok()?;
-            let txn = self.begin_ro_txn().ok()?;
-            let res = txn.get(db, &key).ok().map(Into::<Vec<u8>>::into);
-            txn.commit().ok()?;
-            stat.borrow_mut().get += now.elapsed();
-            stat.borrow_mut().get_val_bytes += res.as_ref().map_or(0, |v| v.len());
-            stat.borrow_mut().get_key_bytes += key.len();
-            res
-        })
+        (*self).get(key)
     }
-
     fn put(&self, key: &[u8], value: &[u8]) {
-        STAT.with(|stat| {
-            let now = Instant::now();
-            let db = self.open_db(None).unwrap();
-            let mut txn = self.begin_rw_txn().unwrap();
-            let _ = txn.put(db, &key, &value, WriteFlags::empty());
-            txn.commit().unwrap();
-            stat.borrow_mut().put += now.elapsed();
-            stat.borrow_mut().put_val_bytes += value.len();
-            stat.borrow_mut().put_key_bytes += key.len();
-        })
+        (*self).put(key, value)
     }
-
     fn add(&self, key: &[u8], value: &[u8]) -> bool {
-        STAT.with(|stat| {
-            let now = Instant::now();
-            let db = self.open_db(None).unwrap();
-            let mut txn = self.begin_rw_txn().unwrap();
-            let res = match txn.put(db, &key, &value, WriteFlags::NO_OVERWRITE) {
-                Ok(_) => true,
-                Err(_) => false,
-            };
-            txn.commit().unwrap();
-            stat.borrow_mut().add += now.elapsed();
-            stat.borrow_mut().add_val_bytes += value.len();
-            stat.borrow_mut().add_key_bytes += key.len();
-            res
-        })
+        (*self).add(key, value)
     }
-
-    fn cas(
-        &self,
-        key: &[u8],
-        expected: Option<&[u8]>,
-        value: &[u8],
-    ) -> Result<(), Option<Vec<u8>>> {
-        STAT.with(|stat| {
-            let now = Instant::now();
-            let db = self.open_db(None).unwrap();
-            let mut txn = self.begin_rw_txn().unwrap();
-            let old = txn.get(db, &key).ok().map(Into::into);
-            let res = if expected.map(|e| Vec::from(e)) == old {
-                let _ = txn.put(db, &key, &value, WriteFlags::empty());
-                Ok(())
-            } else {
-                Err(old)
-            };
-            txn.commit().unwrap();
-            stat.borrow_mut().cas += now.elapsed();
-            if res.is_ok() {
-                stat.borrow_mut().cas_val_bytes += value.len();
-            }
-            stat.borrow_mut().cas_key_bytes += key.len();
-            res
-        })
+    fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8])
+        -> Result<(), Option<Vec<u8>>> {
+        (*self).cas(key, expected, value)
     }
-
     fn del(&self, key: &[u8]) {
-        STAT.with(|_stat| {
-            let db = self.open_db(None).unwrap();
-            let mut txn = self.begin_rw_txn().unwrap();
-            let _ = txn.del(db, &key, None);
-            txn.commit().unwrap();
-        })
+        (*self).del(key)
     }
-
     fn get_keys(&self) -> Option<Vec<&[u8]>> {
-        STAT.with(|_stat| {
-            let db = self.open_db(None).ok()?;
-            let txn = self.begin_ro_txn().ok()?;
-            let mut cursor = txn.open_ro_cursor(db).ok()?;
-            let mut keys = Vec::new();
-            for data in cursor.iter_start() {
-                if let Ok((key, _)) = data {
-                    keys.push(key);
-                }
-            }
-            Some(keys)
-        })
+        (*self).get_keys()
     }
 }
 
@@ -1277,7 +1202,7 @@ pub mod utils {
         _create_gate(fs, base_dir, name, policy, None, Some(f))
     }
 
-    fn _create_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    fn _create_gate<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1561,7 +1486,7 @@ pub mod utils {
         }
     }
 
-    fn parse_redirect_contents<S: Clone + BackingStore>(
+    fn parse_redirect_contents<S: BackingStore>(
         fs: &FS<S>,
         contents: HashMap<String, DirEntry>,
         clearance_checker: fn() -> bool,
@@ -1787,11 +1712,11 @@ mod test {
     fn test_collect_garbage() -> Result<(), LabelError> {
         let tmp_dir = TempDir::new().unwrap();
 
-        let dbenv = lmdb::Environment::new()
+        let dbenv = &*Box::leak(Box::new(::lmdb::Environment::new()
             .set_map_size(100 * 1024 * 1024 * 1024)
             .set_max_readers(1)
             .open(tmp_dir.path())
-            .unwrap();
+            .unwrap()));
 
         utils::taint_with_label(Buckle::top());
         let mut fs = FS::new(dbenv);

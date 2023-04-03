@@ -7,7 +7,6 @@ pub mod worker;
 pub mod blobstore;
 pub mod firecracker_wrapper;
 pub mod fs;
-pub mod labeled_fs;
 pub mod sched;
 pub mod syscall_server;
 pub mod vm;

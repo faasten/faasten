@@ -42,7 +42,7 @@ fn localfile2blob(blobstore: &mut Blobstore, local_path: &str) -> String {
     blob.name
 }
 
-fn create_fsutil_redirect_target<S: Clone + BackingStore>(
+fn create_fsutil_redirect_target<S: BackingStore>(
     faasten_fs: &super::FS<S>,
     blobstore: &mut Blobstore,
     fsutil_local_path: &str,
