@@ -91,6 +91,7 @@ pub enum SyscallProcessorError {
     Http(reqwest::Error),
     HttpAuth,
     BadStrPath,
+    BadUrlArgs,
 }
 
 impl From<SyscallChannelError> for SyscallProcessorError {
@@ -189,6 +190,27 @@ impl SyscallProcessor {
         }
     }
 
+    fn http_send(
+        &self,
+        service_info: &fs::ServiceInfo,
+        body: Option<String>
+    ) -> Result<reqwest::blocking::Response, SyscallProcessorError> {
+        let url = service_info.url.clone();
+        let method = service_info.verb.clone().into();
+        let headers = service_info.headers
+            .iter()
+            .map(|(a, b)| (
+                reqwest::header::HeaderName::from_bytes(a.as_bytes()).unwrap(),
+                reqwest::header::HeaderValue::from_bytes(b.as_bytes()).unwrap()
+            ))
+            .collect::<reqwest::header::HeaderMap>();
+        let mut request = self.http_client.request(method, url).headers(headers);
+        if let Some(body) = body {
+            request = request.body(body);
+        }
+        request.send().map_err(|e| SyscallProcessorError::Http(e))
+    }
+
     pub fn run<B: BackingStore>(
         mut self,
         env: &mut SyscallGlobalEnv<B>,
@@ -242,6 +264,31 @@ impl SyscallProcessor {
                     };
                     s.send(result.encode_to_vec())?;
                 }
+                Some(SC::InvokeService(req)) => {
+                    let service = fs::utils::invoke_service(&env.fs, req.serv).ok();
+                    let resp = match service {
+                        Some(s) => {
+                            fs::utils::taint_with_label(s.label.clone());
+                            Some(self.http_send(&s, req.body)?)
+                        }
+                        None => None
+                    };
+                    let result = match resp {
+                        None => {
+                            syscalls::ServiceResponse {
+                                data: "Fail to invoke the external service".as_bytes().to_vec(),
+                                status: 0,
+                            }
+                        }
+                        Some(resp) => {
+                            syscalls::ServiceResponse {
+                                status: resp.status().as_u16() as u32,
+                                data: resp.bytes().map_err(|e| SyscallProcessorError::Http(e))?.to_vec(),
+                            }
+                        }
+                    };
+                    s.send(result.encode_to_vec())?;
+                },
                 Some(SC::FsDelete(del)) => {
                     let value = fs::path::Path::parse(&del.path).ok().and_then(|p| {
                         p.file_name().and_then(|name| {
@@ -346,6 +393,57 @@ impl SyscallProcessor {
                                             );
                                         } else {
                                             success = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let result = syscalls::WriteKeyResponse { success };
+                    s.send(result.encode_to_vec())?;
+                }
+                Some(SC::FsCreateService(cs)) => {
+                    let mut success = false;
+                    if let Ok(path) = fs::path::Path::parse(&cs.path) {
+                        if let Some(base_dir) = path.parent() {
+                            if let Some(name) = path.file_name() {
+                                if let Ok(policy) = buckle::Buckle::parse(&cs.policy) {
+                                    if let Ok(label) = buckle::Buckle::parse(&cs.label) {
+                                        if let Ok(url) = reqwest::Url::parse(&cs.url).map(|u| u.to_string()) {
+                                            if let Ok(verb) = reqwest::Method::from_bytes(cs.verb.as_bytes()) {
+                                                const DEFAULT_HEADERS: &[(&str, &str)] = &[
+                                                    ("ACCEPT", "*/*"),
+                                                    ("USER_AGENT", "faasten"),
+                                                ];
+                                                let headers = cs.headers
+                                                    .map_or_else(
+                                                    || {
+                                                        Ok(DEFAULT_HEADERS
+                                                            .iter()
+                                                            .map(|(n, v)| (n.to_string(), v.to_string()))
+                                                            .collect::<HashMap<_, _>>())
+                                                    },
+                                                    |hs| {
+                                                        serde_json::from_str(&hs)
+                                                    });
+                                                if let Ok(headers) = headers {
+                                                    let value = fs::utils::create_service(
+                                                        &env.fs,
+                                                        base_dir,
+                                                        name,
+                                                        policy,
+                                                        label,
+                                                        url,
+                                                        verb,
+                                                        headers,
+                                                    );
+                                                    if value.is_err() {
+                                                        debug!("fs-create-service failed: {:?}", value.unwrap_err());
+                                                    } else {
+                                                        success = true;
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }

@@ -10,6 +10,11 @@ use std::net::TcpStream;
 use std::io::{stdin, self, Write, Read};
 use std::time::{self, Duration};
 
+const DEFAULT_HEADERS: &[(&str, &str)] = &[
+    ("ACCEPT", "*/*"),
+    ("USER_AGENT", "faasten"),
+];
+
 fn parse_path_vec(mut path: Vec<&str>) -> Vec<syscalls::PathComponent> {
     if path[0] == "" {
         path.remove(0);
@@ -46,167 +51,221 @@ fn main() {
                 .required(false)
                 .help("file path to write stat"),
         )
-       .subcommand(
-           SubCommand::with_name("invoke")
-           .about("Act as the principal PRINCIPAL and invoke the gate at GATE")
-           .arg(
-               Arg::with_name("server address")
-                   .value_name("[ADDR:]PORT")
-                   .long("server")
-                   .short("s")
-                   .takes_value(true)
-                   .required(true)
-                   .help("Address on which SnapFaaS is listening for connections"),
-           )
-           .arg(
-               Arg::with_name("path")
-                   .value_name("GATE PATH")
-                   .long("gate")
-                   .takes_value(true)
-                   .required(true)
-                   .value_delimiter(":")
-                   .help("Colon separated path of the gate to be invoked. Sfclient tries to parse each component first as a Buckle label. If failure, sfclient uses it as it is."),
-           )
-       )
-       .subcommand(
-           SubCommand::with_name("newgate")
-           .about("Act as the principal PRINCIPAL and create a gate at GATE from the function name.")
-           .arg(
-               Arg::with_name("base-dir")
-                   .value_name("BASE DIR")
-                   .long("base-dir")
-                   .takes_value(true)
-                   .required(true)
-                   .value_delimiter(":")
-                   .help("Colon separated path of the directory to create the gate in. Sfclient tries to parse each component first as a Buckle label. If failure, sfclient uses it as it is."),
-           )
-           .arg(
-               Arg::with_name("gate-name")
-                   .value_name("GATE NAME")
-                   .long("gate-name")
-                   .takes_value(true)
-                   .required(true)
-                   .help("Name of the gate to be created"),
-           )
-           .arg(
-               Arg::with_name("policy")
-                   .value_name("POLICY")
-                   .long("policy")
-                   .takes_value(true)
-                   .required(true)
-                   .help("A parsable Buckle string piggybacking the gate's policy. The secrecy should be the gate's privilege. The integrity should be the gate's integrity."),
-           )
-           .arg(
-               Arg::with_name("function")
-                   .value_name("FUNCTION NAME")
-                   .long("function")
-                   .takes_value(true)
-                   .required(true)
-                   .help("Function name string."),
-           )
-       )
-       .subcommand(
-           SubCommand::with_name("ls")
-           .about("list a directory")
-           .arg(
-               Arg::with_name("path")
-               .index(1)
-               .value_delimiter(":")
-               .required(true)
-               .help("A directory path."),
+        .subcommand(
+            SubCommand::with_name("invoke")
+            .about("Act as the principal PRINCIPAL and invoke the gate at GATE")
+            .arg(
+                Arg::with_name("server address")
+                    .value_name("[ADDR:]PORT")
+                    .long("server")
+                    .short("s")
+                    .takes_value(true)
+                    .required(true)
+                    .help("Address on which SnapFaaS is listening for connections"),
             )
-       )
-       .subcommand(
-           SubCommand::with_name("facetedls")
-           .about("list a faceted directory")
-           .arg(
-               Arg::with_name("path")
-               .index(1)
-               .value_delimiter(":")
-               .required(true)
-               .help("A faceted directory path."),
+            .arg(
+                Arg::with_name("path")
+                    .value_name("GATE PATH")
+                    .long("gate")
+                    .takes_value(true)
+                    .required(true)
+                    .value_delimiter(":")
+                    .help("Colon separated path of the gate to be invoked. Sfclient tries to parse each component first as a Buckle label. If failure, sfclient uses it as it is."),
             )
-       )
-       .subcommand(
-           SubCommand::with_name("write")
-           .about("write a file")
-           .arg(
-               Arg::with_name("path")
-               .index(1)
-               .value_delimiter(":")
-               .required(true)
-               .help("A file path."),
+        )
+        .subcommand(
+            SubCommand::with_name("newgate")
+            .about("Act as the principal PRINCIPAL and create a gate at GATE from the function name.")
+            .arg(
+                Arg::with_name("base-dir")
+                    .value_name("BASE DIR")
+                    .long("base-dir")
+                    .takes_value(true)
+                    .required(true)
+                    .value_delimiter(":")
+                    .help("Colon separated path of the directory to create the gate in. Sfclient tries to parse each component first as a Buckle label. If failure, sfclient uses it as it is."),
             )
-       )
-       .subcommand(
-           SubCommand::with_name("read")
-           .about("read a file")
-           .arg(
-               Arg::with_name("path")
-               .index(1)
-               .value_delimiter(":")
-               .required(true)
-               .help("A file path."),
+            .arg(
+                Arg::with_name("gate-name")
+                    .value_name("GATE NAME")
+                    .long("gate-name")
+                    .takes_value(true)
+                    .required(true)
+                    .help("Name of the gate to be created"),
             )
-       )
-       .subcommand(
-           SubCommand::with_name("del")
-           .about("delete a path. act as unlink.")
-           .arg(
-               Arg::with_name("base-dir")
-               .value_name("BASE DIR")
-               .long("base-dir")
-               .value_delimiter(":")
-               .takes_value(true)
-               .required(true)
-               .help("Path of the base directory"),
+            .arg(
+                Arg::with_name("policy")
+                    .value_name("POLICY")
+                    .long("policy")
+                    .takes_value(true)
+                    .required(true)
+                    .help("A parsable Buckle string piggybacking the gate's policy. The secrecy should be the gate's privilege. The integrity should be the gate's integrity."),
             )
-           .arg(
-               Arg::with_name("name")
-               .value_name("NAME")
-               .long("name")
-               .takes_value(true)
-               .required(true)
-               .help("Path of the base directory"),
+            .arg(
+                Arg::with_name("function")
+                    .value_name("FUNCTION NAME")
+                    .long("function")
+                    .takes_value(true)
+                    .required(true)
+                    .help("Function name string."),
             )
-       )
-       .subcommand(
-           SubCommand::with_name("create")
-           .about("create a directory")
-           .arg(
-               Arg::with_name("type")
-               .index(1)
-               .possible_values(&["dir", "file", "faceted"])
-               .required(true)
-               .help("Type of the object"),
+        )
+        .subcommand(
+            SubCommand::with_name("ls")
+            .about("list a directory")
+            .arg(
+                Arg::with_name("path")
+                    .index(1)
+                    .value_delimiter(":")
+                    .required(true)
+                    .help("A directory path."),
+             )
+        )
+        .subcommand(
+            SubCommand::with_name("facetedls")
+            .about("list a faceted directory")
+            .arg(
+                Arg::with_name("path")
+                    .index(1)
+                    .value_delimiter(":")
+                    .required(true)
+                    .help("A faceted directory path."),
             )
-           .arg(
-               Arg::with_name("base-dir")
-               .value_name("BASE DIR")
-               .long("base-dir")
-               .value_delimiter(":")
-               .takes_value(true)
-               .required(true)
-               .help("Path of the base directory"),
+        )
+        .subcommand(
+            SubCommand::with_name("write")
+            .about("write a file")
+            .arg(
+                Arg::with_name("path")
+                    .index(1)
+                    .value_delimiter(":")
+                    .required(true)
+                    .help("A file path."),
+             )
+        )
+        .subcommand(
+            SubCommand::with_name("read")
+            .about("read a file")
+            .arg(
+                Arg::with_name("path")
+                    .index(1)
+                    .value_delimiter(":")
+                    .required(true)
+                    .help("A file path."),
+             )
+        )
+        .subcommand(
+            SubCommand::with_name("del")
+            .about("delete a path. act as unlink.")
+            .arg(
+                Arg::with_name("base-dir")
+                    .value_name("BASE DIR")
+                    .long("base-dir")
+                    .value_delimiter(":")
+                    .takes_value(true)
+                    .required(true)
+                    .help("Path of the base directory"),
+             )
+            .arg(
+                Arg::with_name("name")
+                    .value_name("NAME")
+                    .long("name")
+                    .takes_value(true)
+                    .required(true)
+                    .help("Path of the base directory"),
+             )
+        )
+        .subcommand(
+            SubCommand::with_name("create")
+            .about("create a directory")
+            .arg(
+                Arg::with_name("type")
+                    .index(1)
+                    .possible_values(&["dir", "file", "faceted"])
+                    .required(true)
+                    .help("Type of the object"),
+             )
+            .arg(
+                Arg::with_name("base-dir")
+                    .value_name("BASE DIR")
+                    .long("base-dir")
+                    .value_delimiter(":")
+                    .takes_value(true)
+                    .required(true)
+                    .help("Path of the base directory"),
+             )
+            .arg(
+                Arg::with_name("name")
+                    .value_name("NAME")
+                    .long("name")
+                    .takes_value(true)
+                    .required(true)
+                    .help("Path of the base directory"),
+             )
+            .arg(
+                Arg::with_name("label")
+                    .value_name("LABEL")
+                    .long("label")
+                    .takes_value(true)
+                    .required_ifs(&[("type", "dir"), ("type", "file")])
+                    .help("Path of the base directory"),
+             )
+        )
+        .subcommand(
+            SubCommand::with_name("newservice")
+            .about("Act as the principal PRINCIPAL and create a service at Service from the function name.")
+            .arg(
+                Arg::with_name("base-dir")
+                    .value_name("BASE DIR")
+                    .long("base-dir")
+                    .takes_value(true)
+                    .required(true)
+                    .value_delimiter(":")
+                    .help("Colon separated path of the directory to create the gate in. Sfclient tries to parse each component first as a Buckle label. If failure, sfclient uses it as it is."),
             )
-           .arg(
-               Arg::with_name("name")
-               .value_name("NAME")
-               .long("name")
-               .takes_value(true)
-               .required(true)
-               .help("Path of the base directory"),
+            .arg(
+                Arg::with_name("service-name")
+                    .value_name("SERVICE NAME")
+                    .long("service-name")
+                    .takes_value(true)
+                    .required(true)
+                    .help("Name of the service to be created"),
             )
-           .arg(
-               Arg::with_name("label")
-               .value_name("LABEL")
-               .long("label")
-               .takes_value(true)
-               .required_ifs(&[("type", "dir"), ("type", "file")])
-               .help("Path of the base directory"),
+            .arg(
+                Arg::with_name("label")
+                    .value_name("LABEL")
+                    .long("label")
+                    .takes_value(true)
+                    .required(true)
+                    .required_ifs(&[("type", "dir"), ("type", "file")])
+                    .help(""),
             )
-       )
-       .get_matches();
+            .arg(
+                Arg::with_name("url")
+                    .value_name("URL")
+                    .long("url")
+                    .takes_value(true)
+                    .required(true)
+                    .help(""),
+            )
+            .arg(
+                Arg::with_name("verb")
+                    .value_name("HTTP VERB")
+                    .long("verb")
+                    .takes_value(true)
+                    .required(true)
+                    .help("HTTP Verb."),
+            )
+            .arg(
+                Arg::with_name("policy")
+                    .value_name("POLICY")
+                    .long("policy")
+                    .takes_value(true)
+                    .required(true)
+                    .help("A parsable Buckle string piggybacking the gate's policy. The secrecy should be the gate's privilege. The integrity should be the gate's integrity."),
+            )
+        )
+        .get_matches();
 
 
     let principal: Vec<&str> = cmd_arguments.value_of("principal").unwrap().split(',').collect();
@@ -389,6 +448,42 @@ fn main() {
                 panic!("{} is not a valid type.", objtype);
             }
         },
+        ("newservice", Some(sub_m)) => {
+            let url = sub_m.value_of("url").filter(|&u| reqwest::Url::parse(u).is_ok()).unwrap().to_string();
+            let verb = sub_m.value_of("verb").and_then(|v| reqwest::Method::from_bytes(v.as_bytes()).ok()).unwrap();
+            let name = sub_m.value_of("service-name").unwrap().to_string();
+            let label = sub_m.value_of("label").and_then(|s|
+                buckle::Buckle::parse(s).ok()
+            ).unwrap();
+            let policy = sub_m.value_of("policy").and_then(|s|
+                buckle::Buckle::parse(s).ok()
+            ).unwrap();
+
+
+            let headers = DEFAULT_HEADERS
+                .iter()
+                .map(|(n, v)| (
+                    reqwest::header::HeaderName::from_bytes(n.as_bytes()).unwrap(),
+                    reqwest::header::HeaderValue::from_str(v).unwrap()
+                ))
+                .collect::<reqwest::header::HeaderMap>()
+                .iter()
+                .map(|(n, v)| (n.to_string(), v.as_bytes().to_vec()))
+                .collect::<HashMap<_, _>>();
+
+            let service_info = fs::ServiceInfo {
+                url,
+                verb: verb.into(),
+                headers,
+                label,
+            };
+
+            let base_dir = sub_m.values_of("base-dir").unwrap().collect::<Vec<&str>>();
+            let base_dir = parse_path_vec(base_dir);
+            if let Err(e) = fs::utils::create_service(&fs, &base_dir, name, policy, service_info) {
+                eprintln!("Cannot create the service: {:?}", e);
+            }
+        },
         (&_, _) => {
             eprintln!("{}", cmd_arguments.usage());
         }
@@ -401,6 +496,6 @@ fn main() {
         let file = std::fs::File::create(fname).unwrap();
         serde_json::to_writer(file, &val).unwrap();
     } else {
-        serde_json::to_writer_pretty(io::stdout(), &val).unwrap();
+        // serde_json::to_writer_pretty(io::stdout(), &val).unwrap();
     }
 }

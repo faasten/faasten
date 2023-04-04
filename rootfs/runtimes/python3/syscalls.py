@@ -138,36 +138,43 @@ class Syscall():
     def github_rest_get(self, route, toblob=False):
         req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.GET, route = route, body = None, toblob=toblob))
         self._send(req)
-        response= self._recv(syscalls_pb2.GithubRestResponse())
+        response = self._recv(syscalls_pb2.GithubRestResponse())
         return response
 
     def github_rest_post(self, route, body, toblob=False):
         bodyJson = json.dumps(body)
         req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.POST, route = route, body = bodyJson, toblob=toblob))
         self._send(req)
-        response= self._recv(syscalls_pb2.GithubRestResponse())
+        response = self._recv(syscalls_pb2.GithubRestResponse())
         return response
 
     def github_rest_put(self, route, body, toblob=False):
         bodyJson = json.dumps(body)
         req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.PUT, route = route, body = bodyJson, toblob=toblob))
         self._send(req)
-        response= self._recv(syscalls_pb2.GithubRestResponse())
+        response = self._recv(syscalls_pb2.GithubRestResponse())
         return response
 
     def github_rest_delete(self, route, body, toblob=False):
         bodyJson = json.dumps(body)
         req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.DELETE, route = route, body = bodyJson, toblob=toblob))
         self._send(req)
-        response= self._recv(syscalls_pb2.GithubRestResponse())
+        response = self._recv(syscalls_pb2.GithubRestResponse())
         return response
     ### end of github APIs ###
 
     def invoke(self, gate, payload):
         req = syscalls_pb2.Syscall(invoke = syscalls_pb2.Invoke(gate = convert_path(gate), payload = payload))
         self._send(req)
-        response= self._recv(syscalls_pb2.WriteKeyResponse())
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
+
+    def invoke_service(self, service, body):
+        bodyJson = json.dumps(body)
+        req = syscalls_pb2.Syscall(invokeService = syscalls_pb2.InvokeService(serv = convert_path(service), body = bodyJson))
+        self._send(req)
+        response = self._recv(syscalls_pb2.ServiceResponse())
+        return response
 
     ###  amed data object syscalls ###
     def fs_list(self, path: str):
@@ -263,6 +270,12 @@ class Syscall():
 
     def fs_createredirectgate(self, path: str, policy: str, redirect_path: str):
         req = syscalls_pb2.Syscall(fsCreateRedirectGate=syscalls_pb2.FSCreateRedirectGate(path=path, policy=policy, redirectPath=redirect_path))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+    def fs_createservice(self, path: str, policy: str, label: str, url: str, verb: str, headers: str):
+        req = syscalls_pb2.Syscall(fsCreateService=syscalls_pb2.FSCreateService(path=path, policy=policy, label=label, url=url, verb=verb, headers=headers))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
