@@ -169,9 +169,9 @@ class Syscall():
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def invoke_service(self, service, route, body):
+    def invoke_service(self, service, body):
         bodyJson = json.dumps(body)
-        req = syscalls_pb2.Syscall(invokeService = syscalls_pb2.InvokeService(serv = convert_path(service), route = route, body = bodyJson))
+        req = syscalls_pb2.Syscall(invokeService = syscalls_pb2.InvokeService(serv = convert_path(service), body = bodyJson))
         self._send(req)
         response = self._recv(syscalls_pb2.ServiceResponse())
         return response
@@ -270,6 +270,12 @@ class Syscall():
 
     def fs_createredirectgate(self, path: str, policy: str, redirect_path: str):
         req = syscalls_pb2.Syscall(fsCreateRedirectGate=syscalls_pb2.FSCreateRedirectGate(path=path, policy=policy, redirectPath=redirect_path))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+    def fs_createservice(self, path: str, policy: str, label: str, url: str, verb: str, headers: str):
+        req = syscalls_pb2.Syscall(fsCreateService=syscalls_pb2.FSCreateService(path=path, policy=policy, label=label, url=url, verb=verb, headers=headers))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success

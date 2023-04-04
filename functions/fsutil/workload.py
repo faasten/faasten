@@ -92,7 +92,7 @@ def handle(request, syscall):
         url     = args['url']
         verb    = args['verb']
         headers = args['headers']
-        ret['success'] = syscall.create_service(path, policy, label, url, verb, headers)
+        ret['success'] = syscall.fs_createservice(path, policy, label, url, verb, headers)
     else:
         ret['success'] = False
         ret['error'] = '[fsutil] unknown op'
