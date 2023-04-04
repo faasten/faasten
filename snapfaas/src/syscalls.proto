@@ -21,6 +21,16 @@ message InvokeGate {
   string payload = 2;
 }
 
+message InvokeService {
+  repeated PathComponent serv = 1;
+  optional string body = 2;
+}
+
+message ServiceResponse {
+  bytes data = 1;
+  uint32 status = 2;
+}
+
 message DupGate {
   repeated PathComponent orig = 1;
   repeated PathComponent baseDir = 2;
@@ -209,6 +219,15 @@ message FSCreateRedirectGate {
   string redirectPath = 3;
 }
 
+message FSCreateService {
+  string path = 1;
+  string policy = 2;
+  string label = 3;
+  string url = 4;
+  string verb = 5;
+  optional string headers = 6;
+}
+
 message Syscall {
   oneof syscall {
     Response response = 1;
@@ -237,5 +256,7 @@ message Syscall {
     FSCreateGate fsCreateGate = 27;
     FSCreateBlobByName fsCreateBlobByName = 29;
     FSCreateRedirectGate fsCreateRedirectGate = 30;
+    FSCreateService fsCreateService = 31;
+    InvokeService invokeService = 32;
   }
 }

@@ -7,6 +7,7 @@ pub mod lmdb;
 use labeled::{
     buckle::{Buckle, Component, Principal},
     Label,
+    HasPrivilege,
 };
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
@@ -298,12 +299,54 @@ pub struct Gate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum HttpVerb { GET, POST, PUT, DELETE }
+
+impl From<HttpVerb> for reqwest::Method {
+    fn from(verb: HttpVerb) -> Self {
+        match verb {
+            HttpVerb::GET    => reqwest::Method::GET,
+            HttpVerb::POST   => reqwest::Method::POST,
+            HttpVerb::PUT    => reqwest::Method::PUT,
+            HttpVerb::DELETE => reqwest::Method::DELETE,
+        }
+    }
+}
+
+impl From<reqwest::Method> for HttpVerb {
+    fn from(method: reqwest::Method) -> Self {
+        match method {
+            reqwest::Method::GET    => HttpVerb::GET,
+            reqwest::Method::POST   => HttpVerb::POST,
+            reqwest::Method::PUT    => HttpVerb::PUT,
+            reqwest::Method::DELETE => HttpVerb::DELETE,
+            _ => panic!("Request method {} not supported", method)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceInfo {
+    pub label: Buckle,
+    pub url: String,
+    pub verb: HttpVerb,
+    pub headers: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Service {
+    pub privilege: Component,
+    weakest_privilege_required: Component,
+    object_id: UID,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DirEntry {
     Directory(Directory),
     File(File),
     FacetedDirectory(FacetedDirectory),
     Gate(Gate),
     Blob(Blob),
+    Service(Service),
 }
 
 mod errors {
@@ -337,6 +380,13 @@ mod errors {
         Unallocated,
         LabelError(LabelError),
         NoneValue,
+        Corrupted,
+    }
+
+    #[derive(Debug)]
+    pub enum ServiceError {
+        CannotDelegate,
+        CannotInvoke,
         Corrupted,
     }
 }
@@ -540,6 +590,28 @@ impl<S: BackingStore> FS<S> {
             }
         })
     }
+
+    pub fn create_service(
+        &self,
+        dpriv: Component,
+        wpr: Component,
+        service_info: ServiceInfo
+    ) -> Service {
+        STAT.with(|stat| {
+            let mut uid: UID = rand::random();
+            let service_info_bytes = serde_json::ser::to_vec(&service_info).unwrap();
+            while !self.storage.add(&uid.to_be_bytes(), &service_info_bytes) {
+                uid = rand::random();
+                stat.borrow_mut().create_retry += 1;
+            }
+            Service {
+                privilege: dpriv,
+                weakest_privilege_required: wpr,
+                object_id: uid,
+            }
+        })
+    }
+
 
     /////////////
     /// reads ///
@@ -864,6 +936,29 @@ impl<S: BackingStore> FS<S> {
         }
     }
 
+    pub fn invoke_service(&self, service: &Service) -> Result<ServiceInfo, ServiceError> {
+        CURRENT_LABEL.with(|current_label| {
+            if current_label
+                .borrow()
+                .integrity
+                .implies(&service.weakest_privilege_required)
+               && current_label
+                .borrow()
+                .can_flow_to_with_privilege(&Buckle::public(), &service.privilege)
+            {
+                match self.storage.get(&service.object_id.to_be_bytes()) {
+                    Some(bs) => {
+                        let info = serde_json::from_slice(bs.as_slice()).unwrap();
+                        Ok(info)
+                    }
+                    None => Err(ServiceError::Corrupted)
+                }
+            } else {
+                Err(ServiceError::CannotInvoke)
+            }
+        })
+    }
+
     //////////
     /// gc ///
     //////////
@@ -930,6 +1025,9 @@ impl<S: BackingStore> FS<S> {
                 DirEntry::Blob(blob) => {
                     let _ = visited.insert(blob.object_id);
                 }
+                DirEntry::Service(service) => {
+                    let _ = visited.insert(service.object_id);
+                }
             }
         }
 
@@ -995,6 +1093,7 @@ pub mod utils {
         LinkError(LinkError),
         UnlinkError(UnlinkError),
         FacetError(FacetError),
+        ServiceError(ServiceError),
     }
 
     impl From<LabelError> for Error {
@@ -1024,6 +1123,12 @@ pub mod utils {
     impl From<FacetError> for Error {
         fn from(err: FacetError) -> Self {
             Error::FacetError(err)
+        }
+    }
+
+    impl From<ServiceError> for Error {
+        fn from(err: ServiceError) -> Self {
+            Error::ServiceError(err)
         }
     }
 
@@ -1062,7 +1167,8 @@ pub mod utils {
                             }
                             super::DirEntry::Blob(_)
                             | super::DirEntry::Gate(_)
-                            | super::DirEntry::File(_) => Err(Error::BadPath),
+                            | super::DirEntry::File(_)
+                            | super::DirEntry::Service(_) => Err(Error::BadPath),
                         };
                         if res.is_ok() && !clearance_checker() {
                             return Err(Error::ClearanceError);
@@ -1097,7 +1203,10 @@ pub mod utils {
                         _ => Err(Error::BadPath),
                     }
                 }
-                super::DirEntry::Blob(_) | super::DirEntry::Gate(_) | super::DirEntry::File(_) => {
+                super::DirEntry::Blob(_)
+                | super::DirEntry::Gate(_)
+                | super::DirEntry::File(_)
+                | super::DirEntry::Service(_) => {
                     Err(Error::BadPath)
                 }
             };
@@ -1489,6 +1598,63 @@ pub mod utils {
         }
     }
 
+    pub fn create_service<
+        S: BackingStore,
+        P: Into<self::path::Path>,
+        V: Into<self::HttpVerb>,
+    >(
+        fs: &FS<S>,
+        base_dir: P,
+        name: String,
+        policy: Buckle,
+        label: Buckle,
+        url: String,
+        verb: V,
+        headers: HashMap<String, String>,
+    ) -> Result<(), Error> {
+        let verb = verb.into();
+        // raise the integrity to true
+        match read_path(&fs, base_dir) {
+            Ok(entry) => match entry {
+                DirEntry::Directory(dir) => {
+                    let newservice = fs.create_service(
+                        policy.secrecy,
+                        policy.integrity,
+                        ServiceInfo { label, url, verb, headers },
+                    );
+                    endorse_with_full();
+                    fs.link(&dir, name, DirEntry::Service(newservice))
+                        .map(|_| ())
+                        .map_err(|e| Error::from(e))
+                },
+                DirEntry::FacetedDirectory(fdir) => {
+                    let newservice = fs.create_service(
+                        policy.secrecy,
+                        policy.integrity,
+                        ServiceInfo { label, url, verb, headers },
+                    );
+                    endorse_with_full();
+                    fs.faceted_link(&fdir, None, name, DirEntry::Service(newservice))
+                        .map(|_| ())
+                        .map_err(|e| Error::from(e))
+                },
+                _ => Err(Error::BadPath),
+            },
+            Err(Error::FacetedDir(fdir, facet)) => {
+                let newservice = fs.create_service(
+                        policy.secrecy,
+                        policy.integrity,
+                        ServiceInfo { label, url, verb, headers },
+                    );
+                endorse_with_full();
+                fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Service(newservice))
+                    .map(|_| ())
+                    .map_err(|e| Error::from(e))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     pub fn invoke<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
@@ -1506,6 +1672,22 @@ pub mod utils {
                     let f = parse_redirect_contents(fs, contents, noop)?;
                     Ok((f, gate.privilege))
                 }
+            }
+            Ok(_) => Err(Error::BadPath),
+            Err(e) => Err(Error::from(e)),
+        }
+    }
+
+    pub fn invoke_service<S: BackingStore, P: Into<self::path::Path>>(
+        fs: &FS<S>,
+        path: P,
+    ) -> Result<ServiceInfo, Error> {
+        match read_path(&fs, path) {
+            Ok(DirEntry::Service(service)) => {
+                // implicit endorsement
+                endorse_with_full();
+                fs.invoke_service(&service)
+                    .map_err(|e| Error::from(e))
             }
             Ok(_) => Err(Error::BadPath),
             Err(e) => Err(Error::from(e)),

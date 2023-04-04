@@ -243,7 +243,7 @@ fn main() {
     let vm_listener_path = format!("worker-{}.sock_1234", CID);
     let _ = std::fs::remove_file(&vm_listener_path);
     let vm_listener = UnixListener::bind(vm_listener_path).expect("bind to the UNIX listener");
-    let force_exit = cmd_arguments.is_present("force_exit");
+    let force_exit = cmd_arguments.is_present("force exit");
     if let Err(e) = vm.launch(
         vm_listener.try_clone().unwrap(),
         CID,
