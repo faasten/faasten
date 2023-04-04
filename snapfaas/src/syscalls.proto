@@ -21,11 +21,6 @@ message InvokeGate {
   string payload = 2;
 }
 
-message InvokeFunction {
-  string function = 1;
-  string payload = 2;
-}
-
 message DupGate {
   repeated PathComponent orig = 1;
   repeated PathComponent baseDir = 2;
@@ -66,25 +61,12 @@ message Response {
   string payload = 1;
 }
 
-message ReadKey {
-  bytes key = 1;
-}
-
 message ReadKeyResponse {
   optional bytes value = 1;
 }
 
-message WriteKey {
-  bytes key = 1;
-  bytes value = 2;
-}
-
 message WriteKeyResponse {
   bool success = 1;
-}
-
-message ReadDir {
-  bytes dir = 1;
 }
 
 message ReadDirResponse {
@@ -230,8 +212,6 @@ message FSCreateRedirectGate {
 message Syscall {
   oneof syscall {
     Response response = 1;
-    ReadKey readKey = 2;
-    WriteKey writeKey = 3;
     GetCurrentLabel getCurrentLabel = 4;
     Buckle taintWithLabel = 5;
     GithubRest githubRest = 6;
@@ -247,7 +227,6 @@ message Syscall {
     BlobOpen openBlob = 16;
     BlobRead readBlob = 17;
     BlobClose closeBlob = 18;
-    ReadDir readDir = 19;
     FSList fsList = 20;
     FSFacetedList fsFacetedList = 21;
     FSCreateFacetedDir fsCreateFacetedDir = 22;
@@ -256,7 +235,6 @@ message Syscall {
     string buckleParse = 25;
     FSDelete fsDelete = 26;
     FSCreateGate fsCreateGate = 27;
-    InvokeFunction invokeFunction = 28;
     FSCreateBlobByName fsCreateBlobByName = 29;
     FSCreateRedirectGate fsCreateRedirectGate = 30;
   }

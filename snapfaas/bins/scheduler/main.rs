@@ -40,7 +40,7 @@ fn main() {
         loop {
             thread::sleep(std::time::Duration::new(5, 0));
             fs::utils::taint_with_label(labeled::buckle::Buckle::top());
-            let mut fs = fs::FS::new(&*snapfaas::labeled_fs::DBENV);
+            let mut fs = fs::FS::new(&*snapfaas::fs::lmdb::DBENV);
             let collected = fs.collect_garbage().unwrap();
             log::debug!("garbage collected {}", collected.len())
         }

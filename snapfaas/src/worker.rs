@@ -13,8 +13,7 @@ use log::{debug, error};
 use crate::configs::FunctionConfig;
 use crate::vm::Vm;
 //use crate::metrics::{self, WorkerMetrics};
-use crate::fs::{Function, FS};
-use crate::labeled_fs::DBENV;
+use crate::fs::{Function, FS, BackingStore};
 use crate::resource_manager;
 use crate::sched::{
     self,
@@ -27,7 +26,7 @@ use crate::syscall_server::*;
 
 #[derive(Debug)]
 /// Manages VM allocation and boot process and communicates with the scheduler
-pub struct Worker {
+pub struct Worker<B: BackingStore> {
     //pub thread: JoinHandle<()>,
     // each worker listens at the Unix socket worker-[cid].sock_1234
     cid: u32,
@@ -35,14 +34,15 @@ pub struct Worker {
     localrm: Arc<Mutex<resource_manager::ResourceManager>>,
     vm_listener: std::os::unix::net::UnixListener,
     //stat: WorkerMetrics,
-    env: SyscallGlobalEnv,
+    env: SyscallGlobalEnv<B>,
 }
 
-impl Worker {
+impl<B: BackingStore> Worker<B> {
     pub fn new(
         cid: u32,
         sched_addr: SocketAddr,
         localrm: Arc<Mutex<resource_manager::ResourceManager>>,
+        backing_store: B,
     ) -> Self {
         let thread_id = thread::current().id();
 
@@ -70,12 +70,10 @@ impl Worker {
         //let stat = metrics::WorkerMetrics::new(log_file);
         //stat.start_timed_flush(FLUSH_INTERVAL_SECS);
 
-        let default_db = DBENV.open_db(None).expect("Cannot open the lmdb database");
-        let default_fs = FS::new(&*DBENV);
+        let default_fs = FS::new(backing_store);
 
         let env = SyscallGlobalEnv {
             sched_conn: Some(sched_conn),
-            db: default_db,
             fs: default_fs,
             blobstore: Default::default(),
         };

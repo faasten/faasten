@@ -24,7 +24,7 @@ pub fn main() {
         )
         .get_matches();
 
-    let fs = snapfaas::fs::FS::new(&*snapfaas::labeled_fs::DBENV);
+    let fs = snapfaas::fs::FS::new(&*snapfaas::fs::lmdb::DBENV);
     let blobstore = blobstore::Blobstore::default();
     if matches.is_present("bootstrap") {
         snapfaas::fs::bootstrap::prepare_fs(&fs, matches.value_of("bootstrap").unwrap());

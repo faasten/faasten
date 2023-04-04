@@ -42,7 +42,7 @@ fn localfile2blob(blobstore: &mut Blobstore, local_path: &str) -> String {
     blob.name
 }
 
-fn create_fsutil_redirect_target<S: Clone + BackingStore>(
+fn create_fsutil_redirect_target<S: BackingStore>(
     faasten_fs: &super::FS<S>,
     blobstore: &mut Blobstore,
     fsutil_local_path: &str,
@@ -101,7 +101,7 @@ fn create_fsutil_redirect_target<S: Clone + BackingStore>(
 
 /// The preparer installs supported kernels and runtime images in the directory `FSTN_IMAGE_BASE`.
 /// Kernels and runtime images are stored as blobs.
-pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_path: &str) {
+pub fn prepare_fs<S: BackingStore>(faasten_fs: &super::FS<S>, config_path: &str) {
     #[derive(Deserialize)]
     struct Config {
         kernel: String,
@@ -199,7 +199,7 @@ pub fn prepare_fs<S: Clone + BackingStore>(faasten_fs: &super::FS<S>, config_pat
     debug!("Done with bootstrapping.")
 }
 
-pub fn register_user_fsutil<S: Clone + BackingStore>(fs: &super::FS<S>, login: String) {
+pub fn register_user_fsutil<S: BackingStore>(fs: &super::FS<S>, login: String) {
     debug!("Duplicating faasten-supplied fsutil to user-specific fsutil");
     // generate the per-user fsutil gate, acting on behalf of the user
     let ufacet = buckle::Buckle::parse(&format!("{0},{0}", login)).unwrap();
@@ -214,19 +214,19 @@ pub fn register_user_fsutil<S: Clone + BackingStore>(fs: &super::FS<S>, login: S
     super::utils::set_my_privilge(EMPTY_PRIV.clone());
 }
 
-pub fn get_runtime_blob<S: Clone + BackingStore>(fs: &super::FS<S>, runtime: &str) -> String {
+pub fn get_runtime_blob<S: BackingStore>(fs: &super::FS<S>, runtime: &str) -> String {
     let mut runtime_fs_path = FSTN_IMAGE_BASE.clone();
     runtime_fs_path.push_dscrp(runtime.to_string());
     super::utils::open_blob(fs, runtime_fs_path).unwrap()
 }
 
-pub fn get_kernel_blob<S: Clone + BackingStore>(fs: &super::FS<S>) -> String {
+pub fn get_kernel_blob<S: BackingStore>(fs: &super::FS<S>) -> String {
     let mut kernel_fs_path = FSTN_IMAGE_BASE.clone();
     kernel_fs_path.push_dscrp("kernel".to_string());
     super::utils::open_blob(fs, kernel_fs_path).unwrap()
 }
 
-pub fn update_fsutil<S: Clone + BackingStore>(
+pub fn update_fsutil<S: BackingStore>(
     fs: &super::FS<S>,
     mut blobstore: Blobstore,
     local_path: &str,
@@ -241,7 +241,7 @@ pub fn update_fsutil<S: Clone + BackingStore>(
     super::utils::set_my_privilge(EMPTY_PRIV.clone());
 }
 
-pub fn update_python<S: Clone + BackingStore>(
+pub fn update_python<S: BackingStore>(
     fs: &super::FS<S>,
     mut blobstore: Blobstore,
     local_path: &str,

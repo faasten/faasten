@@ -5,7 +5,7 @@ use log::{debug, error, warn};
 use snapfaas::blobstore::Blobstore;
 use snapfaas::configs::FunctionConfig;
 use snapfaas::fs::FS;
-use snapfaas::labeled_fs::DBENV;
+use snapfaas::fs::lmdb::DBENV;
 use snapfaas::syscall_server::SyscallGlobalEnv;
 /// This binary is used to launch a single instance of firerunner
 /// It reads a request from stdin, launches a VM based on cmdline inputs, sends
@@ -269,7 +269,6 @@ fn main() {
 
     let mut env = SyscallGlobalEnv {
         sched_conn: None,
-        db: DBENV.open_db(None).expect("open default db"),
         fs: FS::new(&*DBENV),
         blobstore: Blobstore::default(),
     };

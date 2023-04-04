@@ -18,7 +18,7 @@ use snapfaas::{
     sched::{self, message::LabeledInvoke},
 };
 
-pub fn init<S: Clone + BackingStore>(
+pub fn init<S: BackingStore>(
     login: Option<String>,
     gate_path: String,
     request: &Request,
@@ -131,7 +131,7 @@ fn prepare_payload(
     Ok((payload.to_string(), label))
 }
 
-fn prepare_labeled_invoke<S: Clone + BackingStore>(
+fn prepare_labeled_invoke<S: BackingStore>(
     gate_path: String,
     payload: String,
     fs: &FS<S>,

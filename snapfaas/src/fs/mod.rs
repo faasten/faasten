@@ -1,12 +1,13 @@
-pub mod bootstrap;
 ///! Labeled File System
+pub mod bootstrap;
 pub mod path;
+pub mod tikv;
+pub mod lmdb;
 
 use labeled::{
     buckle::{Buckle, Component, Principal},
     Label,
 };
-use lmdb::{Cursor, Transaction, WriteFlags};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -65,105 +66,29 @@ pub trait BackingStore {
     fn add(&self, key: &[u8], value: &[u8]) -> bool;
     fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8])
         -> Result<(), Option<Vec<u8>>>;
-    fn del(&self, key: &[u8]) -> bool;
+    fn del(&self, key: &[u8]);
     fn get_keys(&self) -> Option<Vec<&[u8]>>;
 }
 
-impl BackingStore for &lmdb::Environment {
+impl<B: BackingStore> BackingStore for &B {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        STAT.with(|stat| {
-            let now = Instant::now();
-            let db = self.open_db(None).ok()?;
-            let txn = self.begin_ro_txn().ok()?;
-            let res = txn.get(db, &key).ok().map(Into::<Vec<u8>>::into);
-            txn.commit().ok()?;
-            stat.borrow_mut().get += now.elapsed();
-            stat.borrow_mut().get_val_bytes += res.as_ref().map_or(0, |v| v.len());
-            stat.borrow_mut().get_key_bytes += key.len();
-            res
-        })
+        (*self).get(key)
     }
-
     fn put(&self, key: &[u8], value: &[u8]) {
-        STAT.with(|stat| {
-            let now = Instant::now();
-            let db = self.open_db(None).unwrap();
-            let mut txn = self.begin_rw_txn().unwrap();
-            let _ = txn.put(db, &key, &value, WriteFlags::empty());
-            txn.commit().unwrap();
-            stat.borrow_mut().put += now.elapsed();
-            stat.borrow_mut().put_val_bytes += value.len();
-            stat.borrow_mut().put_key_bytes += key.len();
-        })
+        (*self).put(key, value)
     }
-
     fn add(&self, key: &[u8], value: &[u8]) -> bool {
-        STAT.with(|stat| {
-            let now = Instant::now();
-            let db = self.open_db(None).unwrap();
-            let mut txn = self.begin_rw_txn().unwrap();
-            let res = match txn.put(db, &key, &value, WriteFlags::NO_OVERWRITE) {
-                Ok(_) => true,
-                Err(_) => false,
-            };
-            txn.commit().unwrap();
-            stat.borrow_mut().add += now.elapsed();
-            stat.borrow_mut().add_val_bytes += value.len();
-            stat.borrow_mut().add_key_bytes += key.len();
-            res
-        })
+        (*self).add(key, value)
     }
-
-    fn cas(
-        &self,
-        key: &[u8],
-        expected: Option<&[u8]>,
-        value: &[u8],
-    ) -> Result<(), Option<Vec<u8>>> {
-        STAT.with(|stat| {
-            let now = Instant::now();
-            let db = self.open_db(None).unwrap();
-            let mut txn = self.begin_rw_txn().unwrap();
-            let old = txn.get(db, &key).ok().map(Into::into);
-            let res = if expected.map(|e| Vec::from(e)) == old {
-                let _ = txn.put(db, &key, &value, WriteFlags::empty());
-                Ok(())
-            } else {
-                Err(old)
-            };
-            txn.commit().unwrap();
-            stat.borrow_mut().cas += now.elapsed();
-            if res.is_ok() {
-                stat.borrow_mut().cas_val_bytes += value.len();
-            }
-            stat.borrow_mut().cas_key_bytes += key.len();
-            res
-        })
+    fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8])
+        -> Result<(), Option<Vec<u8>>> {
+        (*self).cas(key, expected, value)
     }
-
-    fn del(&self, key: &[u8]) -> bool {
-        STAT.with(|_stat| {
-            let db = self.open_db(None).unwrap();
-            let mut txn = self.begin_rw_txn().unwrap();
-            let res = txn.del(db, &key, None).is_ok();
-            txn.commit().unwrap();
-            res
-        })
+    fn del(&self, key: &[u8]) {
+        (*self).del(key)
     }
-
     fn get_keys(&self) -> Option<Vec<&[u8]>> {
-        STAT.with(|_stat| {
-            let db = self.open_db(None).ok()?;
-            let txn = self.begin_ro_txn().ok()?;
-            let mut cursor = txn.open_ro_cursor(db).ok()?;
-            let mut keys = Vec::new();
-            for data in cursor.iter_start() {
-                if let Ok((key, _)) = data {
-                    keys.push(key);
-                }
-            }
-            Some(keys)
-        })
+        (*self).get_keys()
     }
 }
 
@@ -1102,7 +1027,7 @@ pub mod utils {
         }
     }
 
-    pub fn _read_path<S: Clone + BackingStore>(
+    pub fn _read_path<S: BackingStore>(
         fs: &FS<S>,
         path: self::path::Path,
         clearance_checker: fn() -> bool,
@@ -1186,21 +1111,21 @@ pub mod utils {
         }
     }
 
-    pub fn read_path<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn read_path<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<DirEntry, Error> {
         _read_path(fs, path.into(), noop)
     }
 
-    pub fn read_path_check_clearance<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn read_path_check_clearance<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<DirEntry, Error> {
         _read_path(fs, path.into(), check_clearance)
     }
 
-    pub fn list<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn list<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<HashMap<String, DirEntry>, Error> {
@@ -1212,7 +1137,7 @@ pub mod utils {
     }
 
     // return entries in all visible facets
-    pub fn faceted_list<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn faceted_list<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<HashMap<String, HashMap<String, DirEntry>>, Error> {
@@ -1223,7 +1148,7 @@ pub mod utils {
         }
     }
 
-    pub fn read<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn read<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<Vec<u8>, Error> {
@@ -1237,7 +1162,7 @@ pub mod utils {
         }
     }
 
-    pub fn open_blob<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn open_blob<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<String, Error> {
@@ -1251,7 +1176,7 @@ pub mod utils {
         }
     }
 
-    pub fn update_blob<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn update_blob<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
         blobname: String,
@@ -1266,7 +1191,7 @@ pub mod utils {
         }
     }
 
-    pub fn write<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn write<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
         data: Vec<u8>,
@@ -1281,7 +1206,7 @@ pub mod utils {
         }
     }
 
-    pub fn delete<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn delete<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1304,7 +1229,7 @@ pub mod utils {
         }
     }
 
-    pub fn create_redirect_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_redirect_gate<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1317,7 +1242,7 @@ pub mod utils {
         }
     }
 
-    pub fn create_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_gate<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1327,7 +1252,7 @@ pub mod utils {
         _create_gate(fs, base_dir, name, policy, None, Some(f))
     }
 
-    fn _create_gate<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    fn _create_gate<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1371,7 +1296,7 @@ pub mod utils {
         }
     }
 
-    pub fn dup_gate<S: BackingStore + Clone, P: Into<self::path::Path>>(
+    pub fn dup_gate<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         orig: P,
         base_dir: P,
@@ -1419,7 +1344,7 @@ pub mod utils {
         })
     }
 
-    pub fn create_directory<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_directory<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1454,7 +1379,7 @@ pub mod utils {
         }
     }
 
-    pub fn create_file<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_file<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1489,7 +1414,7 @@ pub mod utils {
         }
     }
 
-    pub fn create_blob<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_blob<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1525,7 +1450,7 @@ pub mod utils {
         }
     }
 
-    pub fn create_faceted<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn create_faceted<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1563,7 +1488,8 @@ pub mod utils {
             Err(e) => Err(e),
         }
     }
-    pub fn invoke<S: Clone + BackingStore, P: Into<self::path::Path>>(
+
+    pub fn invoke<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<(Function, Component), Error> {
@@ -1586,7 +1512,7 @@ pub mod utils {
         }
     }
 
-    pub fn invoke_clearance_check<S: Clone + BackingStore, P: Into<self::path::Path>>(
+    pub fn invoke_clearance_check<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
     ) -> Result<(Function, Component), Error> {
@@ -1610,7 +1536,7 @@ pub mod utils {
         }
     }
 
-    fn parse_redirect_contents<S: Clone + BackingStore>(
+    fn parse_redirect_contents<S: BackingStore>(
         fs: &FS<S>,
         contents: HashMap<String, DirEntry>,
         clearance_checker: fn() -> bool,
@@ -1824,14 +1750,14 @@ mod test {
     fn test_collect_garbage() -> Result<(), LabelError> {
         let tmp_dir = TempDir::new().unwrap();
 
-        let dbenv = lmdb::Environment::new()
+        let dbenv = &*Box::leak(Box::new(::lmdb::Environment::new()
             .set_map_size(100 * 1024 * 1024 * 1024)
             .set_max_readers(1)
             .open(tmp_dir.path())
-            .unwrap();
+            .unwrap()));
 
         utils::taint_with_label(Buckle::top());
-        let mut fs = FS::new(&dbenv);
+        let mut fs = FS::new(dbenv);
         fs.initialize();
 
         let objects = vec![
