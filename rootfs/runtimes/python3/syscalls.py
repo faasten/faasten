@@ -347,6 +347,7 @@ class NewBlob():
 class Blob():
     def __init__(self, fd, syscall):
         self.fd = fd
+        self.offset = 0
         self.syscall = syscall
 
     def _blob_read(self, offset=None, length=None):
@@ -365,15 +366,25 @@ class Blob():
             return self._blob_read()
         else:
             while size > 0:
-                data = self._blob_read(size)
+                data = self._blob_read(self.offset, size)
                 # reaches EOF
                 if len(data) == 0:
                     return buf
                 buf.extend(data)
-                offset += len(data)
+                self.offset += len(data)
                 size -= len(data)
         # size = 0
         return buf
+
+    def tell(self):
+        return self.offset
+
+    def seek(self, offset, whence=0):
+        # TODO handle whence of 2: seek from end of file
+        if whence == 1:
+            self.offset += offset
+        else:
+            self.offset = offset
 
 class CreateBlobError(Exception):
     pass
