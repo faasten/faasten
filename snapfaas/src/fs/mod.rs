@@ -830,7 +830,7 @@ impl<S: BackingStore> FS<S> {
                     match fdir_contents.get_facet(facet) {
                         Ok(dir) => return Ok(self.link(&dir, name.clone(), direntry.clone())?),
                         Err(FacetError::Unallocated) => {
-                            let dir = self.create_directory(current_label.borrow().clone());
+                            let dir = self.create_directory(facet.clone());
                             let _ = self.link(&dir, name.clone(), direntry.clone());
                             fdir_contents.append(dir);
                             let now = Instant::now();
