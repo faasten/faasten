@@ -21,8 +21,6 @@ use crate::configs::FunctionConfig;
 
 pub use errors::*;
 
-use self::utils::check_delegation;
-
 thread_local!(pub static CURRENT_LABEL: RefCell<Buckle> = RefCell::new(Buckle::public()));
 thread_local!(pub static PRIVILEGE: RefCell<Component> = RefCell::new(Component::dc_true()));
 thread_local!(pub static CLEARANCE: RefCell<Buckle> = RefCell::new(Buckle::top()));
@@ -211,40 +209,27 @@ struct FacetedDirectoryInner {
 }
 
 impl FacetedDirectoryInner {
-    pub fn open_facet(&self, facet: &Buckle) -> Result<Directory, FacetError> {
+    // a helper function that indexes into the faceted directoryno
+    // no label checks, label checks should be done by the caller
+    pub fn get_facet(&self, facet: &Buckle) -> Result<Directory, FacetError> {
         STAT.with(|stat| {
             let now = Instant::now();
             let jsonfacet = serde_json::to_string(facet).unwrap();
             stat.borrow_mut().ser_label += now.elapsed();
-            CURRENT_LABEL.with(|current_label| {
-                if facet.can_flow_to(&*current_label.borrow()) {
-                    Ok(self
-                        .allocated
-                        .get(&jsonfacet)
-                        .map(|idx| -> Directory { self.facets.get(idx.clone()).unwrap().clone() })
-                        .ok_or(FacetError::Unallocated))
-                } else {
-                    Err(FacetError::LabelError(LabelError::CannotRead))
-                }
-            })?
+            self.allocated
+                .get(&jsonfacet)
+                .map(|idx| -> Directory { self.facets.get(idx.clone()).unwrap().clone() })
+                .ok_or(FacetError::Unallocated)
         })
     }
 
+    // iterate over all allocated facets and return visible ones
     pub fn dummy_list_facets(&self) -> Vec<Directory> {
-        CURRENT_LABEL.with(|current_label| {
-            STAT.with(|stat| {
-                self.facets
-                    .iter()
-                    .filter(|d| {
-                        let now = Instant::now();
-                        let res = current_label.borrow().secrecy.implies(&d.label.secrecy);
-                        stat.borrow_mut().label_tracking += now.elapsed();
-                        res
-                    })
-                    .cloned()
-                    .collect()
-            })
-        })
+        self.facets
+            .iter()
+            .filter(|d| checks::can_read_relaxed(&d.label))
+            .cloned()
+            .collect()
     }
 
     pub fn list_facets(&self) -> Vec<Directory> {
@@ -382,7 +367,7 @@ impl From<Function> for crate::syscalls::Function {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Gate {
     pub privilege: Component,
-    weakest_privilege_required: Component,
+    invoker_integrity_clearance: Component,
     redirect: bool,
     object_id: UID,
 }
@@ -431,6 +416,69 @@ mod errors {
     }
 }
 
+mod checks {
+    use super::*;
+    pub fn can_delegate(delegated: &Component) -> bool {
+        STAT.with(|stat| {
+            PRIVILEGE.with(|p| {
+                debug!("my_privilege: {:?}, delegated: {:?}", p, delegated);
+                let now = Instant::now();
+                let res = p.borrow().implies(delegated);
+                stat.borrow_mut().label_tracking += now.elapsed();
+                res
+            })
+        })
+    }
+
+    pub fn can_invoke(wpr: &Component) -> bool {
+        CURRENT_LABEL.with(|current_label| {
+            STAT.with(|stat| {
+                debug!("me: {:?}, gate: {:?}", current_label, wpr);
+                let now = Instant::now();
+                let res = current_label.borrow().integrity.implies(wpr);
+                stat.borrow_mut().label_tracking += now.elapsed();
+                res
+            })
+        })
+    }
+
+    pub fn can_write(sink: &Buckle) -> bool {
+        CURRENT_LABEL.with(|current_label| {
+            STAT.with(|stat| {
+                debug!("me: {:?}, sink: {:?}", current_label, sink);
+                let now = Instant::now();
+                let res = current_label.borrow().can_flow_to(sink);
+                stat.borrow_mut().label_tracking += now.elapsed();
+                res
+            })
+        })
+    }
+
+    pub fn can_read(source: &Buckle) -> bool {
+        CURRENT_LABEL.with(|current_label| {
+            STAT.with(|stat| {
+                debug!("read source: {:?}, me: {:?}", source, current_label);
+                let now = Instant::now();
+                let res = source.can_flow_to(&*current_label.borrow());
+                stat.borrow_mut().label_tracking += now.elapsed();
+                res
+            })
+        })
+    }
+
+    pub fn can_read_relaxed(source: &Buckle) -> bool {
+        CURRENT_LABEL.with(|current_label| {
+            STAT.with(|stat| {
+                debug!("read_relaxed source: {:?}, me: {:?}", source, current_label);
+                let now = Instant::now();
+                let res = current_label.borrow().secrecy.implies(&source.secrecy);
+                stat.borrow_mut().label_tracking += now.elapsed();
+                res
+            })
+        })
+    }
+}
+
 impl<S> FS<S> {
     pub fn new(storage: S) -> FS<S> {
         FS { storage }
@@ -452,6 +500,9 @@ impl<S: BackingStore> FS<S> {
         }
     }
 
+    ///////////////
+    /// creates ///
+    ///////////////
     pub fn create_directory(&self, label: Buckle) -> Directory {
         STAT.with(|stat| {
             let now = Instant::now();
@@ -515,17 +566,20 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
-    /// hard link the redirect target directory
+    ////////////////
+    /// delegate ///
+    ////////////////
+    // hard link the redirect target directory
     pub fn create_redirect_gate(
         &self,
         dpriv: Component,
         wpr: Component,
         redirect: Directory,
     ) -> Result<Gate, GateError> {
-        if check_delegation(&dpriv) {
+        if checks::can_delegate(&dpriv) {
             Ok(Gate {
                 privilege: dpriv,
-                weakest_privilege_required: wpr,
+                invoker_integrity_clearance: wpr,
                 redirect: true,
                 object_id: redirect.object_id,
             })
@@ -541,7 +595,7 @@ impl<S: BackingStore> FS<S> {
         f: Function,
     ) -> Result<Gate, GateError> {
         STAT.with(|stat| {
-            if check_delegation(&dpriv) {
+            if checks::can_delegate(&dpriv) {
                 let mut uid: UID = rand::random();
                 while !self.storage.add(
                     &uid.to_be_bytes(),
@@ -552,7 +606,7 @@ impl<S: BackingStore> FS<S> {
                 }
                 Ok(Gate {
                     privilege: dpriv,
-                    weakest_privilege_required: wpr,
+                    invoker_integrity_clearance: wpr,
                     redirect: false,
                     object_id: uid,
                 })
@@ -562,25 +616,24 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
+    /////////////
+    /// reads ///
+    /////////////
     pub fn list(&self, dir: Directory) -> Result<HashMap<String, DirEntry>, LabelError> {
-        CURRENT_LABEL.with(|current_label| {
-            STAT.with(|stat| {
-                let now = Instant::now();
-                if dir.label.can_flow_to(&*current_label.borrow()) {
-                    stat.borrow_mut().label_tracking += now.elapsed();
-                    Ok(match self.storage.get(&dir.object_id.to_be_bytes()) {
-                        Some(bs) => {
-                            let now = Instant::now();
-                            let res = serde_json::from_slice(bs.as_slice()).unwrap();
-                            stat.borrow_mut().de_dir += now.elapsed();
-                            res
-                        }
-                        None => Default::default(),
-                    })
-                } else {
-                    Err(LabelError::CannotRead)
-                }
-            })
+        STAT.with(|stat| {
+            if checks::can_read(&dir.label) {
+                Ok(match self.storage.get(&dir.object_id.to_be_bytes()) {
+                    Some(bs) => {
+                        let now = Instant::now();
+                        let res = serde_json::from_slice(bs.as_slice()).unwrap();
+                        stat.borrow_mut().de_dir += now.elapsed();
+                        res
+                    }
+                    None => Default::default(),
+                })
+            } else {
+                Err(LabelError::CannotRead)
+            }
         })
     }
 
@@ -617,108 +670,137 @@ impl<S: BackingStore> FS<S> {
         )
     }
 
-    fn open_facet(&self, fdir: &FacetedDirectory, facet: &Buckle) -> Result<Directory, FacetError> {
-        STAT.with(
-            |stat| match self.storage.get(&fdir.object_id.to_be_bytes()) {
-                Some(bs) => {
-                    let now = Instant::now();
-                    let inner: FacetedDirectoryInner =
-                        serde_json::from_slice(bs.as_slice()).map_err(|_| FacetError::Corrupted)?;
-                    stat.borrow_mut().de_faceted += now.elapsed();
-                    inner.open_facet(facet)
+    pub fn open_facet(
+        &self,
+        fdir: &FacetedDirectory,
+        facet: &Buckle,
+    ) -> Result<Directory, FacetError> {
+        STAT.with(|stat| {
+            if checks::can_read(facet) {
+                match self.storage.get(&fdir.object_id.to_be_bytes()) {
+                    Some(bs) => {
+                        let now = Instant::now();
+                        let inner: FacetedDirectoryInner = serde_json::from_slice(bs.as_slice())
+                            .map_err(|_| FacetError::Corrupted)?;
+                        stat.borrow_mut().de_faceted += now.elapsed();
+                        inner.get_facet(facet)
+                    }
+                    None => Err(FacetError::NoneValue),
                 }
-                None => Err(FacetError::NoneValue),
-            },
-        )
+            } else {
+                Err(FacetError::LabelError(LabelError::CannotRead))
+            }
+        })
     }
 
+    pub fn read(&self, file: &File) -> Result<Vec<u8>, LabelError> {
+        if checks::can_read(&file.label) {
+            Ok(self
+                .storage
+                .get(&file.object_id.to_be_bytes())
+                .unwrap_or_default())
+        } else {
+            Err(LabelError::CannotRead)
+        }
+    }
+
+    pub fn open_blob(&self, blob: &Blob) -> Result<String, LabelError> {
+        if checks::can_read(&blob.label) {
+            let v = self
+                .storage
+                .get(&blob.object_id.to_be_bytes())
+                .unwrap_or_default();
+            Ok(String::from_utf8(v).unwrap_or_default())
+        } else {
+            Err(LabelError::CannotRead)
+        }
+    }
+
+    ///////////////////
+    /// read-writes ///
+    ///////////////////
     pub fn link(
         &self,
         dir: &Directory,
         name: String,
         direntry: DirEntry,
     ) -> Result<String, LinkError> {
-        CURRENT_LABEL.with(|current_label| {
-            STAT.with(|stat| {
+        STAT.with(|stat| {
+            let now = Instant::now();
+            if !checks::can_read_relaxed(&dir.label) {
+                return Err(LinkError::LabelError(LabelError::CannotRead));
+            }
+            if !checks::can_write(&dir.label) {
+                return Err(LinkError::LabelError(LabelError::CannotWrite));
+            }
+            stat.borrow_mut().label_tracking += now.elapsed();
+            let mut raw_dir: Option<Vec<u8>> = self.storage.get(&dir.object_id.to_be_bytes());
+            loop {
+                let mut dir_contents: HashMap<String, DirEntry> = raw_dir
+                    .as_ref()
+                    .and_then(|dir_contents| {
+                        let now = Instant::now();
+                        let res = serde_json::from_slice(dir_contents.as_slice()).ok();
+                        stat.borrow_mut().de_dir += now.elapsed();
+                        res
+                    })
+                    .unwrap_or_default();
+                if let Some(_) = dir_contents.insert(name.clone(), direntry.clone()) {
+                    return Err(LinkError::Exists);
+                }
                 let now = Instant::now();
-                if !current_label.borrow().secrecy.implies(&dir.label.secrecy) {
-                    return Err(LinkError::LabelError(LabelError::CannotRead));
+                let json_vec = serde_json::to_vec(&dir_contents).unwrap_or_default();
+                stat.borrow_mut().ser_dir += now.elapsed();
+                match self.storage.cas(
+                    &dir.object_id.to_be_bytes(),
+                    raw_dir.as_ref().map(|e| e.as_ref()),
+                    &json_vec,
+                ) {
+                    Ok(()) => return Ok(name),
+                    Err(rd) => raw_dir = rd,
                 }
-                if !current_label.borrow().can_flow_to(&dir.label) {
-                    return Err(LinkError::LabelError(LabelError::CannotWrite));
-                }
-                stat.borrow_mut().label_tracking += now.elapsed();
-                let mut raw_dir: Option<Vec<u8>> = self.storage.get(&dir.object_id.to_be_bytes());
-                loop {
-                    let mut dir_contents: HashMap<String, DirEntry> = raw_dir
-                        .as_ref()
-                        .and_then(|dir_contents| {
-                            let now = Instant::now();
-                            let res = serde_json::from_slice(dir_contents.as_slice()).ok();
-                            stat.borrow_mut().de_dir += now.elapsed();
-                            res
-                        })
-                        .unwrap_or_default();
-                    if let Some(_) = dir_contents.insert(name.clone(), direntry.clone()) {
-                        return Err(LinkError::Exists);
-                    }
-                    let now = Instant::now();
-                    let json_vec = serde_json::to_vec(&dir_contents).unwrap_or_default();
-                    stat.borrow_mut().ser_dir += now.elapsed();
-                    match self.storage.cas(
-                        &dir.object_id.to_be_bytes(),
-                        raw_dir.as_ref().map(|e| e.as_ref()),
-                        &json_vec,
-                    ) {
-                        Ok(()) => return Ok(name),
-                        Err(rd) => raw_dir = rd,
-                    }
-                }
-            })
+            }
         })
     }
 
     pub fn unlink(&self, dir: &Directory, name: String) -> Result<String, UnlinkError> {
-        CURRENT_LABEL.with(|current_label| {
-            STAT.with(|stat| {
+        STAT.with(|stat| {
+            if !checks::can_read_relaxed(&dir.label) {
+                return Err(UnlinkError::LabelError(LabelError::CannotRead));
+            }
+            if !checks::can_write(&dir.label) {
+                return Err(UnlinkError::LabelError(LabelError::CannotWrite));
+            }
+            let mut raw_dir = self.storage.get(&dir.object_id.to_be_bytes());
+            loop {
+                let mut dir_contents: HashMap<String, DirEntry> = raw_dir
+                    .as_ref()
+                    .and_then(|dir_contents| {
+                        let now = Instant::now();
+                        let res = serde_json::from_slice(dir_contents.as_slice()).ok();
+                        stat.borrow_mut().de_dir += now.elapsed();
+                        res
+                    })
+                    .unwrap_or_default();
+                if dir_contents.remove(&name).is_none() {
+                    return Err(UnlinkError::DoesNotExists);
+                }
                 let now = Instant::now();
-                if !current_label.borrow().secrecy.implies(&dir.label.secrecy) {
-                    return Err(UnlinkError::LabelError(LabelError::CannotRead));
+                let json_vec = serde_json::to_vec(&dir_contents).unwrap_or_default();
+                stat.borrow_mut().ser_dir += now.elapsed();
+                match self.storage.cas(
+                    &dir.object_id.to_be_bytes(),
+                    raw_dir.as_ref().map(|e| e.as_ref()),
+                    &json_vec,
+                ) {
+                    Ok(()) => return Ok(name),
+                    Err(rd) => raw_dir = rd,
                 }
-                if !current_label.borrow().can_flow_to(&dir.label) {
-                    return Err(UnlinkError::LabelError(LabelError::CannotWrite));
-                }
-                stat.borrow_mut().label_tracking += now.elapsed();
-                let mut raw_dir = self.storage.get(&dir.object_id.to_be_bytes());
-                loop {
-                    let mut dir_contents: HashMap<String, DirEntry> = raw_dir
-                        .as_ref()
-                        .and_then(|dir_contents| {
-                            let now = Instant::now();
-                            let res = serde_json::from_slice(dir_contents.as_slice()).ok();
-                            stat.borrow_mut().de_dir += now.elapsed();
-                            res
-                        })
-                        .unwrap_or_default();
-                    if dir_contents.remove(&name).is_none() {
-                        return Err(UnlinkError::DoesNotExists);
-                    }
-                    let now = Instant::now();
-                    let json_vec = serde_json::to_vec(&dir_contents).unwrap_or_default();
-                    stat.borrow_mut().ser_dir += now.elapsed();
-                    match self.storage.cas(
-                        &dir.object_id.to_be_bytes(),
-                        raw_dir.as_ref().map(|e| e.as_ref()),
-                        &json_vec,
-                    ) {
-                        Ok(()) => return Ok(name),
-                        Err(rd) => raw_dir = rd,
-                    }
-                }
-            })
+            }
         })
     }
 
+    // link for faceted directory, directory link label checks
     pub fn faceted_link(
         &self,
         fdir: &FacetedDirectory,
@@ -728,21 +810,15 @@ impl<S: BackingStore> FS<S> {
     ) -> Result<String, LinkError> {
         CURRENT_LABEL.with(|current_label| {
             STAT.with(|stat| {
-                // check when facet is specified.
-                let now = Instant::now();
-                if facet.is_some()
-                    && !current_label
-                        .borrow()
-                        .secrecy
-                        .implies(&facet.as_ref().unwrap().secrecy)
-                {
+                // If facet is None, use the current label to index
+                let default_facet = &*current_label.borrow();
+                let facet = facet.unwrap_or(default_facet);
+                if !checks::can_read_relaxed(facet) {
                     return Err(LinkError::LabelError(LabelError::CannotRead));
                 }
-                if facet.is_some() && !current_label.borrow().can_flow_to(&facet.as_ref().unwrap())
-                {
+                if !checks::can_write(facet) {
                     return Err(LinkError::LabelError(LabelError::CannotWrite));
                 }
-                stat.borrow_mut().label_tracking += now.elapsed();
                 let mut raw_fdir: Option<Vec<u8>> = self.storage.get(&fdir.object_id.to_be_bytes());
                 loop {
                     let mut fdir_contents: FacetedDirectoryInner = raw_fdir
@@ -754,7 +830,7 @@ impl<S: BackingStore> FS<S> {
                             res
                         })
                         .unwrap_or_default();
-                    match fdir_contents.open_facet(facet.unwrap_or(&*current_label.borrow())) {
+                    match fdir_contents.get_facet(facet) {
                         Ok(dir) => return Ok(self.link(&dir, name.clone(), direntry.clone())?),
                         Err(FacetError::Unallocated) => {
                             let dir = self.create_directory(current_label.borrow().clone());
@@ -772,7 +848,7 @@ impl<S: BackingStore> FS<S> {
                                 Err(rd) => raw_fdir = rd,
                             }
                         }
-                        Err(FacetError::LabelError(le)) => return Err(LinkError::LabelError(le)),
+                        // should never come here
                         Err(e) => panic!("fatal: {:?}", e),
                     }
                 }
@@ -780,6 +856,7 @@ impl<S: BackingStore> FS<S> {
         })
     }
 
+    // unlink for faceted directory, directory unlink label checks
     pub fn faceted_unlink(
         &self,
         fdir: &FacetedDirectory,
@@ -788,6 +865,12 @@ impl<S: BackingStore> FS<S> {
         CURRENT_LABEL.with(|current_label| {
             STAT.with(|stat| {
                 let facet = &*current_label.borrow();
+                if !checks::can_read_relaxed(facet) {
+                    return Err(UnlinkError::LabelError(LabelError::CannotRead));
+                }
+                if !checks::can_write(facet) {
+                    return Err(UnlinkError::LabelError(LabelError::CannotWrite));
+                }
                 let raw_fdir = self.storage.get(&fdir.object_id.to_be_bytes());
                 let fdir_contents: FacetedDirectoryInner = raw_fdir
                     .as_ref()
@@ -798,101 +881,67 @@ impl<S: BackingStore> FS<S> {
                         res
                     })
                     .unwrap_or_default();
-                match fdir_contents.open_facet(facet) {
-                    Ok(dir) => return Ok(self.unlink(&dir, name.clone())?),
-                    Err(FacetError::Unallocated) => return Err(UnlinkError::DoesNotExists),
-                    Err(FacetError::LabelError(le)) => return Err(UnlinkError::LabelError(le)),
+                match fdir_contents.get_facet(facet) {
+                    Ok(dir) => self.unlink(&dir, name.clone()),
+                    Err(FacetError::Unallocated) => Err(UnlinkError::DoesNotExists),
+                    // should never come here
                     Err(e) => panic!("fatal: {:?}", e),
                 }
             })
         })
     }
 
-    pub fn read(&self, file: &File) -> Result<Vec<u8>, LabelError> {
-        CURRENT_LABEL.with(|current_label| {
-            if file.label.can_flow_to(&*current_label.borrow()) {
-                Ok(self
-                    .storage
-                    .get(&file.object_id.to_be_bytes())
-                    .unwrap_or_default())
-            } else {
-                Err(LabelError::CannotRead)
-            }
-        })
-    }
-
-    pub fn open_blob(&self, blob: &Blob) -> Result<String, LabelError> {
-        CURRENT_LABEL.with(|current_label| {
-            if blob.label.can_flow_to(&*current_label.borrow()) {
-                let v = self
-                    .storage
-                    .get(&blob.object_id.to_be_bytes())
-                    .unwrap_or_default();
-                Ok(String::from_utf8(v).unwrap_or_default())
-            } else {
-                Err(LabelError::CannotRead)
-            }
-        })
-    }
-
+    //////////////
+    /// writes ///
+    //////////////
     pub fn update_blob(&self, blob: &Blob, blobname: String) -> Result<(), LabelError> {
-        CURRENT_LABEL.with(|current_label| {
-            if current_label.borrow().can_flow_to(&blob.label) {
-                Ok(self
-                    .storage
-                    .put(&blob.object_id.to_be_bytes(), &blobname.into_bytes()))
-            } else {
-                Err(LabelError::CannotWrite)
-            }
-        })
+        if checks::can_write(&blob.label) {
+            Ok(self
+                .storage
+                .put(&blob.object_id.to_be_bytes(), &blobname.into_bytes()))
+        } else {
+            Err(LabelError::CannotWrite)
+        }
     }
 
     pub fn write(&self, file: &File, data: &Vec<u8>) -> Result<(), LabelError> {
-        CURRENT_LABEL.with(|current_label| {
-            if current_label.borrow().can_flow_to(&file.label) {
-                Ok(self.storage.put(&file.object_id.to_be_bytes(), data))
-            } else {
-                Err(LabelError::CannotWrite)
-            }
-        })
+        if checks::can_write(&file.label) {
+            Ok(self.storage.put(&file.object_id.to_be_bytes(), data))
+        } else {
+            Err(LabelError::CannotWrite)
+        }
     }
 
+    ///////////////
+    /// invokes ///
+    ///////////////
     pub fn invoke(&self, gate: &Gate) -> Result<Function, GateError> {
-        CURRENT_LABEL.with(|current_label| {
-            if current_label
-                .borrow()
-                .integrity
-                .implies(&gate.weakest_privilege_required)
-            {
-                let raw_gate = self
-                    .storage
-                    .get(&gate.object_id.to_be_bytes())
-                    .ok_or(GateError::Corrupted)?;
-                Ok(serde_json::from_slice(&raw_gate).map_err(|_| GateError::Corrupted)?)
-            } else {
-                Err(GateError::CannotInvoke)
-            }
-        })
+        if checks::can_invoke(&gate.invoker_integrity_clearance) {
+            let raw_gate = self
+                .storage
+                .get(&gate.object_id.to_be_bytes())
+                .ok_or(GateError::Corrupted)?;
+            Ok(serde_json::from_slice(&raw_gate).map_err(|_| GateError::Corrupted)?)
+        } else {
+            Err(GateError::CannotInvoke)
+        }
     }
 
     pub fn invoke_redirect(&self, gate: &Gate) -> Result<HashMap<String, DirEntry>, GateError> {
-        CURRENT_LABEL.with(|current_label| {
-            if current_label
-                .borrow()
-                .integrity
-                .implies(&gate.weakest_privilege_required)
-            {
-                let raw_dir = self
-                    .storage
-                    .get(&gate.object_id.to_be_bytes())
-                    .unwrap_or_default();
-                Ok(serde_json::from_slice(&raw_dir).unwrap_or_default())
-            } else {
-                Err(GateError::CannotInvoke)
-            }
-        })
+        if checks::can_invoke(&gate.invoker_integrity_clearance) {
+            let raw_dir = self
+                .storage
+                .get(&gate.object_id.to_be_bytes())
+                .unwrap_or_default();
+            Ok(serde_json::from_slice(&raw_dir).unwrap_or_default())
+        } else {
+            Err(GateError::CannotInvoke)
+        }
     }
 
+    //////////
+    /// gc ///
+    //////////
     fn faceted_inner(&self, fdir: &FacetedDirectory) -> HashMap<String, DirEntry> {
         match self.storage.get(&fdir.object_id.to_be_bytes()) {
             Some(bs) => serde_json::from_slice::<FacetedDirectoryInner>(bs.as_slice())
@@ -1162,6 +1211,7 @@ pub mod utils {
         }
     }
 
+    // return entries in all visible facets
     pub fn faceted_list<S: Clone + BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         path: P,
@@ -1330,14 +1380,14 @@ pub mod utils {
     ) -> Result<(), Error> {
         let dpriv = policy.secrecy;
         let wpr = policy.integrity;
-        if !check_delegation(&dpriv) {
+        if !checks::can_delegate(&dpriv) {
             return Err(Error::from(GateError::CannotDelegate));
         }
         read_path(fs, orig).and_then(|entry| match entry {
             DirEntry::Gate(orig) => {
                 let gate = Gate {
                     privilege: dpriv,
-                    weakest_privilege_required: wpr,
+                    invoker_integrity_clearance: wpr,
                     redirect: orig.redirect,
                     object_id: orig.object_id,
                 };
@@ -1636,18 +1686,6 @@ pub mod utils {
 
     pub fn noop() -> bool {
         true
-    }
-
-    pub fn check_delegation(delegated: &Component) -> bool {
-        STAT.with(|stat| {
-            PRIVILEGE.with(|p| {
-                debug!("my_privilege: {:?}, delegated: {:?}", p, delegated);
-                let now = Instant::now();
-                let res = p.borrow().implies(delegated);
-                stat.borrow_mut().label_tracking += now.elapsed();
-                res
-            })
-        })
     }
 
     pub fn taint_with_secrecy(secrecy: Component) {
