@@ -7,7 +7,7 @@ use labeled::buckle::{self, Buckle, Clause, Component};
 use log::{debug, error, warn};
 
 use crate::blobstore::{self, Blobstore};
-use crate::fs::{self, FS, BackingStore};
+use crate::fs::{self, BackingStore, FS};
 use crate::sched::{
     self,
     message::{ReturnCode, TaskReturn},
@@ -193,16 +193,19 @@ impl SyscallProcessor {
     fn http_send(
         &self,
         service_info: &fs::ServiceInfo,
-        body: Option<String>
+        body: Option<String>,
     ) -> Result<reqwest::blocking::Response, SyscallProcessorError> {
         let url = service_info.url.clone();
         let method = service_info.verb.clone().into();
-        let headers = service_info.headers
+        let headers = service_info
+            .headers
             .iter()
-            .map(|(a, b)| (
-                reqwest::header::HeaderName::from_bytes(a.as_bytes()).unwrap(),
-                reqwest::header::HeaderValue::from_bytes(b.as_bytes()).unwrap()
-            ))
+            .map(|(a, b)| {
+                (
+                    reqwest::header::HeaderName::from_bytes(a.as_bytes()).unwrap(),
+                    reqwest::header::HeaderValue::from_bytes(b.as_bytes()).unwrap(),
+                )
+            })
             .collect::<reqwest::header::HeaderMap>();
         let mut request = self.http_client.request(method, url).headers(headers);
         if let Some(body) = body {
@@ -271,24 +274,23 @@ impl SyscallProcessor {
                             fs::utils::taint_with_label(s.label.clone());
                             Some(self.http_send(&s, req.body)?)
                         }
-                        None => None
+                        None => None,
                     };
                     let result = match resp {
-                        None => {
-                            syscalls::ServiceResponse {
-                                data: "Fail to invoke the external service".as_bytes().to_vec(),
-                                status: 0,
-                            }
-                        }
-                        Some(resp) => {
-                            syscalls::ServiceResponse {
-                                status: resp.status().as_u16() as u32,
-                                data: resp.bytes().map_err(|e| SyscallProcessorError::Http(e))?.to_vec(),
-                            }
-                        }
+                        None => syscalls::ServiceResponse {
+                            data: "Fail to invoke the external service".as_bytes().to_vec(),
+                            status: 0,
+                        },
+                        Some(resp) => syscalls::ServiceResponse {
+                            status: resp.status().as_u16() as u32,
+                            data: resp
+                                .bytes()
+                                .map_err(|e| SyscallProcessorError::Http(e))?
+                                .to_vec(),
+                        },
                     };
                     s.send(result.encode_to_vec())?;
-                },
+                }
                 Some(SC::FsDelete(del)) => {
                     let value = fs::path::Path::parse(&del.path).ok().and_then(|p| {
                         p.file_name().and_then(|name| {
@@ -409,36 +411,35 @@ impl SyscallProcessor {
                             if let Some(name) = path.file_name() {
                                 if let Ok(policy) = buckle::Buckle::parse(&cs.policy) {
                                     if let Ok(label) = buckle::Buckle::parse(&cs.label) {
-                                        if let Ok(url) = reqwest::Url::parse(&cs.url).map(|u| u.to_string()) {
-                                            if let Ok(verb) = reqwest::Method::from_bytes(cs.verb.as_bytes()) {
-                                                const DEFAULT_HEADERS: &[(&str, &str)] = &[
-                                                    ("ACCEPT", "*/*"),
-                                                    ("USER_AGENT", "faasten"),
-                                                ];
-                                                let headers = cs.headers
-                                                    .map_or_else(
+                                        if let Ok(url) =
+                                            reqwest::Url::parse(&cs.url).map(|u| u.to_string())
+                                        {
+                                            if let Ok(verb) =
+                                                reqwest::Method::from_bytes(cs.verb.as_bytes())
+                                            {
+                                                const DEFAULT_HEADERS: &[(&str, &str)] =
+                                                    &[("ACCEPT", "*/*"), ("USER_AGENT", "faasten")];
+                                                let headers = cs.headers.map_or_else(
                                                     || {
                                                         Ok(DEFAULT_HEADERS
                                                             .iter()
-                                                            .map(|(n, v)| (n.to_string(), v.to_string()))
+                                                            .map(|(n, v)| {
+                                                                (n.to_string(), v.to_string())
+                                                            })
                                                             .collect::<HashMap<_, _>>())
                                                     },
-                                                    |hs| {
-                                                        serde_json::from_str(&hs)
-                                                    });
+                                                    |hs| serde_json::from_str(&hs),
+                                                );
                                                 if let Ok(headers) = headers {
                                                     let value = fs::utils::create_service(
-                                                        &env.fs,
-                                                        base_dir,
-                                                        name,
-                                                        policy,
-                                                        label,
-                                                        url,
-                                                        verb,
-                                                        headers,
+                                                        &env.fs, base_dir, name, policy, label,
+                                                        url, verb, headers,
                                                     );
                                                     if value.is_err() {
-                                                        debug!("fs-create-service failed: {:?}", value.unwrap_err());
+                                                        debug!(
+                                                            "fs-create-service failed: {:?}",
+                                                            value.unwrap_err()
+                                                        );
                                                     } else {
                                                         success = true;
                                                     }
@@ -540,9 +541,14 @@ impl SyscallProcessor {
                     let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
                         p.file_name().and_then(|name| {
                             p.parent().and_then(|base_dir| {
-                                buckle::Buckle::parse(&req.label).ok().and_then(|l| {
+                                if let Some(l) = req.label {
+                                    buckle::Buckle::parse(&l).ok().and_then(|l| {
+                                        fs::utils::create_file(&env.fs, base_dir, name, l).ok()
+                                    })
+                                } else {
+                                    let l = fs::utils::get_current_label();
                                     fs::utils::create_file(&env.fs, base_dir, name, l).ok()
-                                })
+                                }
                             })
                         })
                     });
@@ -647,6 +653,17 @@ impl SyscallProcessor {
                         label: fs::utils::declassify(target)
                             .map(|l| buckle_to_pblabel(&l))
                             .ok(),
+                    };
+                    s.send(result.encode_to_vec())?;
+                }
+                Some(SC::Endorse(_en)) => {
+                    let with_priv = _en.with_priv.map_or_else(
+                        || fs::utils::my_privilege(),
+                        |p| pbcomponent_to_component(&Some(p)),
+                    );
+                    fs::utils::endorse_with(&with_priv);
+                    let result = syscalls::DeclassifyResponse {
+                        label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
                     };
                     s.send(result.encode_to_vec())?;
                 }

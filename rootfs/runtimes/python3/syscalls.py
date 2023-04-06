@@ -103,6 +103,12 @@ class Syscall():
         response = self._recv(syscalls_pb2.DeclassifyResponse())
         return response.label
 
+    def endorse(self, with_priv: syscalls_pb2.Component=None):
+        req = syscalls_pb2.Syscall(endorse = syscalls_pb2.Endorse(withPriv=with_priv))
+        self._send(req)
+        response = self._recv(syscalls_pb2.DeclassifyResponse())
+        return response.label
+
     def buckle_parse(self, s):
         """ Return a syscalls_pb2.Buckle if string s is valid. Otherwise, None.
 
@@ -248,7 +254,7 @@ class Syscall():
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_createfile(self, path: str, label: str):
+    def fs_createfile(self, path: str, label: str=None):
         """Create a file at the `path` with the `label`.
         The host-side handler always endorse before creating the file.
 
