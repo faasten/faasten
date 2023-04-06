@@ -207,6 +207,23 @@ class Syscall():
         response = self._recv(syscalls_pb2.ReadKeyResponse())
         return response.value
 
+    @contextmanager
+    def fs_openblob(self, path: str):
+        """Open the blob at the `path`.
+
+        Returns:
+            Blob: if success
+            None: otherwise
+        """
+        req = syscalls_pb2.Syscall(fsOpenBlob = syscalls_pb2.FSOpenBlob(path=path))
+        self._send(req)
+        response = self._recv(syscalls_pb2.FSOpenBlobResponse())
+        if response.name:
+            with self.open_blob(response.name) as blob:
+                yield blob
+        else:
+            None
+
     def fs_write(self, path: str, data):
         """Overwrite the file at the `path` with the `data`.
         The host-side handler always endorse before writing.
@@ -257,7 +274,7 @@ class Syscall():
 
     def fs_linkblob(self, path, blobname: str, label: str=None):
         """Link `blobname` into the file system at `path`."""
-        req = syscalls_pb2.Syscall(fsLinkBlob=syscalls_pb2.FSLinkBlob(path=path, blobname=blobname, label=label))
+        req = syscalls_pb2.Syscall(fsCreateBlobByName=syscalls_pb2.FSCreateBlobByName(path=path, blobname=blobname, label=label))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
@@ -347,6 +364,7 @@ class NewBlob():
 class Blob():
     def __init__(self, fd, syscall):
         self.fd = fd
+        self.offset = 0
         self.syscall = syscall
 
     def _blob_read(self, offset=None, length=None):
@@ -358,22 +376,31 @@ class Blob():
         raise ReadBlobError
 
     def read(self, size=None):
-        buf = []
         # if size is unspecified, implementation-dependent
         # faasten now returns at most one block (4K) data
         if size is None:
             return self._blob_read()
         else:
+            buf = bytearray(b'')
             while size > 0:
-                data = self._blob_read(size)
+                data = self._blob_read(self.offset, size)
                 # reaches EOF
                 if len(data) == 0:
                     return buf
                 buf.extend(data)
-                offset += len(data)
+                self.offset += len(data)
                 size -= len(data)
-        # size = 0
-        return buf
+            return buf
+
+    def tell(self):
+        return self.offset
+
+    def seek(self, offset, whence=0):
+        # TODO handle whence of 2: seek from end of file
+        if whence == 1:
+            self.offset += offset
+        else:
+            self.offset = offset
 
 class CreateBlobError(Exception):
     pass

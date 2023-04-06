@@ -228,6 +228,14 @@ message FSCreateService {
   optional string headers = 6;
 }
 
+message FSOpenBlob {
+  string path = 1;
+}
+
+message FSOpenBlobResponse {
+  optional string name = 1;
+}
+
 message Syscall {
   oneof syscall {
     Response response = 1;
@@ -258,5 +266,6 @@ message Syscall {
     FSCreateRedirectGate fsCreateRedirectGate = 30;
     FSCreateService fsCreateService = 31;
     InvokeService invokeService = 32;
+    FSOpenBlob fsOpenBlob = 33;
   }
 }

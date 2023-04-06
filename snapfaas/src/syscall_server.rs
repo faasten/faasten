@@ -460,6 +460,13 @@ impl SyscallProcessor {
                     let result = syscalls::ReadKeyResponse { value };
                     s.send(result.encode_to_vec())?;
                 }
+                Some(SC::FsOpenBlob(rd)) => {
+                    let value = fs::path::Path::parse(&rd.path)
+                        .ok()
+                        .and_then(|p| fs::utils::open_blob(&env.fs, p).ok());
+                    let result = syscalls::FsOpenBlobResponse { name: value };
+                    s.send(result.encode_to_vec())?;
+                }
                 Some(SC::FsList(req)) => {
                     let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
                         fs::utils::list(&env.fs, p)

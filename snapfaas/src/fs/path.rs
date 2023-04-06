@@ -41,7 +41,6 @@ impl Path {
             &_ => (),
         }
 
-        let filename_re = regex::Regex::new(r"^([[:word:]]+\.)*[[:word:]]+$").unwrap();
         let label_re = regex::Regex::new(r"^<(?P<lbl>.+)>$").unwrap();
         for c in cs {
             if c == "%" {
@@ -54,11 +53,7 @@ impl Path {
                 let f = Buckle::parse(lblstr).map_err(|_| Error::InvalidFacet)?;
                 components.push(Component::Facet(f));
             } else {
-                if filename_re.is_match(c) {
-                    components.push(Component::Dscrp(c.to_string()));
-                } else {
-                    return Err(Error::InvalidName);
-                }
+                components.push(Component::Dscrp(c.to_string()));
             }
         }
         Ok(Self { components })
