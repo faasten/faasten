@@ -1,11 +1,11 @@
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
-use labeled::buckle::Buckle;
+use labeled::buckle::{self, Buckle};
 use log::{debug, error, warn};
 use snapfaas::blobstore::Blobstore;
 use snapfaas::configs::FunctionConfig;
-use snapfaas::fs::FS;
 use snapfaas::fs::lmdb::DBENV;
+use snapfaas::fs::FS;
 use snapfaas::syscall_server::SyscallGlobalEnv;
 /// This binary is used to launch a single instance of firerunner
 /// It reads a request from stdin, launches a VM based on cmdline inputs, sends
@@ -63,6 +63,14 @@ fn main() {
                 .takes_value(true)
                 .required(false)
                 .help("path to the app file system")
+        )
+        .arg(
+            Arg::with_name("login")
+                .long("login")
+                .value_name("LOGIN")
+                .takes_value(true)
+                .required(false)
+                .help("if specified acting as the passed in identity.")
         )
         .arg(
             Arg::with_name("id")
@@ -267,6 +275,13 @@ fn main() {
     let num_req = requests.len();
     let mut num_rsp = 0;
 
+    let mypriv = cmd_arguments
+        .value_of("login")
+        .map_or(buckle::Component::dc_true(), |p| {
+            let principal = vec![p.to_string()];
+            [labeled::buckle::Clause::new_from_vec(vec![principal])].into()
+        });
+
     let mut env = SyscallGlobalEnv {
         sched_conn: None,
         fs: FS::new(&*DBENV),
@@ -278,11 +293,8 @@ fn main() {
     for req in requests {
         let t1 = Instant::now();
         debug!("request: {:?}", req);
-        let processor = syscall_server::SyscallProcessor::new(
-            Buckle::public(),
-            Buckle::public().integrity,
-            Buckle::top(),
-        );
+        let processor =
+            syscall_server::SyscallProcessor::new(Buckle::public(), mypriv.clone(), Buckle::top());
         match processor.run(&mut env, req, &mut vm) {
             Ok(rsp) => {
                 let t2 = Instant::now();
@@ -290,7 +302,7 @@ fn main() {
                     "request returned in: {} us",
                     t2.duration_since(t1).as_micros()
                 );
-                log::debug!("response: {:?}", rsp);
+                println!("response: {:?}", rsp);
                 num_rsp += 1;
             }
             Err(e) => {
