@@ -47,13 +47,17 @@ pub fn main() -> std::io::Result<()> {
     } else if matches.is_present("faceted-list") {
         let clearance = labeled::buckle::Buckle::parse("faasten,T").unwrap();
         snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
+        snapfaas::fs::utils::taint_with_label(clearance.clone());
         snapfaas::fs::utils::set_clearance(clearance);
 
         let path = snapfaas::fs::path::Path::parse(matches.value_of("faceted-list").unwrap()).unwrap();
         match snapfaas::fs::utils::faceted_list(&fs, path) {
             Ok(entries) => {
-                for (name, dent) in entries {
-                    println!("{}\t{:?}", name, dent);
+                for (f, entries) in entries {
+                    println!("{}", f);
+                    for entry in entries {
+                        println!("\t{:?}", entry);
+                    }
                 }
             }
             Err(e) => log::warn!("Failed list. {:?}", e),
