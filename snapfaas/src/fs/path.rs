@@ -134,3 +134,51 @@ impl From<Vec<syscalls::PathComponent>> for Path {
         Self { components }
     }
 }
+
+impl ToString for Path {
+    fn to_string(&self) -> String {
+        let acc = self.components.iter().fold(Vec::new(), |mut acc, comp| {
+            match comp {
+                Component::Dscrp(n) => acc.push(n.clone()),
+                Component::Facet(f) => acc.push(buckle_to_string(f)),
+            }
+            acc
+        });
+        acc.join(":")
+    }
+}
+
+fn component_to_string(c: &labeled::buckle::Component) -> String {
+    match c {
+        labeled::buckle::Component::DCFalse => "F".to_string(),
+        labeled::buckle::Component::DCFormula(clauses) => {
+            if clauses.len() == 0 {
+                "T".to_string()
+            } else {
+                clauses
+                    .iter()
+                    .fold(vec![], |mut disjunctions, clause| {
+                        let disjunction_str = clause
+                            .0
+                            .iter()
+                            .fold(vec![], |mut terms, tokens| {
+                                terms.push(tokens.join("/"));
+                                terms
+                            })
+                            .join("|");
+                        disjunctions.push(disjunction_str);
+                        disjunctions
+                    })
+                    .join("&")
+            }
+        }
+    }
+}
+
+fn buckle_to_string(l: &Buckle) -> String {
+    [
+        component_to_string(&l.secrecy),
+        component_to_string(&l.integrity),
+    ]
+    .join(",")
+}
