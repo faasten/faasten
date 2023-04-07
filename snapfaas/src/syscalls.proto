@@ -38,6 +38,10 @@ message DupGate {
   Buckle policy = 4;
 }
 
+message Endorse {
+  optional Component withPriv = 1;
+}
+
 message DeclassifyResponse {
   optional Buckle label = 1;
 }
@@ -132,7 +136,7 @@ message FSCreateDir {
 
 message FSCreateFile {
   string path = 1;
-  string label = 2;
+  optional string label = 2;
 }
 
 message ExercisePrivilege {
@@ -267,5 +271,6 @@ message Syscall {
     FSCreateService fsCreateService = 31;
     InvokeService invokeService = 32;
     FSOpenBlob fsOpenBlob = 33;
+    Endorse endorse = 34;
   }
 }
