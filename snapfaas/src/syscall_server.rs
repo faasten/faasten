@@ -509,6 +509,30 @@ impl SyscallProcessor {
                     };
                     s.send(result.encode_to_vec())?;
                 }
+                Some(SC::FsHardLink(hl)) => {
+                    let success = fs::path::Path::parse(&hl.src)
+                        .ok()
+                        .and_then(|src| {
+                            fs::path::Path::parse(&hl.dest).ok().and_then(|dest| {
+                                match fs::utils::read_path(&env.fs, src) {
+                                    Ok(dent) => match dent {
+                                        fs::DirEntry::FacetedDirectory(_)
+                                        | fs::DirEntry::Directory(_)
+                                        | fs::DirEntry::File(_)
+                                        | fs::DirEntry::Blob(_) => Some(dent.clone()),
+                                        _other_dent => None,
+                                    },
+                                    Err(_e) => None,
+                                }
+                                .and_then(|hard_link| {
+                                    fs::utils::hard_link(&env.fs, dest, hard_link).ok()
+                                })
+                            })
+                        })
+                        .is_some();
+                    let result = syscalls::WriteKeyResponse { success };
+                    s.send(result.encode_to_vec())?;
+                }
                 Some(SC::FsCreateFacetedDir(req)) => {
                     let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
                         p.file_name().and_then(|name| {
@@ -526,9 +550,14 @@ impl SyscallProcessor {
                     let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
                         p.file_name().and_then(|name| {
                             p.parent().and_then(|base_dir| {
-                                buckle::Buckle::parse(&req.label).ok().and_then(|l| {
+                                if let Some(l) = req.label {
+                                    buckle::Buckle::parse(&l).ok().and_then(|l| {
+                                        fs::utils::create_directory(&env.fs, base_dir, name, l).ok()
+                                    })
+                                } else {
+                                    let l = fs::utils::get_current_label();
                                     fs::utils::create_directory(&env.fs, base_dir, name, l).ok()
-                                })
+                                }
                             })
                         })
                     });
