@@ -6,7 +6,7 @@
 use clap::{App, ArgGroup};
 use sha2::Sha256;
 use snapfaas::blobstore;
-use std::io::{Write, stdout};
+use std::io::{stdout, Write};
 
 pub fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -19,11 +19,12 @@ pub fn main() -> std::io::Result<()> {
              --faceted-list  [PATH] 'PATH to a directory or a faceted directory, acting as [faasten]'
              --read          [PATH] 'PATH to a file, acting as [faasten]'
              --blob          [PATH] [DEST] [LABEL]
-             --mkdir         [PATH] [LABEL]",
+             --mkdir         [PATH] [LABEL]
+             --delete        [PATH]",
         )
         .group(
             ArgGroup::with_name("input")
-                .args(&["bootstrap", "update_fsutil", "update_python", "faceted-list", "list", "read", "blob", "mkdir"])
+                .args(&["bootstrap", "update_fsutil", "update_python", "faceted-list", "list", "read", "blob", "mkdir", "delete"])
                 .required(true),
         )
         .get_matches();
@@ -49,7 +50,8 @@ pub fn main() -> std::io::Result<()> {
         snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
         snapfaas::fs::utils::set_clearance(clearance);
 
-        let path = snapfaas::fs::path::Path::parse(matches.value_of("faceted-list").unwrap()).unwrap();
+        let path =
+            snapfaas::fs::path::Path::parse(matches.value_of("faceted-list").unwrap()).unwrap();
         match snapfaas::fs::utils::faceted_list(&fs, path) {
             Ok(entries) => {
                 for (name, dent) in entries {
@@ -96,14 +98,43 @@ pub fn main() -> std::io::Result<()> {
         let mut blob = blobstore.create().unwrap();
         let _ = std::io::copy(&mut file, &mut blob);
         let blob = blobstore.save(blob).unwrap();
-        println!("{}", snapfaas::fs::utils::create_blob(&fs, dest.parent().unwrap(), dest.file_name().unwrap(), label, blob.name).is_ok());
+        println!(
+            "{}",
+            snapfaas::fs::utils::create_blob(
+                &fs,
+                dest.parent().unwrap(),
+                dest.file_name().unwrap(),
+                label,
+                blob.name
+            )
+            .is_ok()
+        );
     } else if matches.is_present("mkdir") {
         snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
 
         let mut args = matches.values_of("mkdir").unwrap();
         let dest = snapfaas::fs::path::Path::parse(args.next().unwrap()).unwrap();
         let label = labeled::buckle::Buckle::parse(args.next().unwrap()).unwrap();
-        println!("{}", snapfaas::fs::utils::create_directory(&fs, dest.parent().unwrap(), dest.file_name().unwrap(), label).is_ok());
+        println!(
+            "{}",
+            snapfaas::fs::utils::create_directory(
+                &fs,
+                dest.parent().unwrap(),
+                dest.file_name().unwrap(),
+                label
+            )
+            .is_ok()
+        );
+    } else if matches.is_present("delete") {
+        snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
+
+        let arg = matches.value_of("delete").unwrap();
+        let path = snapfaas::fs::path::Path::parse(arg).unwrap();
+        println!(
+            "{}",
+            snapfaas::fs::utils::delete(&fs, path.parent().unwrap(), path.file_name().unwrap())
+                .is_ok()
+        );
     } else {
         log::warn!("Noop.");
     }
