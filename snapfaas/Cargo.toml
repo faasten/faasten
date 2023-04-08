@@ -79,7 +79,7 @@ uuid = { version = "1.2.2", features = ["v4", "fast-rng", "macro-diagnostics"] }
 threadpool = "1.8.1"
 regex = "1"
 r2d2 = "0.8.9"
-tikv-client = { git = "https://github.com/tikv/client-rust", rev = "8f54e6114227718e256027df2577bbacdf425f86" }
+tikv-client = { git = "https://github.com/faasten/client-rust", rev = "7ab149680ac19880f73105ef8abd8df4aac521f5" }
 
 
 [build-dependencies]

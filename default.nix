@@ -1,17 +1,21 @@
 { pkgs ? import <nixpkgs> {}} :
 
-pkgs.rustPlatform.buildRustPackage rec {
+with pkgs;
+
+rustPlatform.buildRustPackage rec {
   pname = "faasten";
   version = "0.1.0";
 
-  buildType = "debug";
+  buildType = "release";
 
   src = ./.;
 
-  cargoSha256 = "sha256-QbbLOZctTllrFXCiloB9yUjrTXbBPY5z82VJFziWiE0=";
+  cargoSha256 = "sha256-+ppmgEB0w11FFV1Tb1WCoc+A3kfGH/TxQ4tvej3b0mc=";
 
-  nativeBuildInputs = [ pkgs.pkg-config pkgs.protobuf ];
-  buildInputs = [ pkgs.openssl ];
+  doCheck = false;
+
+  buildInputs = [ openssl pkg-config protobuf unzip cmake ];
+  nativeBuildInputs = [ openssl pkg-config protobuf unzip cmake ];
 
   meta = {
     description = "A user-centric function-as-a-service platform";
