@@ -310,6 +310,13 @@ impl SyscallProcessor {
                     };
                     s.send(result.encode_to_vec())?;
                 }
+                Some(SC::CanonicalizePath(p)) => {
+                    let canolized = fs::path::Path::parse(&p)
+                        .map(|parsed| parsed.to_string())
+                        .ok();
+                    let result = syscalls::CanonicalizePathResponse { path: canolized };
+                    s.send(result.encode_to_vec())?;
+                }
                 Some(SC::SubPrivilege(suffix)) => {
                     // omnipotent privilege: dc_false + suffix = dc_false
                     // empty privilege: dc_true + suffix = dc_true

@@ -116,6 +116,10 @@ message PathComponent {
   }
 }
 
+message CanonicalizePathResponse {
+  optional string path = 1;
+}
+
 message FSDelete {
   string path = 1;
 }
@@ -272,5 +276,6 @@ message Syscall {
     InvokeService invokeService = 32;
     FSOpenBlob fsOpenBlob = 33;
     Endorse endorse = 34;
+    string canonicalizePath = 35;
   }
 }
