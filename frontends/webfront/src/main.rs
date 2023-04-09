@@ -9,9 +9,6 @@ fn main() -> Result<(), std::io::Error> {
     dotenv::dotenv().ok();
     env_logger::init();
 
-    let github_client_id = std::env::var("GITHUB_CLIENT_ID").expect("client id");
-    let github_client_secret = std::env::var("GITHUB_CLIENT_SECRET").expect("client secret");
-
     let matches = App::new("SnapFaaS API Web Server")
         .arg(
             Arg::with_name("storage path")
@@ -106,10 +103,6 @@ fn main() -> Result<(), std::io::Error> {
     );
     let fs = snapfaas::fs::FS::new(&*dbenv);
     let app = app::App::new(
-        app::GithubOAuthCredentials {
-            client_id: github_client_id,
-            client_secret: github_client_secret,
-        },
         PKey::private_key_from_pem(private_key_bytes.as_slice()).unwrap(),
         PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
         blobstore,

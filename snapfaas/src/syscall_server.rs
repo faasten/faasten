@@ -14,11 +14,6 @@ use crate::sched::{
 };
 use crate::syscalls::{self, syscall::Syscall as SC};
 
-const GITHUB_REST_ENDPOINT: &str = "https://api.github.com";
-const GITHUB_REST_API_VERSION_HEADER: &str = "application/json+vnd";
-const GITHUB_AUTH_TOKEN: &str = "GITHUB_AUTH_TOKEN";
-const USER_AGENT: &str = "snapfaas";
-
 pub fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Component {
     match component {
         None => Component::DCFalse,
@@ -138,55 +133,6 @@ impl SyscallProcessor {
             blobs: Default::default(),
             max_blob_id: 0,
             http_client: reqwest::blocking::Client::new(),
-        }
-    }
-
-    /// Send a HTTP GET request no matter if an authentication token is present
-    fn http_get(
-        &self,
-        sc_req: &syscalls::GithubRest,
-    ) -> Result<reqwest::blocking::Response, SyscallProcessorError> {
-        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
-        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
-        url.set_path(&sc_req.route);
-        let mut req = self
-            .http_client
-            .get(url)
-            .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
-            .header(reqwest::header::USER_AGENT, USER_AGENT);
-        req = match std::env::var_os(GITHUB_AUTH_TOKEN) {
-            Some(t_osstr) => match t_osstr.into_string() {
-                Ok(t_str) => req.bearer_auth(t_str),
-                Err(_) => req,
-            },
-            None => req,
-        };
-        req.send().map_err(|e| SyscallProcessorError::Http(e))
-    }
-
-    /// Send a HTTP POST request only if an authentication token is present
-    fn http_post(
-        &self,
-        sc_req: &syscalls::GithubRest,
-        method: reqwest::Method,
-    ) -> Result<reqwest::blocking::Response, SyscallProcessorError> {
-        // GITHUB_REST_ENDPOINT is guaranteed to be parsable so unwrap is safe here
-        let mut url = reqwest::Url::parse(GITHUB_REST_ENDPOINT).unwrap();
-        url.set_path(&sc_req.route);
-        match std::env::var_os(GITHUB_AUTH_TOKEN) {
-            Some(t_osstr) => match t_osstr.into_string() {
-                Ok(t_str) => self
-                    .http_client
-                    .request(method, url)
-                    .header(reqwest::header::ACCEPT, GITHUB_REST_API_VERSION_HEADER)
-                    .header(reqwest::header::USER_AGENT, USER_AGENT)
-                    .body(std::string::String::from(sc_req.body.as_ref().unwrap()))
-                    .bearer_auth(t_str)
-                    .send()
-                    .map_err(|e| SyscallProcessorError::Http(e)),
-                Err(_) => Err(SyscallProcessorError::HttpAuth),
-            },
-            None => Err(SyscallProcessorError::HttpAuth),
         }
     }
 
@@ -581,61 +527,6 @@ impl SyscallProcessor {
                         }
                     }
                     let result = syscalls::WriteKeyResponse { success };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::GithubRest(req)) => {
-                    let resp = match syscalls::HttpVerb::from_i32(req.verb) {
-                        Some(syscalls::HttpVerb::Get) => Some(self.http_get(&req)?),
-                        Some(syscalls::HttpVerb::Post) => {
-                            Some(self.http_post(&req, reqwest::Method::POST)?)
-                        }
-                        Some(syscalls::HttpVerb::Put) => {
-                            Some(self.http_post(&req, reqwest::Method::PUT)?)
-                        }
-                        Some(syscalls::HttpVerb::Delete) => {
-                            Some(self.http_post(&req, reqwest::Method::DELETE)?)
-                        }
-                        None => None,
-                    };
-                    let result = match resp {
-                        None => syscalls::GithubRestResponse {
-                            data: format!("`{:?}` not supported", req.verb)
-                                .as_bytes()
-                                .to_vec(),
-                            status: 0,
-                        },
-                        Some(mut resp) => {
-                            if req.toblob && resp.status().is_success() {
-                                let mut file = env
-                                    .blobstore
-                                    .create()
-                                    .map_err(|e| SyscallProcessorError::Blob(e))?;
-                                let mut buf = [0; 4096];
-                                while let Ok(len) = resp.read(&mut buf) {
-                                    if len == 0 {
-                                        break;
-                                    }
-                                    let _ = file.write_all(&buf[0..len]);
-                                }
-                                let result = env
-                                    .blobstore
-                                    .save(file)
-                                    .map_err(|e| SyscallProcessorError::Blob(e))?;
-                                syscalls::GithubRestResponse {
-                                    status: resp.status().as_u16() as u32,
-                                    data: Vec::from(result.name),
-                                }
-                            } else {
-                                syscalls::GithubRestResponse {
-                                    status: resp.status().as_u16() as u32,
-                                    data: resp
-                                        .bytes()
-                                        .map_err(|e| SyscallProcessorError::Http(e))?
-                                        .to_vec(),
-                                }
-                            }
-                        }
-                    };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::GetCurrentLabel(_)) => {

@@ -16,11 +16,6 @@ use snapfaas::sched;
 use snapfaas::sched::Scheduler;
 
 #[derive(Clone)]
-pub struct GithubOAuthCredentials {
-    pub client_id: String,
-    pub client_secret: String,
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 struct Claims {
     pub alg: String,
@@ -31,7 +26,6 @@ struct Claims {
 
 #[derive(Clone)]
 pub struct App<S: BackingStore> {
-    gh_creds: GithubOAuthCredentials,
     pkey: PKey<pkey::Private>,
     pubkey: PKey<pkey::Public>,
     blobstore: Arc<Mutex<Blobstore>>,
@@ -42,7 +36,6 @@ pub struct App<S: BackingStore> {
 
 impl<S: BackingStore> App<S> {
     pub fn new(
-        gh_creds: GithubOAuthCredentials,
         pkey: PKey<pkey::Private>,
         pubkey: PKey<pkey::Public>,
         blobstore: Blobstore,
@@ -61,7 +54,6 @@ impl<S: BackingStore> App<S> {
             fs: Arc::new(fs),
             pkey,
             pubkey,
-            gh_creds,
             base_url,
         }
     }
@@ -105,16 +97,6 @@ impl<S: BackingStore> App<S> {
                 .with_additional_header("Access-Control-Allow-Methods", "*");
         }
         rouille::router!(request,
-            (GET) (/login/github) => {
-                Ok(Response::redirect_302(
-                    format!("https://github.com/login/oauth/authorize?client_id={}&scope=repo:invites", self.gh_creds.client_id)))
-            },
-            (GET) (/authenticate/github) => {
-                self.auth_github(request)
-            },
-            /*(POST) (/pair_github) => {
-                self.pair_github_to_user(request)
-            },*/
             (GET) (/login/cas) => {
                 Ok(Response::redirect_302(
                     format!("{}/login?service={}", "https://fed.princeton.edu/cas", format!("{}/authenticate/cas", self.base_url))))
@@ -185,10 +167,8 @@ impl<S: BackingStore> App<S> {
         #[derive(Serialize)]
         struct User {
             login: String,
-            github: Option<String>,
         }
-        let github = None; // TODO
-        Ok(Response::json(&User { login, github }))
+        Ok(Response::json(&User { login }))
     }
 
     fn authenticate_cas(&self, request: &Request) -> Result<Response, Response> {
@@ -240,87 +220,4 @@ impl<S: BackingStore> App<S> {
             token
         )))
     }
-
-    fn auth_github(&self, request: &Request) -> Result<Response, Response> {
-        let code = request.get_param("code").ok_or(Response::empty_404())?;
-        let client = Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap();
-        let uat = client
-            .post(format!("https://github.com/login/oauth/access_token"))
-            .header(reqwest::header::ACCEPT, "application/vnd.github.v3+json")
-            .header(reqwest::header::USER_AGENT, "SnapFaaS Web Frontend")
-            .multipart(
-                reqwest::blocking::multipart::Form::new()
-                    .text("client_id", self.gh_creds.client_id.clone())
-                    .text("client_secret", self.gh_creds.client_secret.clone())
-                    .text("code", code),
-            )
-            .send()
-            .expect("reqwest");
-
-        #[derive(Debug, Deserialize)]
-        struct AuthResponse {
-            access_token: String,
-        }
-        let t: AuthResponse = uat.json().map_err(|_| Response::empty_400())?;
-        Ok(Response::html(format!(
-            include_str!("authenticated_github.html"),
-            token = t.access_token,
-            base_url = self.base_url
-        )))
-    }
-
-    /*fn pair_github_to_user(&self, request: &Request) -> Result<Response, Response> {
-        let local_user = self.verify_jwt(request)?;
-
-        let input = rouille::post_input!(request, {
-            github_token: String,
-        })
-        .map_err(|e| {
-            println!("{:?}", e);
-            Response::empty_400()
-        })?;
-        let client = Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap();
-        let github_user: github_types::User = client
-            .get(format!("https://api.github.com/user"))
-            .header(reqwest::header::ACCEPT, "application/vnd.github.v3+json")
-            .header(reqwest::header::USER_AGENT, "SnapFaaS Web Frontend")
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", input.github_token),
-            )
-            .send()
-            .expect("reqwest")
-            .json()
-            .unwrap();
-        let mut txn = self.dbenv.begin_rw_txn().unwrap();
-        txn.put(
-            *self.default_db,
-            &format!("users/github/for/user/{}", &local_user).as_str(),
-            &github_user.login.as_str(),
-            lmdb::WriteFlags::empty(),
-        )
-        .expect("store user");
-        txn.put(
-            *self.default_db,
-            &format!("users/github/user/{}/token", &github_user.login).as_str(),
-            &input.github_token.as_str(),
-            lmdb::WriteFlags::empty(),
-        )
-        .expect("store user");
-        txn.put(
-            *self.default_db,
-            &format!("users/github/from/{}", &github_user.login).as_str(),
-            &local_user.as_str(),
-            lmdb::WriteFlags::empty(),
-        )
-        .expect("store user");
-        txn.commit().expect("commit");
-        Ok(Response::json(&github_user.login))
-    }*/
 }

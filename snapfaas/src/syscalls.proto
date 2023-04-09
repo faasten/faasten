@@ -94,18 +94,6 @@ enum HttpVerb {
   DELETE = 4;
 }
 
-message GithubRest {
-  HttpVerb verb = 1;
-  string route = 2;
-  optional string body = 3;
-  bool toblob = 4;
-}
-
-message GithubRestResponse {
-  bytes data = 1;
-  uint32 status = 2;
-}
-
 message GetCurrentLabel {
 }
 
@@ -245,7 +233,6 @@ message Syscall {
     Response response = 1;
     GetCurrentLabel getCurrentLabel = 4;
     Buckle taintWithLabel = 5;
-    GithubRest githubRest = 6;
     InvokeGate invokeGate = 7;
     FSRead fsRead = 8;
     FSWrite fsWrite = 9;
