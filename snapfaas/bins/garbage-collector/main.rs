@@ -24,10 +24,18 @@ fn main() {
         )
         .arg(
             Arg::with_name("interval")
-                .value_name("second(s)")
+                .value_name("SECOND(S)")
                 .long("interval")
                 .short("i")
                 .takes_value(true)
+                .required(false)
+                .help("Time interval between every two garbage collections"),
+        )
+        .arg(
+            Arg::with_name("once")
+                .value_name("ONCE")
+                .long("once")
+                .takes_value(false)
                 .required(false)
                 .help("Time interval between every two garbage collections"),
         )
@@ -48,7 +56,11 @@ fn main() {
             if let Ok(collected) = fs.collect_garbage() {
                 log::debug!("garbage collected {}", collected.len())
             }
-            thread::sleep(Duration::new(interval, 0));
+            if matches.is_present("once") {
+                break
+            } else {
+                thread::sleep(Duration::new(interval, 0));
+            }
         }
     }
 }
