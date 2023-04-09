@@ -8,10 +8,9 @@ pkgs.rustPlatform.buildRustPackage rec {
 
   src = ./.;
 
-  cargoSha256 = "sha256-QbbLOZctTllrFXCiloB9yUjrTXbBPY5z82VJFziWiE0=";
+  cargoSha256 = "sha256-DmgQHMmTBYnCcFVEn5HYFPXwor83wYLZ9NudFiOmDeQ=";
 
-  nativeBuildInputs = [ pkgs.pkg-config pkgs.protobuf ];
-  buildInputs = [ pkgs.openssl ];
+  nativeBuildInputs = [ pkgs.perl pkgs.openssl pkgs.pkg-config pkgs.protobuf pkgs.unzip pkgs.cmake ];
 
   meta = {
     description = "A user-centric function-as-a-service platform";
