@@ -1031,8 +1031,6 @@ impl<S: BackingStore> FS<S> {
             }
         }
 
-        assert!(visited.iter().map(|o| objects.contains(o)).all(|x| x));
-
         let diff = objects.difference(&visited).map(|&x| x).collect::<Vec<_>>();
         for obj in diff.iter() {
             self.storage.del(&obj.to_be_bytes());
