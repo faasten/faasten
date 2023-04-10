@@ -1,13 +1,12 @@
 ///! Labeled File System
 pub mod bootstrap;
+pub mod lmdb;
 pub mod path;
 pub mod tikv;
-pub mod lmdb;
 
 use labeled::{
     buckle::{Buckle, Component, Principal},
-    Label,
-    HasPrivilege,
+    HasPrivilege, Label,
 };
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
@@ -81,8 +80,12 @@ impl<B: BackingStore> BackingStore for &B {
     fn add(&self, key: &[u8], value: &[u8]) -> bool {
         (*self).add(key, value)
     }
-    fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8])
-        -> Result<(), Option<Vec<u8>>> {
+    fn cas(
+        &self,
+        key: &[u8],
+        expected: Option<&[u8]>,
+        value: &[u8],
+    ) -> Result<(), Option<Vec<u8>>> {
         (*self).cas(key, expected, value)
     }
     fn del(&self, key: &[u8]) {
@@ -101,24 +104,24 @@ pub struct FS<S> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Directory {
     label: Buckle,
-    object_id: UID,
+    pub object_id: UID,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct File {
     label: Buckle,
-    object_id: UID,
+    pub object_id: UID,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FacetedDirectory {
-    object_id: UID,
+    pub object_id: UID,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Blob {
     label: Buckle,
-    object_id: UID,
+    pub object_id: UID,
 }
 
 #[serde_as]
@@ -299,14 +302,19 @@ pub struct Gate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum HttpVerb { GET, POST, PUT, DELETE }
+pub enum HttpVerb {
+    GET,
+    POST,
+    PUT,
+    DELETE,
+}
 
 impl From<HttpVerb> for reqwest::Method {
     fn from(verb: HttpVerb) -> Self {
         match verb {
-            HttpVerb::GET    => reqwest::Method::GET,
-            HttpVerb::POST   => reqwest::Method::POST,
-            HttpVerb::PUT    => reqwest::Method::PUT,
+            HttpVerb::GET => reqwest::Method::GET,
+            HttpVerb::POST => reqwest::Method::POST,
+            HttpVerb::PUT => reqwest::Method::PUT,
             HttpVerb::DELETE => reqwest::Method::DELETE,
         }
     }
@@ -315,11 +323,11 @@ impl From<HttpVerb> for reqwest::Method {
 impl From<reqwest::Method> for HttpVerb {
     fn from(method: reqwest::Method) -> Self {
         match method {
-            reqwest::Method::GET    => HttpVerb::GET,
-            reqwest::Method::POST   => HttpVerb::POST,
-            reqwest::Method::PUT    => HttpVerb::PUT,
+            reqwest::Method::GET => HttpVerb::GET,
+            reqwest::Method::POST => HttpVerb::POST,
+            reqwest::Method::PUT => HttpVerb::PUT,
             reqwest::Method::DELETE => HttpVerb::DELETE,
-            _ => panic!("Request method {} not supported", method)
+            _ => panic!("Request method {} not supported", method),
         }
     }
 }
@@ -595,7 +603,7 @@ impl<S: BackingStore> FS<S> {
         &self,
         dpriv: Component,
         wpr: Component,
-        service_info: ServiceInfo
+        service_info: ServiceInfo,
     ) -> Service {
         STAT.with(|stat| {
             let mut uid: UID = rand::random();
@@ -611,7 +619,6 @@ impl<S: BackingStore> FS<S> {
             }
         })
     }
-
 
     /////////////
     /// reads ///
@@ -942,16 +949,16 @@ impl<S: BackingStore> FS<S> {
                 .borrow()
                 .integrity
                 .implies(&service.weakest_privilege_required)
-               && current_label
-                .borrow()
-                .can_flow_to_with_privilege(&Buckle::public(), &service.privilege)
+                && current_label
+                    .borrow()
+                    .can_flow_to_with_privilege(&Buckle::public(), &service.privilege)
             {
                 match self.storage.get(&service.object_id.to_be_bytes()) {
                     Some(bs) => {
                         let info = serde_json::from_slice(bs.as_slice()).unwrap();
                         Ok(info)
                     }
-                    None => Err(ServiceError::Corrupted)
+                    None => Err(ServiceError::Corrupted),
                 }
             } else {
                 Err(ServiceError::CannotInvoke)
@@ -1206,9 +1213,7 @@ pub mod utils {
                 super::DirEntry::Blob(_)
                 | super::DirEntry::Gate(_)
                 | super::DirEntry::File(_)
-                | super::DirEntry::Service(_) => {
-                    Err(Error::BadPath)
-                }
+                | super::DirEntry::Service(_) => Err(Error::BadPath),
             };
             if res.is_ok() && !clearance_checker() {
                 return Err(Error::ClearanceError);
@@ -1405,6 +1410,8 @@ pub mod utils {
         }
     }
 
+    // TODO path parse should be done very first to have correct
+    // expansion of %
     pub fn dup_gate<S: BackingStore, P: Into<self::path::Path>>(
         fs: &FS<S>,
         orig: P,
@@ -1451,6 +1458,43 @@ pub mod utils {
             }
             _ => Err(Error::BadPath),
         })
+    }
+
+    pub fn hard_link<S: BackingStore, P: Into<self::path::Path>>(
+        fs: &FS<S>,
+        dest: P,
+        hard_link: DirEntry,
+    ) -> Result<(), Error> {
+        let dest = dest.into();
+        if let Some(base_dir) = dest.parent() {
+            if let Some(name) = dest.file_name() {
+                return match read_path(fs, base_dir) {
+                    Ok(entry) => match entry {
+                        DirEntry::Directory(dir) => {
+                            endorse_with_full();
+                            fs.link(&dir, name, hard_link)
+                                .map(|_| ())
+                                .map_err(|e| Error::from(e))
+                        }
+                        DirEntry::FacetedDirectory(fdir) => {
+                            endorse_with_full();
+                            fs.faceted_link(&fdir, None, name, hard_link)
+                                .map(|_| ())
+                                .map_err(|e| Error::from(e))
+                        }
+                        _ => Err(Error::BadPath),
+                    },
+                    Err(Error::FacetedDir(fdir, facet)) => {
+                        endorse_with_full();
+                        fs.faceted_link(&fdir, Some(&facet), name, hard_link)
+                            .map(|_| ())
+                            .map_err(|e| Error::from(e))
+                    }
+                    Err(e) => Err(e),
+                };
+            }
+        }
+        Err(Error::BadPath)
     }
 
     pub fn create_directory<S: BackingStore, P: Into<self::path::Path>>(
@@ -1598,11 +1642,7 @@ pub mod utils {
         }
     }
 
-    pub fn create_service<
-        S: BackingStore,
-        P: Into<self::path::Path>,
-        V: Into<self::HttpVerb>,
-    >(
+    pub fn create_service<S: BackingStore, P: Into<self::path::Path>, V: Into<self::HttpVerb>>(
         fs: &FS<S>,
         base_dir: P,
         name: String,
@@ -1620,32 +1660,47 @@ pub mod utils {
                     let newservice = fs.create_service(
                         policy.secrecy,
                         policy.integrity,
-                        ServiceInfo { label, url, verb, headers },
+                        ServiceInfo {
+                            label,
+                            url,
+                            verb,
+                            headers,
+                        },
                     );
                     endorse_with_full();
                     fs.link(&dir, name, DirEntry::Service(newservice))
                         .map(|_| ())
                         .map_err(|e| Error::from(e))
-                },
+                }
                 DirEntry::FacetedDirectory(fdir) => {
                     let newservice = fs.create_service(
                         policy.secrecy,
                         policy.integrity,
-                        ServiceInfo { label, url, verb, headers },
+                        ServiceInfo {
+                            label,
+                            url,
+                            verb,
+                            headers,
+                        },
                     );
                     endorse_with_full();
                     fs.faceted_link(&fdir, None, name, DirEntry::Service(newservice))
                         .map(|_| ())
                         .map_err(|e| Error::from(e))
-                },
+                }
                 _ => Err(Error::BadPath),
             },
             Err(Error::FacetedDir(fdir, facet)) => {
                 let newservice = fs.create_service(
-                        policy.secrecy,
-                        policy.integrity,
-                        ServiceInfo { label, url, verb, headers },
-                    );
+                    policy.secrecy,
+                    policy.integrity,
+                    ServiceInfo {
+                        label,
+                        url,
+                        verb,
+                        headers,
+                    },
+                );
                 endorse_with_full();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Service(newservice))
                     .map(|_| ())
@@ -1686,8 +1741,7 @@ pub mod utils {
             Ok(DirEntry::Service(service)) => {
                 // implicit endorsement
                 endorse_with_full();
-                fs.invoke_service(&service)
-                    .map_err(|e| Error::from(e))
+                fs.invoke_service(&service).map_err(|e| Error::from(e))
             }
             Ok(_) => Err(Error::BadPath),
             Err(e) => Err(Error::from(e)),
@@ -1932,11 +1986,13 @@ mod test {
     fn test_collect_garbage() -> Result<(), LabelError> {
         let tmp_dir = TempDir::new().unwrap();
 
-        let dbenv = &*Box::leak(Box::new(::lmdb::Environment::new()
-            .set_map_size(100 * 1024 * 1024 * 1024)
-            .set_max_readers(1)
-            .open(tmp_dir.path())
-            .unwrap()));
+        let dbenv = &*Box::leak(Box::new(
+            ::lmdb::Environment::new()
+                .set_map_size(100 * 1024 * 1024 * 1024)
+                .set_max_readers(1)
+                .open(tmp_dir.path())
+                .unwrap(),
+        ));
 
         utils::taint_with_label(Buckle::top());
         let mut fs = FS::new(dbenv);

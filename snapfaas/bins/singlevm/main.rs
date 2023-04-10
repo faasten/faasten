@@ -73,6 +73,14 @@ fn main() {
                 .help("if specified acting as the passed in identity.")
         )
         .arg(
+            Arg::with_name("secrecy")
+                .long("secrecy")
+                .value_name("BUCKLE SECRECY STRING")
+                .takes_value(true)
+                .required(false)
+                .help("if specified VM starts with the secrecy.")
+        )
+        .arg(
             Arg::with_name("id")
                 .long("id")
                 .help("microvm unique identifier")
@@ -278,8 +286,12 @@ fn main() {
     let mypriv = cmd_arguments
         .value_of("login")
         .map_or(buckle::Component::dc_true(), |p| {
-            let principal = vec![p.to_string()];
-            [labeled::buckle::Clause::new_from_vec(vec![principal])].into()
+            Buckle::parse(&("T,".to_string() + p)).unwrap().integrity
+        });
+    let startlbl = cmd_arguments
+        .value_of("secrecy")
+        .map_or(Buckle::public(), |s| {
+            Buckle::parse(&(s.to_string() + ",T")).unwrap()
         });
 
     let mut env = SyscallGlobalEnv {
@@ -294,7 +306,7 @@ fn main() {
         let t1 = Instant::now();
         debug!("request: {:?}", req);
         let processor =
-            syscall_server::SyscallProcessor::new(Buckle::public(), mypriv.clone(), Buckle::top());
+            syscall_server::SyscallProcessor::new(startlbl.clone(), mypriv.clone(), Buckle::top());
         match processor.run(&mut env, req, &mut vm) {
             Ok(rsp) => {
                 let t2 = Instant::now();

@@ -182,7 +182,18 @@ class Syscall():
         response = self._recv(syscalls_pb2.ServiceResponse())
         return response
 
-    ###  amed data object syscalls ###
+    ###  cloud calls: fs ###
+    def fs_hardlink(self, src: str, dest: str):
+        """Hard link `src` into `dest`. `src` must be a path naming an object
+        that is not gate/service. `dest` must be a path naming a directory
+        or a faceted directory. If a faceted directory then the facet named
+        by the function's label at the time of linking is used."""
+        req = syscalls_pb2.Syscall(fsHardLink = syscalls_pb2.FSHardLink(src=src, dest=dest))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+
     def fs_list(self, path: str):
         """Returns a JSON object"""
         req = syscalls_pb2.Syscall(fsList = syscalls_pb2.FSList(path=path))
@@ -242,7 +253,7 @@ class Syscall():
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
 
-    def fs_createdir(self, path: str, label: str):
+    def fs_createdir(self, path: str, label: str=None):
         """Create a directory at the `path` with the `label`.
         The host-side handler always endorse before creating the directory.
 
@@ -413,3 +424,18 @@ class CreateBlobError(Exception):
 
 class ReadBlobError(Exception):
     pass
+
+#class Directory():
+#    def __init__(self, fd, syscall):
+#        self.fd = fd
+#        self.syscall = syscall
+#
+#    def createdir(name: str, label: str=None):
+#        req = syscalls_pb2.Syscall(fsHandleCreateDir=syscalls_pb2.FSHandleCreateDir(fd=self.fd, name=name, label=label))
+#        self.syscall._send(req)
+#        response = self.syscall._recv(syscalls_pb2.HandleResponse())
+#
+#    def opendir(name: str):
+#        req = syscalls_pb2.Syscall(fsHandleCreateDir=syscalls_pb2.FSHandleCreateDir(fd=self.fd, name=name, label=label))
+#        self.syscall._send(req)
+#        response = self.syscall._recv(syscalls_pb2.HandleResponse())

@@ -131,7 +131,7 @@ message FSWrite {
 
 message FSCreateDir {
   string path = 1;
-  string label = 2;
+  optional string label = 2;
 }
 
 message FSCreateFile {
@@ -240,6 +240,11 @@ message FSOpenBlobResponse {
   optional string name = 1;
 }
 
+message FSHardLink {
+  string src = 1;
+  string dest = 2;
+}
+
 message Syscall {
   oneof syscall {
     Response response = 1;
@@ -272,5 +277,6 @@ message Syscall {
     InvokeService invokeService = 32;
     FSOpenBlob fsOpenBlob = 33;
     Endorse endorse = 34;
+    FSHardLink fsHardLink = 35;
   }
 }
