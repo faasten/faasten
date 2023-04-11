@@ -22,7 +22,7 @@ def handle(request, syscall):
         path = args['path']
         label = None
         if 'label' in args:
-            label = args['label']
+            label = syscall.buckle_parse(args['label'])
         if syscall.fs_linkblob(blob, path, label):
             ret['success'] = True
             #trigger_ret = None
@@ -58,7 +58,7 @@ def handle(request, syscall):
     elif op == 'write-file':
         path = args['path']
         data = args['data']
-        ret['success'] = syscall.fs_write(path, data)
+        ret['success'] = syscall.fs_write(path, data.encode('utf-8'))
     elif op == 'create-dir':
         path = args['path']
         label = args['label']
