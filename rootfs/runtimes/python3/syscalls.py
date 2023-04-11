@@ -361,6 +361,19 @@ class Syscall():
         response = self._recv(syscalls_pb2.BlobResponse())
     ### end of unnamed object syscalls ###
 
+    ### return direntry handle ###
+    @contextmanager
+    def create_file(self, path: str, label: str=None):
+        req = syscalls_pb2.Syscall(createFile = syscalls_pb2.CreateFile(path=path, label=label))
+        self._send(req)
+        response = self._recv(syscalls_pb2.DentResponse())
+        if response.success:
+            yield DirEntry(response.dentFd, self)
+            req = syscalls_pb2.Syscall(dentClose=syscalls_pb2.DentClose(dentFd=response.dentFd))
+            self._send(req)
+        else:
+            raise CreateFileError
+
 class NewBlob():
     def __init__(self, fd, syscall):
         self.fd = fd
@@ -425,17 +438,32 @@ class CreateBlobError(Exception):
 class ReadBlobError(Exception):
     pass
 
-#class Directory():
-#    def __init__(self, fd, syscall):
-#        self.fd = fd
-#        self.syscall = syscall
-#
-#    def createdir(name: str, label: str=None):
-#        req = syscalls_pb2.Syscall(fsHandleCreateDir=syscalls_pb2.FSHandleCreateDir(fd=self.fd, name=name, label=label))
-#        self.syscall._send(req)
-#        response = self.syscall._recv(syscalls_pb2.HandleResponse())
-#
-#    def opendir(name: str):
-#        req = syscalls_pb2.Syscall(fsHandleCreateDir=syscalls_pb2.FSHandleCreateDir(fd=self.fd, name=name, label=label))
-#        self.syscall._send(req)
-#        response = self.syscall._recv(syscalls_pb2.HandleResponse())
+class DirEntry():
+    def __init__(self, fd, syscall):
+        self.fd = fd
+        self.syscall = syscall
+
+    def write(self, data):
+        req = syscalls_pb2.Syscall(dentWrite=syscalls_pb2.DentWrite(dentFd=self.fd, data=data))
+        self.syscall._send(req)
+        response = self.syscall._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+    @contextmanager
+    def open(self, name: str):
+        req = syscalls_pb2.Syscall(dentOpen=syscalls_pb2.DentOpen(dentFd=self.fd, name=name))
+        self.syscall._send(req)
+        response = self.syscall._recv(syscalls_pb2.DentResponse())
+        if response.success:
+            yield DirEntry(response.dentFd, self.syscall)
+            req = syscalls_pb2.Syscall(dentClose=syscalls_pb2.DentClose(dentFd=response.dentFd))
+            self._send(req)
+            response = self._recv(syscalls_pb2.WriteKeyResponse())
+        else:
+            raise OpenError
+
+class CreateFileError(Exception):
+    pass
+
+class OpenError(Exception):
+    pass
