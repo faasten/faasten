@@ -88,7 +88,7 @@ TMPDIR=`mktemp -d`
 ## Delete the output file if it exists, and create a new one formatted as
 ## an EXT4 filesystem.
 rm -f $OUTPUT
-truncate -s 500M $OUTPUT
+truncate -s 2G $OUTPUT
 mkfs.ext4 $OUTPUT
 
 sudo mount $OUTPUT $TMPDIR

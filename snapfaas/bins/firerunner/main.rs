@@ -401,7 +401,7 @@ fn main() {
          match unix_sock_listener.accept() {
             Ok((_, _)) => match vmm.dump_working_set() {
                 Ok(_) => {
-                    println!("VMM: dumped the working set.");
+                    eprintln!("VMM: dumped the working set.");
                     let port = format!("dump_ws-{}.sock.back", instance_id);
                     UnixStream::connect(port).expect("Failed to connect");
                 },
@@ -417,7 +417,7 @@ fn main() {
         }
     };
     let parse_time = ts_vec[2].duration_since(ts_vec[1]).as_micros();
-    println!("FR: Parse JSON: {} us\nFR: Preconfigure VM: {} us",
+    eprintln!("FR: Parse JSON: {} us\nFR: Preconfigure VM: {} us",
              parse_time,
              ts_vec[3].duration_since(ts_vec[0]).as_micros() - parse_time);
     vmm.join_vmm();

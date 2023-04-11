@@ -761,8 +761,9 @@ impl SyscallProcessor {
                 }
                 Some(SC::ReadBlob(rb)) => {
                     let result = if let Some(file) = self.blobs.get_mut(&rb.fd) {
-                        let mut buf = Vec::from([0; 4096]);
-                        let limit = std::cmp::min(rb.length.unwrap_or(4096), 4096) as usize;
+                        const MB: usize = 1024 * 1024;
+                        let mut buf = Vec::from([0; 2 * MB]);
+                        let limit = std::cmp::min(rb.length.unwrap_or(2 * MB as u64), 2 * MB as u64) as usize;
                         if let Some(offset) = rb.offset {
                             file.seek(std::io::SeekFrom::Start(offset))
                                 .map_err(|e| SyscallProcessorError::Blob(e))?;
