@@ -59,11 +59,11 @@ serde = {version = "1.0.102", features = ["derive"]}
 serde_yaml = "0.8.11"
 serde_json = "*"
 cgroups = "0.1.0"
-vmm = { git = "https://github.com/princeton-sns/firecracker", rev = "7081de19dfb17a4a734c08c5caceabe7ae0cf28a", features = ["vsock"] }
-memory_model = { git = "https://github.com/princeton-sns/firecracker", rev = "7081de19dfb17a4a734c08c5caceabe7ae0cf28a" }
-fc_util = { git = "https://github.com/princeton-sns/firecracker", rev = "7081de19dfb17a4a734c08c5caceabe7ae0cf28a" }
-sys_util = { git = "https://github.com/princeton-sns/firecracker", rev = "7081de19dfb17a4a734c08c5caceabe7ae0cf28a" }
-net_util = { git = "https://github.com/princeton-sns/firecracker", rev = "7081de19dfb17a4a734c08c5caceabe7ae0cf28a" }
+vmm = { git = "https://github.com/princeton-sns/firecracker", rev = "37f177869aecc5167b3b9b188ef907d171b59bfb", features = ["vsock"] }
+memory_model = { git = "https://github.com/princeton-sns/firecracker", rev = "37f177869aecc5167b3b9b188ef907d171b59bfb" }
+fc_util = { git = "https://github.com/princeton-sns/firecracker", rev = "37f177869aecc5167b3b9b188ef907d171b59bfb" }
+sys_util = { git = "https://github.com/princeton-sns/firecracker", rev = "37f177869aecc5167b3b9b188ef907d171b59bfb" }
+net_util = { git = "https://github.com/princeton-sns/firecracker", rev = "37f177869aecc5167b3b9b188ef907d171b59bfb" }
 time = "*"
 signal-hook = "0.1.13"
 crossbeam = "0.8.2"

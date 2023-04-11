@@ -310,11 +310,11 @@ fn main() {
         match processor.run(&mut env, req, &mut vm) {
             Ok(rsp) => {
                 let t2 = Instant::now();
-                println!(
+                eprintln!(
                     "request returned in: {} us",
                     t2.duration_since(t1).as_micros()
                 );
-                println!("response: {:?}", rsp);
+                println!("{}", rsp.payload.unwrap_or(String::from("")));
                 num_rsp += 1;
             }
             Err(e) => {
@@ -330,13 +330,12 @@ fn main() {
             break;
         }
     }
-
-    println!("***********************************************");
-    println!("Total requests: {}, Total resposnes: {}", num_req, num_rsp);
-    println!("***********************************************");
+    eprintln!("***********************************************");
+    eprintln!("Total requests: {}, Total resposnes: {}", num_req, num_rsp);
+    eprintln!("***********************************************");
 
     // Shutdown the vm and exit
-    println!("Shutting down vm...");
+    eprintln!("Shutting down vm..."); 
     drop(vm);
     unlink_unix_sockets();
 }

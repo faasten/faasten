@@ -175,7 +175,7 @@ impl Vm {
                 .args(args)
                 .kill_on_drop(true)
                 .stdin(Stdio::null())
-                .stderr(Stdio::piped())
+                .stderr(Stdio::null())
                 .spawn()
                 .map_err(|e| Error::ProcessSpawn(e))?;
 
