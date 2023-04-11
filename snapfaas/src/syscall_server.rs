@@ -110,7 +110,9 @@ pub struct SyscallGlobalEnv<B: BackingStore> {
 pub struct SyscallProcessor {
     create_blobs: HashMap<u64, blobstore::NewBlob>,
     blobs: HashMap<u64, blobstore::Blob>,
+    dents: HashMap<u64, fs::DirEntry>,
     max_blob_id: u64,
+    max_dent_id: u64,
     http_client: reqwest::blocking::Client,
 }
 
@@ -127,7 +129,9 @@ impl SyscallProcessor {
         Self {
             create_blobs: Default::default(),
             blobs: Default::default(),
+            dents: Default::default(),
             max_blob_id: 0,
+            max_dent_id: 0,
             http_client: reqwest::blocking::Client::new(),
         }
     }
@@ -136,7 +140,9 @@ impl SyscallProcessor {
         Self {
             create_blobs: Default::default(),
             blobs: Default::default(),
+            dents: Default::default(),
             max_blob_id: 0,
+            max_dent_id: 0,
             http_client: reqwest::blocking::Client::new(),
         }
     }
@@ -584,6 +590,85 @@ impl SyscallProcessor {
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     };
+                    s.send(result.encode_to_vec())?;
+                }
+                Some(SC::CreateFile(req)) => {
+                    let value = fs::path::Path::parse(&req.path)
+                        .ok()
+                        .and_then(|p| {
+                            p.file_name().and_then(|name| {
+                                p.parent().and_then(|base_dir| {
+                                    if let Some(l) = req.label.as_ref() {
+                                        buckle::Buckle::parse(&l).ok().and_then(|l| {
+                                            fs::utils::create_file(&env.fs, base_dir, name, l).ok()
+                                        })
+                                    } else {
+                                        let l = fs::utils::get_current_label();
+                                        fs::utils::create_file(&env.fs, base_dir, name, l).ok()
+                                    }
+                                })
+                            })
+                        })
+                        .and_then(|dent| {
+                            let _ = self.dents.insert(self.max_dent_id, dent);
+                            self.max_dent_id += 1;
+                            Some(self.max_dent_id - 1)
+                        });
+                    let result = value.map_or_else(
+                        || syscalls::DentResponse {
+                            success: false,
+                            dent_fd: 0,
+                        },
+                        |fd| syscalls::DentResponse {
+                            success: true,
+                            dent_fd: fd,
+                        },
+                    );
+                    s.send(result.encode_to_vec())?;
+                }
+                Some(SC::DentWrite(r)) => {
+                    let success = self
+                        .dents
+                        .get(&r.dent_fd)
+                        .and_then(|dent| match dent {
+                            fs::DirEntry::File(f) => env.fs.write(&f, &r.data).ok(),
+                            _ => None,
+                        })
+                        .is_some();
+                    let result = syscalls::WriteKeyResponse { success };
+                    s.send(result.encode_to_vec())?;
+                }
+                Some(SC::DentOpen(r)) => {
+                    let value = self
+                        .dents
+                        .get(&r.dent_fd)
+                        .and_then(|dent| match dent {
+                            fs::DirEntry::Directory(dir) => {
+                                env.fs.list(dir).ok().and_then(|l| l.get(&r.name).cloned())
+                            }
+                            _ => None,
+                        })
+                        .and_then(|dent| {
+                            self.dents.insert(self.max_dent_id, dent);
+                            self.max_dent_id += 1;
+                            Some(self.max_dent_id - 1)
+                        });
+                    let result = value.map_or_else(
+                        || syscalls::DentResponse {
+                            success: false,
+                            dent_fd: 0,
+                        },
+                        |fd| syscalls::DentResponse {
+                            success: true,
+                            dent_fd: fd,
+                        },
+                    );
+                    s.send(result.encode_to_vec())?;
+                }
+                Some(SC::DentClose(r)) => {
+                    // TODO garbage collector should correctly handle opened direntries
+                    let success = self.dents.remove(&r.dent_fd).is_some();
+                    let result = syscalls::WriteKeyResponse { success };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsCreateBlobByName(req)) => {

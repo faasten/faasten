@@ -139,6 +139,30 @@ message FSCreateFile {
   optional string label = 2;
 }
 
+message CreateFile {
+  string path = 1;
+  optional string label = 2;
+}
+
+message DentResponse {
+  bool success = 1;
+  uint64 dentFd = 2;
+}
+
+message DentWrite {
+  uint64 dentFd = 1;
+  bytes data = 2;
+}
+
+message DentOpen {
+  uint64 dentFd = 1;
+  string name = 2;
+}
+
+message DentClose {
+  uint64 dentFd = 1;
+}
+
 message ExercisePrivilege {
   Buckle target = 1;
 }
@@ -278,5 +302,9 @@ message Syscall {
     FSOpenBlob fsOpenBlob = 33;
     Endorse endorse = 34;
     FSHardLink fsHardLink = 35;
+    DentWrite  dentWrite = 36;
+    DentClose  dentClose = 37;
+    DentOpen   dentOpen = 38;
+    CreateFile createFile = 39;
   }
 }
