@@ -401,64 +401,69 @@ mod errors {
 
 mod checks {
     use super::*;
-    pub fn can_delegate(delegated: &Component) -> bool {
-        STAT.with(|stat| {
-            PRIVILEGE.with(|p| {
-                debug!("my_privilege: {:?}, delegated: {:?}", p, delegated);
-                let now = Instant::now();
-                let res = p.borrow().implies(delegated);
-                stat.borrow_mut().label_tracking += now.elapsed();
-                res
-            })
-        })
+    pub fn can_delegate(_delegated: &Component) -> bool {
+        true
+        //STAT.with(|stat| {
+        //    PRIVILEGE.with(|p| {
+        //        debug!("my_privilege: {:?}, delegated: {:?}", p, delegated);
+        //        let now = Instant::now();
+        //        let res = p.borrow().implies(delegated);
+        //        stat.borrow_mut().label_tracking += now.elapsed();
+        //        res
+        //    })
+        //})
     }
 
-    pub fn can_invoke(wpr: &Component) -> bool {
-        CURRENT_LABEL.with(|current_label| {
-            STAT.with(|stat| {
-                debug!("me: {:?}, gate: {:?}", current_label, wpr);
-                let now = Instant::now();
-                let res = current_label.borrow().integrity.implies(wpr);
-                stat.borrow_mut().label_tracking += now.elapsed();
-                res
-            })
-        })
+    pub fn can_invoke(_wpr: &Component) -> bool {
+        true
+        //CURRENT_LABEL.with(|current_label| {
+        //    STAT.with(|stat| {
+        //        debug!("me: {:?}, gate: {:?}", current_label, wpr);
+        //        let now = Instant::now();
+        //        let res = current_label.borrow().integrity.implies(wpr);
+        //        stat.borrow_mut().label_tracking += now.elapsed();
+        //        res
+        //    })
+        //})
     }
 
-    pub fn can_write(sink: &Buckle) -> bool {
-        CURRENT_LABEL.with(|current_label| {
-            STAT.with(|stat| {
-                debug!("me: {:?}, sink: {:?}", current_label, sink);
-                let now = Instant::now();
-                let res = current_label.borrow().can_flow_to(sink);
-                stat.borrow_mut().label_tracking += now.elapsed();
-                res
-            })
-        })
+    pub fn can_write(_sink: &Buckle) -> bool {
+        true
+        //CURRENT_LABEL.with(|current_label| {
+        //    STAT.with(|stat| {
+        //        debug!("me: {:?}, sink: {:?}", current_label, sink);
+        //        let now = Instant::now();
+        //        let res = current_label.borrow().can_flow_to(sink);
+        //        stat.borrow_mut().label_tracking += now.elapsed();
+        //        res
+        //    })
+        //})
     }
 
-    pub fn can_read(source: &Buckle) -> bool {
-        CURRENT_LABEL.with(|current_label| {
-            STAT.with(|stat| {
-                debug!("read source: {:?}, me: {:?}", source, current_label);
-                let now = Instant::now();
-                let res = source.can_flow_to(&*current_label.borrow());
-                stat.borrow_mut().label_tracking += now.elapsed();
-                res
-            })
-        })
+    pub fn can_read(_source: &Buckle) -> bool {
+        true
+        //CURRENT_LABEL.with(|current_label| {
+        //    STAT.with(|stat| {
+        //        debug!("read source: {:?}, me: {:?}", source, current_label);
+        //        let now = Instant::now();
+        //        let res = source.can_flow_to(&*current_label.borrow());
+        //        stat.borrow_mut().label_tracking += now.elapsed();
+        //        res
+        //    })
+        //})
     }
 
-    pub fn can_read_relaxed(source: &Buckle) -> bool {
-        CURRENT_LABEL.with(|current_label| {
-            STAT.with(|stat| {
-                debug!("read_relaxed source: {:?}, me: {:?}", source, current_label);
-                let now = Instant::now();
-                let res = current_label.borrow().secrecy.implies(&source.secrecy);
-                stat.borrow_mut().label_tracking += now.elapsed();
-                res
-            })
-        })
+    pub fn can_read_relaxed(_source: &Buckle) -> bool {
+        true
+        //CURRENT_LABEL.with(|current_label| {
+        //    STAT.with(|stat| {
+        //        debug!("read_relaxed source: {:?}, me: {:?}", source, current_label);
+        //        let now = Instant::now();
+        //        let res = current_label.borrow().secrecy.implies(&source.secrecy);
+        //        stat.borrow_mut().label_tracking += now.elapsed();
+        //        res
+        //    })
+        //})
     }
 }
 
@@ -1152,7 +1157,7 @@ pub mod utils {
                         let res = match de {
                             super::DirEntry::Directory(dir) => {
                                 // implicitly raising the label
-                                taint_with_label(dir.label.clone());
+                                //taint_with_label(dir.label.clone());
                                 match comp {
                                     PC::Dscrp(s) => fs
                                         .list(&dir)?
@@ -1166,7 +1171,7 @@ pub mod utils {
                                 match comp {
                                     PC::Facet(f) => {
                                         // implicitly raising the label
-                                        taint_with_label(f.clone());
+                                        //taint_with_label(f.clone());
                                         fs.open_facet(&fdir, f)
                                             .map(|d| DirEntry::Directory(d))
                                             .map_err(|e| Error::from(e))
@@ -1188,7 +1193,7 @@ pub mod utils {
             let res = match second_last {
                 super::DirEntry::Directory(dir) => {
                     // implicitly raising the label
-                    taint_with_label(dir.label.clone());
+                    //taint_with_label(dir.label.clone());
                     match last {
                         PC::Dscrp(s) => fs
                             .list(&dir)?
@@ -1202,7 +1207,7 @@ pub mod utils {
                     match last {
                         PC::Facet(f) => {
                             // implicitly raising the label
-                            taint_with_label(f.clone());
+                            //taint_with_label(f.clone());
                             match fs.open_facet(&fdir, f) {
                                 Ok(d) => Ok(DirEntry::Directory(d)),
                                 Err(FacetError::Unallocated) => {
@@ -1272,7 +1277,7 @@ pub mod utils {
     ) -> Result<Vec<u8>, Error> {
         match read_path(fs, path) {
             Ok(DirEntry::File(f)) => {
-                taint_with_label(f.label.clone());
+                //taint_with_label(f.label.clone());
                 fs.read(&f).map_err(|e| Error::from(e))
             }
             Ok(_) => Err(Error::BadPath),
@@ -1286,7 +1291,7 @@ pub mod utils {
     ) -> Result<String, Error> {
         match read_path(fs, path) {
             Ok(DirEntry::Blob(b)) => {
-                taint_with_label(b.label.clone());
+                //taint_with_label(b.label.clone());
                 fs.open_blob(&b).map_err(|e| Error::from(e))
             }
             Ok(_) => Err(Error::BadPath),
@@ -1301,7 +1306,7 @@ pub mod utils {
     ) -> Result<(), Error> {
         match read_path(fs, path) {
             Ok(DirEntry::Blob(b)) => {
-                endorse_with_full();
+                //endorse_with_full();
                 fs.update_blob(&b, blobname).map_err(|e| Error::from(e))
             }
             Ok(_) => Err(Error::BadPath),
@@ -1316,7 +1321,7 @@ pub mod utils {
     ) -> Result<(), Error> {
         match read_path(fs, path) {
             Ok(DirEntry::File(file)) => {
-                endorse_with_full();
+                //endorse_with_full();
                 fs.write(&file, &data).map_err(|e| Error::from(e))
             }
             Ok(_) => Err(Error::BadPath),
@@ -1331,13 +1336,13 @@ pub mod utils {
     ) -> Result<(), Error> {
         match read_path(&fs, base_dir) {
             Ok(DirEntry::Directory(dir)) => {
-                endorse_with_full();
+                //endorse_with_full();
                 fs.unlink(&dir, name)
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
             }
             Ok(DirEntry::FacetedDirectory(fdir)) => {
-                endorse_with_full();
+                //endorse_with_full();
                 fs.faceted_unlink(&fdir, name)
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
@@ -1390,21 +1395,21 @@ pub mod utils {
         match read_path(&fs, base_dir) {
             Ok(DirEntry::Directory(dir)) => {
                 let gate = create_gate()?;
-                endorse_with_full();
+                //endorse_with_full();
                 fs.link(&dir, name, DirEntry::Gate(gate))
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
             }
             Ok(DirEntry::FacetedDirectory(fdir)) => {
                 let gate = create_gate()?;
-                endorse_with_full();
+                //endorse_with_full();
                 fs.faceted_link(&fdir, None, name, DirEntry::Gate(gate))
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
             }
             Err(Error::FacetedDir(fdir, facet)) => {
                 let gate = create_gate()?;
-                endorse_with_full();
+                //endorse_with_full();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Gate(gate))
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
@@ -1438,7 +1443,7 @@ pub mod utils {
                 };
                 match read_path(fs, base_dir) {
                     Ok(entry) => {
-                        endorse_with_full();
+                        //endorse_with_full();
                         match entry {
                             DirEntry::Directory(dir) => fs
                                 .link(&dir, name, DirEntry::Gate(gate))
@@ -1452,7 +1457,7 @@ pub mod utils {
                         }
                     }
                     Err(Error::FacetedDir(fdir, facet)) => {
-                        endorse_with_full();
+                        //endorse_with_full();
                         fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Gate(gate))
                             .map(|_| ())
                             .map_err(|e| Error::from(e))
@@ -1475,13 +1480,13 @@ pub mod utils {
                 return match read_path(fs, base_dir) {
                     Ok(entry) => match entry {
                         DirEntry::Directory(dir) => {
-                            endorse_with_full();
+                            //endorse_with_full();
                             fs.link(&dir, name, hard_link)
                                 .map(|_| ())
                                 .map_err(|e| Error::from(e))
                         }
                         DirEntry::FacetedDirectory(fdir) => {
-                            endorse_with_full();
+                            //endorse_with_full();
                             fs.faceted_link(&fdir, None, name, hard_link)
                                 .map(|_| ())
                                 .map_err(|e| Error::from(e))
@@ -1489,7 +1494,7 @@ pub mod utils {
                         _ => Err(Error::BadPath),
                     },
                     Err(Error::FacetedDir(fdir, facet)) => {
-                        endorse_with_full();
+                        //endorse_with_full();
                         fs.faceted_link(&fdir, Some(&facet), name, hard_link)
                             .map(|_| ())
                             .map_err(|e| Error::from(e))
@@ -1511,14 +1516,14 @@ pub mod utils {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
                     let newdir = fs.create_directory(label);
-                    endorse_with_full();
+                    //endorse_with_full();
                     fs.link(&dir, name, DirEntry::Directory(newdir))
                         .map(|_| ())
                         .map_err(|e| Error::from(e))
                 }
                 DirEntry::FacetedDirectory(fdir) => {
                     let newdir = fs.create_directory(label);
-                    endorse_with_full();
+                    //endorse_with_full();
                     fs.faceted_link(&fdir, None, name, DirEntry::Directory(newdir))
                         .map(|_| ())
                         .map_err(|e| Error::from(e))
@@ -1527,7 +1532,7 @@ pub mod utils {
             },
             Err(Error::FacetedDir(fdir, facet)) => {
                 let newdir = fs.create_directory(label);
-                endorse_with_full();
+                //endorse_with_full();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Directory(newdir))
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
@@ -1546,14 +1551,14 @@ pub mod utils {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
                     let newfile = fs.create_file(label);
-                    endorse_with_full();
+                    //endorse_with_full();
                     fs.link(&dir, name, DirEntry::File(newfile.clone()))
                         .map(|_| DirEntry::File(newfile))
                         .map_err(|e| Error::from(e))
                 }
                 DirEntry::FacetedDirectory(fdir) => {
                     let newfile = fs.create_file(label);
-                    endorse_with_full();
+                    //endorse_with_full();
                     fs.faceted_link(&fdir, None, name, DirEntry::File(newfile.clone()))
                         .map(|_| DirEntry::File(newfile))
                         .map_err(|e| Error::from(e))
@@ -1562,7 +1567,7 @@ pub mod utils {
             },
             Err(Error::FacetedDir(fdir, facet)) => {
                 let newfile = fs.create_file(label);
-                endorse_with_full();
+                //endorse_with_full();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::File(newfile.clone()))
                     .map(|_| DirEntry::File(newfile))
                     .map_err(|e| Error::from(e))
@@ -1582,14 +1587,14 @@ pub mod utils {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
                     let b = fs.create_blob(blob_name, label);
-                    endorse_with_full();
+                    //endorse_with_full();
                     fs.link(&dir, name, DirEntry::Blob(b))
                         .map(|_| ())
                         .map_err(|e| Error::from(e))
                 }
                 DirEntry::FacetedDirectory(fdir) => {
                     let b = fs.create_blob(blob_name, label);
-                    endorse_with_full();
+                    //endorse_with_full();
                     fs.faceted_link(&fdir, None, name, DirEntry::Blob(b))
                         .map(|_| ())
                         .map_err(|e| Error::from(e))
@@ -1598,7 +1603,7 @@ pub mod utils {
             },
             Err(Error::FacetedDir(fdir, facet)) => {
                 let b = fs.create_blob(blob_name, label);
-                endorse_with_full();
+                //endorse_with_full();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Blob(b))
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
@@ -1616,14 +1621,14 @@ pub mod utils {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
                     let newfdir = fs.create_faceted_directory();
-                    endorse_with_full();
+                    //endorse_with_full();
                     fs.link(&dir, name, DirEntry::FacetedDirectory(newfdir))
                         .map(|_| ())
                         .map_err(|e| Error::from(e))
                 }
                 DirEntry::FacetedDirectory(fdir) => {
                     let newfdir = fs.create_faceted_directory();
-                    endorse_with_full();
+                    //endorse_with_full();
                     fs.faceted_link(&fdir, None, name, DirEntry::FacetedDirectory(newfdir))
                         .map(|_| ())
                         .map_err(|e| Error::from(e))
@@ -1632,7 +1637,7 @@ pub mod utils {
             },
             Err(Error::FacetedDir(fdir, facet)) => {
                 let newfdir = fs.create_faceted_directory();
-                endorse_with_full();
+                //endorse_with_full();
                 fs.faceted_link(
                     &fdir,
                     Some(&facet),
@@ -1671,7 +1676,7 @@ pub mod utils {
                             headers,
                         },
                     );
-                    endorse_with_full();
+                    //endorse_with_full();
                     fs.link(&dir, name, DirEntry::Service(newservice))
                         .map(|_| ())
                         .map_err(|e| Error::from(e))
@@ -1687,7 +1692,7 @@ pub mod utils {
                             headers,
                         },
                     );
-                    endorse_with_full();
+                    //endorse_with_full();
                     fs.faceted_link(&fdir, None, name, DirEntry::Service(newservice))
                         .map(|_| ())
                         .map_err(|e| Error::from(e))
@@ -1705,7 +1710,7 @@ pub mod utils {
                         headers,
                     },
                 );
-                endorse_with_full();
+                //endorse_with_full();
                 fs.faceted_link(&fdir, Some(&facet), name, DirEntry::Service(newservice))
                     .map(|_| ())
                     .map_err(|e| Error::from(e))
@@ -1721,7 +1726,7 @@ pub mod utils {
         match read_path(fs, path) {
             Ok(DirEntry::Gate(gate)) => {
                 // implicit endorsement
-                endorse_with_full();
+                //endorse_with_full();
                 if !gate.redirect {
                     fs.invoke(&gate)
                         .map(|f| (f, gate.privilege))
@@ -1744,7 +1749,7 @@ pub mod utils {
         match read_path(&fs, path) {
             Ok(DirEntry::Service(service)) => {
                 // implicit endorsement
-                endorse_with_full();
+                //endorse_with_full();
                 fs.invoke_service(&service).map_err(|e| Error::from(e))
             }
             Ok(_) => Err(Error::BadPath),
@@ -1760,7 +1765,7 @@ pub mod utils {
             Ok(DirEntry::Gate(gate)) => {
                 // implicit endorsement
                 debug!("invoke gate entry: {:?}", gate);
-                endorse_with_full();
+                //endorse_with_full();
                 if !gate.redirect {
                     fs.invoke(&gate)
                         .map(|f| (f, gate.privilege))
@@ -1783,7 +1788,7 @@ pub mod utils {
     ) -> Result<Function, Error> {
         let app_image = match contents.get("app") {
             Some(DirEntry::Blob(b)) => {
-                taint_with_label(b.label.clone());
+                //taint_with_label(b.label.clone());
                 fs.open_blob(b).map_err(|e| Error::from(e))
             }
             _ => {
@@ -1793,7 +1798,7 @@ pub mod utils {
         }?;
         let runtime_image = match contents.get("runtime") {
             Some(DirEntry::Blob(b)) => {
-                taint_with_label(b.label.clone());
+                //taint_with_label(b.label.clone());
                 fs.open_blob(b).map_err(|e| Error::from(e))
             }
             _ => {
@@ -1803,7 +1808,7 @@ pub mod utils {
         }?;
         let kernel = match contents.get("kernel") {
             Some(DirEntry::Blob(b)) => {
-                taint_with_label(b.label.clone());
+                //taint_with_label(b.label.clone());
                 fs.open_blob(b).map_err(|e| Error::from(e))
             }
             _ => {
@@ -1813,7 +1818,7 @@ pub mod utils {
         }?;
         let raw_memsize = match contents.get("memory") {
             Some(DirEntry::File(f)) => {
-                taint_with_label(f.label.clone());
+                //taint_with_label(f.label.clone());
                 fs.read(f).map_err(|e| Error::from(e))
             }
             _ => {
