@@ -212,6 +212,14 @@ fn main() {
                 .required(false)
                 .help("Use TiVK as the backing store.")
         )
+        .arg(
+            Arg::with_name("stat")
+                .long("stat")
+                .value_name("STAT")
+                .takes_value(true)
+                .required(false)
+                .help("Write stat to a file.")
+        )
         .get_matches();
 
     if cmd_arguments.is_present("enable network") {
@@ -387,6 +395,13 @@ fn main() {
                 }
             }
         }
+    }
+
+    if let Some(file) = cmd_arguments.value_of("stat").map(String::from) {
+        use std::io::Write;
+        let mut f = std::fs::File::open(&file).unwrap();
+        let buf = serde_json::to_vec(&snapfaas::fs::metrics::get_stat()).unwrap();
+        let _ = f.write_all(&buf).unwrap();
     }
 
     eprintln!("***********************************************");
