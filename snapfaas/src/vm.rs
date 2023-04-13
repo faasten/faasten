@@ -93,7 +93,7 @@ impl Vm {
         }
         let mem_str = function_config.memory.to_string();
         // FIXME num_vcpu should scale with memory size.
-        let vcpu_str = 1usize.to_string();
+        let vcpu_str = function_config.vcpus.to_string();//1usize.to_string();
         let cid_str = cid.to_string();
         let id_str = self.id.to_string();
         let mut args = vec![
