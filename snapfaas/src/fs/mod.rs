@@ -51,6 +51,17 @@ pub struct Metrics {
     create_retry: i64,
     label_tracking: Duration,
     gen_blob: Duration,
+    create_dir: Duration,
+    create_file: Duration,
+    create_faceted: Duration,
+    list_dir: Duration,
+    list_faceted: Duration,
+    read: Duration,
+    write: Duration,
+    delete: Duration,
+    declassify: Duration,
+    endorse: Duration,
+    taint: Duration,
 }
 
 pub mod metrics {
@@ -62,6 +73,42 @@ pub mod metrics {
 
     pub fn add_gen_blob_lat(elapsed: Duration) {
         STAT.with(|stat| stat.borrow_mut().gen_blob += elapsed)
+    }
+
+    pub fn add_create_dir_lat(elapsed: Duration) {
+        STAT.with(|stat| stat.borrow_mut().create_dir += elapsed)
+    }
+
+    pub fn add_create_faceted_lat(elapsed: Duration) {
+        STAT.with(|stat| stat.borrow_mut().create_faceted += elapsed)
+    }
+
+    pub fn add_create_file_lat(elapsed: Duration) {
+        STAT.with(|stat| stat.borrow_mut().create_file += elapsed)
+    }
+    pub fn add_list_dir_lat(elapsed: Duration) {
+        STAT.with(|stat| stat.borrow_mut().list_dir += elapsed)
+    }
+    pub fn add_list_faceted_lat(elapsed: Duration) {
+        STAT.with(|stat| stat.borrow_mut().list_faceted += elapsed)
+    }
+    pub fn add_read_lat(elapsed: Duration) {
+        STAT.with(|stat| stat.borrow_mut().read += elapsed)
+    }
+    pub fn add_write_lat(elapsed: Duration) {
+        STAT.with(|stat| stat.borrow_mut().write += elapsed)
+    }
+    pub fn add_delete_lat(elapsed: Duration) {
+        STAT.with(|stat| stat.borrow_mut().write += elapsed)
+    }
+    pub fn add_declassify_lat(elapsed: Duration) {
+        STAT.with(|stat| stat.borrow_mut().declassify += elapsed)
+    }
+    pub fn add_endorse_lat(elapsed: Duration) {
+        STAT.with(|stat| stat.borrow_mut().endorse += elapsed)
+    }
+    pub fn add_taint_lat(elapsed: Duration) {
+        STAT.with(|stat| stat.borrow_mut().taint += elapsed)
     }
 }
 

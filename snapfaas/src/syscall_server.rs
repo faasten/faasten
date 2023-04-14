@@ -244,6 +244,9 @@ impl SyscallProcessor {
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsDelete(del)) => {
+                    use fs::metrics::add_delete_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let value = fs::path::Path::parse(&del.path).ok().and_then(|p| {
                         p.file_name().and_then(|name| {
                             p.parent().and_then(|base_dir| {
@@ -251,6 +254,7 @@ impl SyscallProcessor {
                             })
                         })
                     });
+                    add_delete_lat(now.elapsed());
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     };
@@ -407,9 +411,13 @@ impl SyscallProcessor {
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsRead(rd)) => {
+                    use fs::metrics::add_read_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let value = fs::path::Path::parse(&rd.path)
                         .ok()
                         .and_then(|p| fs::utils::read(&env.fs, p).ok());
+                    add_read_lat(now.elapsed());
                     let result = syscalls::ReadKeyResponse { value };
                     s.send(result.encode_to_vec())?;
                 }
@@ -421,6 +429,9 @@ impl SyscallProcessor {
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsList(req)) => {
+                    use fs::metrics::add_list_dir_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
                         fs::utils::list(&env.fs, p)
                             .ok()
@@ -428,10 +439,14 @@ impl SyscallProcessor {
                                 names: m.keys().cloned().collect(),
                             })
                     });
+                    add_list_dir_lat(now.elapsed());
                     let result = syscalls::FsListResponse { value };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsFacetedList(req)) => {
+                    use fs::metrics::add_list_faceted_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
                         fs::utils::faceted_list(&env.fs, p).ok().map(|facets| {
                             syscalls::FsFacetedListInner {
@@ -449,13 +464,18 @@ impl SyscallProcessor {
                             }
                         })
                     });
+                    add_list_faceted_lat(now.elapsed());
                     let result = syscalls::FsFacetedListResponse { value };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsWrite(wr)) => {
+                    use fs::metrics::add_write_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let value = fs::path::Path::parse(&wr.path)
                         .ok()
                         .and_then(|p| fs::utils::write(&env.fs, p, wr.data).ok());
+                    add_write_lat(now.elapsed());
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     };
@@ -486,6 +506,9 @@ impl SyscallProcessor {
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsCreateFacetedDir(req)) => {
+                    use fs::metrics::add_create_faceted_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
                         p.file_name().and_then(|name| {
                             p.parent().and_then(|base_dir| {
@@ -493,12 +516,16 @@ impl SyscallProcessor {
                             })
                         })
                     });
+                    add_create_faceted_lat(now.elapsed());
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsCreateDir(req)) => {
+                    use fs::metrics::add_create_dir_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
                         p.file_name().and_then(|name| {
                             p.parent().and_then(|base_dir| {
@@ -513,12 +540,16 @@ impl SyscallProcessor {
                             })
                         })
                     });
+                    add_create_dir_lat(now.elapsed());
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsCreateFile(req)) => {
+                    use fs::metrics::add_create_file_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
                         p.file_name().and_then(|name| {
                             p.parent().and_then(|base_dir| {
@@ -533,6 +564,7 @@ impl SyscallProcessor {
                             })
                         })
                     });
+                    add_create_file_lat(now.elapsed());
                     let result = syscalls::WriteKeyResponse {
                         success: value.is_some(),
                     };
@@ -648,20 +680,31 @@ impl SyscallProcessor {
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::TaintWithLabel(label)) => {
+                    use fs::metrics::add_taint_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let label = pblabel_to_buckle(&label);
                     let result = buckle_to_pblabel(&fs::utils::taint_with_label(label));
+                    add_taint_lat(now.elapsed());
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::Declassify(target)) => {
+                    use fs::metrics::add_declassify_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let target = pbcomponent_to_component(&Some(target));
                     let result = syscalls::DeclassifyResponse {
                         label: fs::utils::declassify(target)
                             .map(|l| buckle_to_pblabel(&l))
                             .ok(),
                     };
+                    add_declassify_lat(now.elapsed());
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::Endorse(_en)) => {
+                    use fs::metrics::add_endorse_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let with_priv = _en.with_priv.map_or_else(
                         || fs::utils::my_privilege(),
                         |p| pbcomponent_to_component(&Some(p)),
@@ -670,6 +713,7 @@ impl SyscallProcessor {
                     let result = syscalls::DeclassifyResponse {
                         label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
                     };
+                    add_endorse_lat(now.elapsed());
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::CreateBlob(_cb)) => {
