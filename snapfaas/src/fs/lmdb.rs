@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use super::STAT;
 use lazy_static;
-use lmdb::{self, Transaction, WriteFlags, Cursor};
+use lmdb::{self, Cursor, Transaction, WriteFlags};
 
 lazy_static::lazy_static! {
     pub static ref DBENV: lmdb::Environment = {
@@ -17,7 +17,6 @@ lazy_static::lazy_static! {
             .unwrap()
     };
 }
-
 
 impl super::BackingStore for lmdb::Environment {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
@@ -83,9 +82,7 @@ impl super::BackingStore for lmdb::Environment {
             };
             txn.commit().unwrap();
             stat.borrow_mut().cas += now.elapsed();
-            if res.is_ok() {
-                stat.borrow_mut().cas_val_bytes += value.len();
-            }
+            stat.borrow_mut().cas_val_bytes += value.len();
             stat.borrow_mut().cas_key_bytes += key.len();
             res
         })

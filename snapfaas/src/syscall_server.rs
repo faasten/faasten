@@ -673,6 +673,9 @@ impl SyscallProcessor {
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::CreateBlob(_cb)) => {
+                    use fs::metrics::add_gen_blob_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     if let Ok(newblob) = env
                         .blobstore
                         .create()
@@ -680,7 +683,7 @@ impl SyscallProcessor {
                     {
                         self.max_blob_id += 1;
                         self.create_blobs.insert(self.max_blob_id, newblob);
-
+                        add_gen_blob_lat(now.elapsed());
                         let result = syscalls::BlobResponse {
                             success: true,
                             fd: self.max_blob_id,
@@ -697,9 +700,13 @@ impl SyscallProcessor {
                     }
                 }
                 Some(SC::WriteBlob(wb)) => {
+                    use fs::metrics::add_gen_blob_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let result = if let Some(newblob) = self.create_blobs.get_mut(&wb.fd) {
                         let data = wb.data.as_ref();
                         if newblob.write_all(data).is_ok() {
+                            add_gen_blob_lat(now.elapsed());
                             syscalls::BlobResponse {
                                 success: true,
                                 fd: wb.fd,
@@ -722,11 +729,15 @@ impl SyscallProcessor {
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FinalizeBlob(fb)) => {
+                    use fs::metrics::add_gen_blob_lat;
+                    use std::time::Instant;
+                    let now = Instant::now();
                     let result = if let Some(mut newblob) = self.create_blobs.remove(&fb.fd) {
                         let blob = newblob
                             .write_all(&fb.data)
                             .and_then(|_| env.blobstore.save(newblob))
                             .map_err(|e| SyscallProcessorError::Blob(e))?;
+                        add_gen_blob_lat(now.elapsed());
                         syscalls::BlobResponse {
                             success: true,
                             fd: fb.fd,
@@ -763,7 +774,8 @@ impl SyscallProcessor {
                     let result = if let Some(file) = self.blobs.get_mut(&rb.fd) {
                         const MB: usize = 1024 * 1024;
                         let mut buf = Vec::from([0; 2 * MB]);
-                        let limit = std::cmp::min(rb.length.unwrap_or(2 * MB as u64), 2 * MB as u64) as usize;
+                        let limit = std::cmp::min(rb.length.unwrap_or(2 * MB as u64), 2 * MB as u64)
+                            as usize;
                         if let Some(offset) = rb.offset {
                             file.seek(std::io::SeekFrom::Start(offset))
                                 .map_err(|e| SyscallProcessorError::Blob(e))?;

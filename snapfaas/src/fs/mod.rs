@@ -50,6 +50,7 @@ pub struct Metrics {
     de_faceted: Duration,
     create_retry: i64,
     label_tracking: Duration,
+    gen_blob: Duration,
 }
 
 pub mod metrics {
@@ -57,6 +58,10 @@ pub mod metrics {
 
     pub fn get_stat() -> Metrics {
         STAT.with(|stat| stat.borrow().clone())
+    }
+
+    pub fn add_gen_blob_lat(elapsed: Duration) {
+        STAT.with(|stat| stat.borrow_mut().gen_blob += elapsed)
     }
 }
 
