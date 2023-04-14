@@ -29,7 +29,7 @@ for op in "${ops[@]}"; do
 done
 
 dd if=/dev/urandom of=4K bs=4K count=1 &>/dev/null
-for (( i=0; i<1; i++ )); do
+for (( i=0; i<100; i++ )); do
     for op in "${ops[@]}"; do
         cat jsons/$op | singlevm $tikv --kernel $KERNEL --rootfs $PYTHON --appfs $FSUTIL \
         --login faasten --stats stats/$op/stat$i \
