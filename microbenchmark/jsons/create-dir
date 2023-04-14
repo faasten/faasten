@@ -1,0 +1,1 @@
+{"input": {"op": "create-dir", "args": {"path":"home:<faasten,faasten>:mydir", "label":"faasten,faasten"}}}

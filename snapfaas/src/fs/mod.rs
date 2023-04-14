@@ -623,7 +623,7 @@ impl<S: BackingStore> FS<S> {
     /////////////
     /// reads ///
     /////////////
-    pub fn list(&self, dir: Directory) -> Result<HashMap<String, DirEntry>, LabelError> {
+    pub fn list(&self, dir: &Directory) -> Result<HashMap<String, DirEntry>, LabelError> {
         STAT.with(|stat| {
             if checks::can_read(&dir.label) {
                 Ok(match self.storage.get(&dir.object_id.to_be_bytes()) {
@@ -662,7 +662,7 @@ impl<S: BackingStore> FS<S> {
                                 let now = Instant::now();
                                 m.insert(
                                     serde_json::ser::to_string(dir.label()).unwrap(),
-                                    self.list(dir.clone()).unwrap(),
+                                    self.list(dir).unwrap(),
                                 );
                                 stat.borrow_mut().ser_label += now.elapsed();
                                 m
@@ -817,12 +817,12 @@ impl<S: BackingStore> FS<S> {
                 // If facet is None, use the current label to index
                 let default_facet = &*current_label.borrow();
                 let facet = facet.unwrap_or(default_facet);
-                if !checks::can_read_relaxed(facet) {
-                    return Err(LinkError::LabelError(LabelError::CannotRead));
-                }
-                if !checks::can_write(facet) {
-                    return Err(LinkError::LabelError(LabelError::CannotWrite));
-                }
+                //if !checks::can_read_relaxed(facet) {
+                //    return Err(LinkError::LabelError(LabelError::CannotRead));
+                //}
+                //if !checks::can_write(facet) {
+                //    return Err(LinkError::LabelError(LabelError::CannotWrite));
+                //}
                 let mut raw_fdir: Option<Vec<u8>> = self.storage.get(&fdir.object_id.to_be_bytes());
                 loop {
                     let mut fdir_contents: FacetedDirectoryInner = raw_fdir
@@ -1009,7 +1009,7 @@ impl<S: BackingStore> FS<S> {
                     if !visited.insert(dir.object_id) {
                         continue;
                     }
-                    let entries = self.list(dir)?;
+                    let entries = self.list(&dir)?;
                     for entry in entries.into_values() {
                         remaining.push(entry);
                     }
@@ -1154,9 +1154,11 @@ pub mod utils {
                                 // implicitly raising the label
                                 taint_with_label(dir.label.clone());
                                 match comp {
-                                    PC::Dscrp(s) => {
-                                        fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath)
-                                    }
+                                    PC::Dscrp(s) => fs
+                                        .list(&dir)?
+                                        .get(s)
+                                        .map(Clone::clone)
+                                        .ok_or(Error::BadPath),
                                     _ => Err(Error::BadPath),
                                 }
                             }
@@ -1188,9 +1190,11 @@ pub mod utils {
                     // implicitly raising the label
                     taint_with_label(dir.label.clone());
                     match last {
-                        PC::Dscrp(s) => {
-                            fs.list(dir)?.get(s).map(Clone::clone).ok_or(Error::BadPath)
-                        }
+                        PC::Dscrp(s) => fs
+                            .list(&dir)?
+                            .get(s)
+                            .map(Clone::clone)
+                            .ok_or(Error::BadPath),
                         _ => Err(Error::BadPath),
                     }
                 }
@@ -1244,7 +1248,7 @@ pub mod utils {
         path: P,
     ) -> Result<HashMap<String, DirEntry>, Error> {
         match read_path(fs, path) {
-            Ok(DirEntry::Directory(dir)) => fs.list(dir).map_err(|e| Error::from(e)),
+            Ok(DirEntry::Directory(dir)) => fs.list(&dir).map_err(|e| Error::from(e)),
             Ok(_) => Err(Error::BadPath),
             Err(e) => Err(Error::from(e)),
         }
@@ -1537,21 +1541,21 @@ pub mod utils {
         base_dir: P,
         name: String,
         label: Buckle,
-    ) -> Result<(), Error> {
+    ) -> Result<DirEntry, Error> {
         match read_path(&fs, base_dir) {
             Ok(entry) => match entry {
                 DirEntry::Directory(dir) => {
                     let newfile = fs.create_file(label);
                     endorse_with_full();
-                    fs.link(&dir, name, DirEntry::File(newfile))
-                        .map(|_| ())
+                    fs.link(&dir, name, DirEntry::File(newfile.clone()))
+                        .map(|_| DirEntry::File(newfile))
                         .map_err(|e| Error::from(e))
                 }
                 DirEntry::FacetedDirectory(fdir) => {
                     let newfile = fs.create_file(label);
                     endorse_with_full();
-                    fs.faceted_link(&fdir, None, name, DirEntry::File(newfile))
-                        .map(|_| ())
+                    fs.faceted_link(&fdir, None, name, DirEntry::File(newfile.clone()))
+                        .map(|_| DirEntry::File(newfile))
                         .map_err(|e| Error::from(e))
                 }
                 _ => Err(Error::BadPath),
@@ -1559,8 +1563,8 @@ pub mod utils {
             Err(Error::FacetedDir(fdir, facet)) => {
                 let newfile = fs.create_file(label);
                 endorse_with_full();
-                fs.faceted_link(&fdir, Some(&facet), name, DirEntry::File(newfile))
-                    .map(|_| ())
+                fs.faceted_link(&fdir, Some(&facet), name, DirEntry::File(newfile.clone()))
+                    .map(|_| DirEntry::File(newfile))
                     .map_err(|e| Error::from(e))
             }
             Err(e) => Err(e),
