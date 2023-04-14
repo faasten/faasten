@@ -99,7 +99,7 @@ pub mod metrics {
         STAT.with(|stat| stat.borrow_mut().write += elapsed)
     }
     pub fn add_delete_lat(elapsed: Duration) {
-        STAT.with(|stat| stat.borrow_mut().write += elapsed)
+        STAT.with(|stat| stat.borrow_mut().delete += elapsed)
     }
     pub fn add_declassify_lat(elapsed: Duration) {
         STAT.with(|stat| stat.borrow_mut().declassify += elapsed)
