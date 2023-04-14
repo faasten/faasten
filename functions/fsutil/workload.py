@@ -100,6 +100,7 @@ def handle(request, syscall):
         else:
             ret['success'] = True
             ret['value'] = v
+        ret['finishing_time'] = time()
     elif op == 'delete':
         path = args['path']
         ret['starting_time'] = time()
