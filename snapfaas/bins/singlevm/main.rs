@@ -212,6 +212,14 @@ fn main() {
                 .required(false)
                 .help("Use TiVK as the backing store.")
         )
+        .arg(
+            Arg::with_name("stats")
+                .long("stats")
+                .value_name("STATS")
+                .takes_value(true)
+                .required(false)
+                .help("Write stats to a file.")
+        )
         .get_matches();
 
     if cmd_arguments.is_present("enable network") {
@@ -346,6 +354,22 @@ fn main() {
             }
         }
         Some(tikv_pd) => {
+            use std::io::Write;
+            use std::fs::OpenOptions;
+
+            let mut f = cmd_arguments
+                .value_of("stats")
+                .map(String::from)
+                .map(|f| {
+                    OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(&f)
+                        .unwrap()
+                });
+
+
             use std::sync::Arc;
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             let client = rt.block_on(async { tikv_client::RawClient::new(vec![tikv_pd], None).await.unwrap() });
@@ -363,6 +387,9 @@ fn main() {
                 debug!("request: {:?}", req);
                 let processor =
                     syscall_server::SyscallProcessor::new(startlbl.clone(), mypriv.clone(), Buckle::top());
+
+                let m1 = snapfaas::fs::metrics::get_stat();
+                
                 match processor.run(&mut env, req, &mut vm) {
                     Ok(rsp) => {
                         let t2 = Instant::now();
@@ -377,6 +404,15 @@ fn main() {
                         eprintln!("Request failed due to: {:?}", e);
                     }
                 }
+
+                let m2 = snapfaas::fs::metrics::get_stat();
+                let _ = f.as_mut().map(|f| {
+                    let b1 = serde_json::to_string(&m1).unwrap();
+                    let b2 = serde_json::to_string(&m2).unwrap();
+                    let _ = writeln!(f, "{}", &b1);
+                    let _ = writeln!(f, "{}", &b2);
+                });
+
                 if dump_working_set {
                     let listener_port = format!("dump_ws-{}.sock", id);
                     UnixStream::connect(listener_port).expect("Failed to connect to VMM UNIX listener");
