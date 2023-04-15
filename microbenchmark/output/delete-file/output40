@@ -1,2 +1,2 @@
-Apr 14 07:17:30.919 INFO connect to tikv endpoint: "10.10.1.2:20160"
-{"starting_time": 1681456650.9144473, "success": true, "finishing_time": 1681456650.9233518, "duration": 8944749}
+Apr 15 00:13:05.513 INFO connect to tikv endpoint: "10.10.1.2:20160"
+{"starting_time": 1681517585.5092025, "success": true, "finishing_time": 1681517585.517754, "duration": 8582583}
