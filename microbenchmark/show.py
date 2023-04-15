@@ -1,12 +1,5 @@
 import os, json, numpy
 
-#  common = [
-    #  'get',
-    #  'put',
-    #  'add',
-    #  'cas',
-#  ]
-
 micros = {
     'create-dir'       : 'create_dir'     ,
     'create-faceted'   : 'create_faceted' ,
@@ -19,7 +12,7 @@ micros = {
     'label-endorse'    : 'endorse'        ,
     'label-taint'      : 'taint'          ,
     'read-dir'         : 'list_dir'       ,
-    #  'read-faceted'     : 'list_faceted'   ,
+    'read-faceted'     : 'list_faceted'   ,
     'read-file'        : 'read'           ,
     'write'            : 'write'          ,
 }
@@ -110,7 +103,4 @@ if __name__ == "__main__":
         print(avg(stats_label) / 1000000000)
         print(avg(stats_op) / 1000000000)
         print()
-
-        #  print(stats[1][0]["get"])
-        #  break
 
