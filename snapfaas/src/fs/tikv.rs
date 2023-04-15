@@ -51,7 +51,13 @@ impl super::BackingStore for TikvClient {
     fn add(&self, key: &[u8], value: &[u8]) -> bool {
         STAT.with(|stat| {
             let now = Instant::now();
-            let res = self.cas(key, None, value).is_ok();
+            let (_, res) = self.tokio_runtime.block_on(async {
+                self.client
+                    .with_atomic_for_cas()
+                    .compare_and_swap(Vec::from(key), None::<&[u8]>.map(Vec::from), value)
+                    .await
+                    .expect("tikv add")
+            });
             stat.borrow_mut().add += now.elapsed();
             stat.borrow_mut().add_val_bytes += value.len();
             stat.borrow_mut().add_key_bytes += key.len();
