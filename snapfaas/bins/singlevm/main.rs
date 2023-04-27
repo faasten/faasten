@@ -5,6 +5,7 @@ use log::{debug, error, warn};
 use snapfaas::blobstore::Blobstore;
 use snapfaas::configs::FunctionConfig;
 use snapfaas::fs::lmdb::DBENV;
+use snapfaas::fs::tikv::TikvClient;
 use snapfaas::fs::FS;
 use snapfaas::syscall_server::SyscallGlobalEnv;
 /// This binary is used to launch a single instance of firerunner
@@ -16,6 +17,7 @@ use snapfaas::{syscall_server, unlink_unix_sockets};
 use std::io::BufRead;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Instant;
+use std::sync::Arc;
 
 use clap::{App, Arg};
 
@@ -203,6 +205,14 @@ fn main() {
                 .required(false)
                 .help("If present, VMM will load the regions contained in diff_dirs[0]/WS only effective when there is one diff snapshot.")
         )
+        .arg(
+            Arg::with_name("tikv")
+                .long("tikv")
+                .value_name("TIKV")
+                .takes_value(true)
+                .required(false)
+                .help("Use TiVK as the backing store.")
+        )
         .get_matches();
 
     if cmd_arguments.is_present("enable network") {
@@ -296,7 +306,18 @@ fn main() {
 
     let mut env = SyscallGlobalEnv {
         sched_conn: None,
-        fs: FS::new(&*DBENV),
+        fs: FS::new(
+                match cmd_arguments.value_of("tikv").map(String::from) {
+                    None => {
+                        FSWrapper(Box::new(&*DBENV))
+                    }
+                    Some(tikv_pd) => {
+                        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+                        let client = rt.block_on(async { tikv_client::RawClient::new(vec![tikv_pd], None).await.unwrap() });
+                        FSWrapper(Box::new(TikvClient::new(client, Arc::new(rt))))
+                    }
+                }
+            ),
         blobstore: Blobstore::default(),
     };
 
@@ -335,7 +356,20 @@ fn main() {
     eprintln!("***********************************************");
 
     // Shutdown the vm and exit
-    eprintln!("Shutting down vm..."); 
+    eprintln!("Shutting down vm...");
     drop(vm);
     unlink_unix_sockets();
+}
+
+struct FSWrapper(Box<dyn snapfaas::fs::BackingStore>);
+
+impl snapfaas::fs::BackingStore for FSWrapper {
+    fn get(&self, key: &[u8]) -> Option<Vec<u8>> { self.0.get(key) }
+    fn put(&self, key: &[u8], value: &[u8]) { self.0.put(key, value) }
+    fn add(&self, key: &[u8], value: &[u8]) -> bool { self.0.add(key, value) }
+    fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8]) -> Result<(), Option<Vec<u8>>> {
+        self.0.cas(key, expected, value)
+    }
+    fn del(&self, key: &[u8]) { self.0.del(key) }
+    fn get_keys(&self) -> Option<Vec<&[u8]>> { self.0.get_keys() }
 }
