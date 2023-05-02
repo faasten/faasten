@@ -5,7 +5,8 @@ use log::{debug, error, warn};
 use snapfaas::blobstore::Blobstore;
 use snapfaas::configs::FunctionConfig;
 use snapfaas::fs::lmdb::DBENV;
-use snapfaas::fs::FS;
+use snapfaas::fs::tikv::TikvClient;
+use snapfaas::fs::{FS, BackingStore};
 use snapfaas::syscall_server::SyscallGlobalEnv;
 /// This binary is used to launch a single instance of firerunner
 /// It reads a request from stdin, launches a VM based on cmdline inputs, sends
@@ -16,6 +17,7 @@ use snapfaas::{syscall_server, unlink_unix_sockets};
 use std::io::BufRead;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::time::Instant;
+use std::sync::Arc;
 
 use clap::{App, Arg};
 
@@ -203,6 +205,14 @@ fn main() {
                 .required(false)
                 .help("If present, VMM will load the regions contained in diff_dirs[0]/WS only effective when there is one diff snapshot.")
         )
+        .arg(
+            Arg::with_name("tikv proxies")
+                .long("tikv")
+                .value_name("[ADDR:]PORT")
+                .takes_value(true)
+                .required(false)
+                .help("One or more addresses of TiKV placement driver, separated by space.")
+        )
         .get_matches();
 
     if cmd_arguments.is_present("enable network") {
@@ -294,9 +304,19 @@ fn main() {
             Buckle::parse(&(s.to_string() + ",T")).unwrap()
         });
 
+    let fs: FS<Box<dyn BackingStore>> =
+        match cmd_arguments.value_of("tikv proxies").map(|ts| ts.split_whitespace().into_iter().collect()) {
+            None => FS::new(Box::new(&*DBENV)),
+            Some(tikv_pds) => FS::new({
+                            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+                            let client = rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
+                            Box::new(TikvClient::new(client, Arc::new(rt)))
+                        }),
+        };
+
     let mut env = SyscallGlobalEnv {
         sched_conn: None,
-        fs: FS::new(&*DBENV),
+        fs,
         blobstore: Blobstore::default(),
     };
 
@@ -335,7 +355,7 @@ fn main() {
     eprintln!("***********************************************");
 
     // Shutdown the vm and exit
-    eprintln!("Shutting down vm..."); 
+    eprintln!("Shutting down vm...");
     drop(vm);
     unlink_unix_sockets();
 }

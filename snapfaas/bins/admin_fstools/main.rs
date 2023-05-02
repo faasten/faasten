@@ -3,9 +3,9 @@
 //! The preparer installs supported kernels and runtime images in the directory ``home:^T,faasten''.
 //! Kernels and runtime images are stored as blobs.
 
-use clap::{App, ArgGroup};
+use clap::{App, ArgGroup, Arg};
 use sha2::Sha256;
-use snapfaas::blobstore;
+use snapfaas::{blobstore, fs::{BackingStore, FS}};
 use std::io::{stdout, Write};
 
 pub fn main() -> std::io::Result<()> {
@@ -27,9 +27,29 @@ pub fn main() -> std::io::Result<()> {
                 .args(&["bootstrap", "update_fsutil", "update_python", "faceted-list", "list", "read", "blob", "mkdir", "delete"])
                 .required(true),
         )
+        .arg(
+            Arg::with_name("tikv proxies")
+                .value_name("[ADDR:]PORT")
+                .long("tikv")
+                .takes_value(true)
+                .required(false)
+                .help("One or more addresses of TiKV placement driver, separated by space.")
+        )
         .get_matches();
 
-    let fs = snapfaas::fs::FS::new(&*snapfaas::fs::lmdb::DBENV);
+    let fs: FS<Box<dyn BackingStore>> = FS::new(
+        match matches.value_of("tikv proxies").map(|ts| ts.split_whitespace().into_iter().collect()) {
+            None => {
+                Box::new(&*snapfaas::fs::lmdb::DBENV)
+            }
+            Some(tikv_pds) => {
+                let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+                let client = rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
+                Box::new(snapfaas::fs::tikv::TikvClient::new(client, std::sync::Arc::new(rt)))
+            }
+        }
+    );
+
     let blobstore = blobstore::Blobstore::default();
     if matches.is_present("bootstrap") {
         snapfaas::fs::bootstrap::prepare_fs(&fs, matches.value_of("bootstrap").unwrap());

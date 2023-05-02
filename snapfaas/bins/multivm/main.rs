@@ -12,7 +12,7 @@
 use clap::{App, Arg};
 use log::warn;
 use snapfaas::resource_manager::ResourceManager;
-use snapfaas::{sched, fs::lmdb::DBENV};
+use snapfaas::{sched, fs::lmdb::DBENV, fs::tikv::TikvClient, fs::BackingStore};
 use snapfaas::worker::Worker;
 
 use std::net::{SocketAddr, TcpStream};
@@ -50,6 +50,14 @@ fn main() {
                 .required(true)
                 .help("Total memory available for all VMs"),
         )
+        .arg(
+            Arg::with_name("tikv proxies")
+                .value_name("[ADDR:]PORT")
+                .long("tikv")
+                .takes_value(true)
+                .required(false)
+                .help("One or more addresses of TiKV placement driver, separated by space.")
+        )
         .get_matches();
 
     // intialize remote scheduler
@@ -74,16 +82,17 @@ fn main() {
 
     // create the worker pool
     let pool_size = manager.total_mem_in_mb() / 128;
-    let pool = threadpool::ThreadPool::new(pool_size);
-    let manager = Arc::new(Mutex::new(manager));
-    let db = &*DBENV;
-    for i in 0..pool_size as u32 {
-        let sched_addr_dup = sched_addr.clone();
-        let manager_dup = Arc::clone(&manager);
-        pool.execute(move || {
-            Worker::new(i + 100, sched_addr_dup, manager_dup, db).wait_and_process();
-        });
-    }
+    let pool = match matches.value_of("tikv proxies").map(|ts| ts.split_whitespace().into_iter().collect()) {
+        None => {
+            new_workerpool(pool_size, sched_addr, manager, &*DBENV)
+        }
+        Some(tikv_pds) => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            let client = rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
+            let db = TikvClient::new(client, Arc::new(rt));
+            new_workerpool(pool_size, sched_addr, manager, db)
+        }
+    };
 
     // register signal handler
     set_ctrlc_handler(sched_addr.clone());
@@ -92,20 +101,27 @@ fn main() {
     pool.join();
 }
 
-//fn new_workerpool(
-//    pool_size: usize, sched_addr: String, manager_sender: Sender<Message>
-//) -> Vec<Worker> {
-//    let mut pool = Vec::with_capacity(pool_size);
-//    for i in 0..pool_size {
-//        let cid = i as u32 + 100;
-//        pool.push(Worker::new(
-//            sched_addr.clone(),
-//            manager_sender.clone(),
-//            cid,
-//        ));
-//    }
-//    pool
-//}
+fn new_workerpool<T>(
+    pool_size: usize,
+    sched_addr: SocketAddr,
+    manager: ResourceManager,
+    db: T
+) -> threadpool::ThreadPool
+where
+    T: BackingStore + Clone + Send + 'static
+{
+    let pool = threadpool::ThreadPool::new(pool_size);
+    let manager = Arc::new(Mutex::new(manager));
+    for i in 0..pool_size as u32 {
+        let sched_addr_dup = sched_addr.clone();
+        let manager_dup = Arc::clone(&manager);
+        let db_dup = db.clone();
+        pool.execute(move || {
+            Worker::new(i + 100, sched_addr_dup, manager_dup, db_dup).wait_and_process();
+        });
+    }
+    pool
+}
 
 fn set_ctrlc_handler(sched_addr: SocketAddr) {
     ctrlc::set_handler(move || {
