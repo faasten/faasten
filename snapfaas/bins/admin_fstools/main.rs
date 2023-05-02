@@ -28,23 +28,23 @@ pub fn main() -> std::io::Result<()> {
                 .required(true),
         )
         .arg(
-            Arg::with_name("tikv")
+            Arg::with_name("tikv proxies")
+                .value_name("[ADDR:]PORT")
                 .long("tikv")
-                .value_name("TIKV")
                 .takes_value(true)
                 .required(false)
-                .help("Use TiVK as the backing store.")
+                .help("One or more addresses of TiKV placement driver, separated by space.")
         )
         .get_matches();
 
     let fs: FS<Box<dyn BackingStore>> = FS::new(
-        match matches.value_of("tikv").map(String::from) {
+        match matches.value_of("tikv proxies").map(|ts| ts.split_whitespace().into_iter().collect()) {
             None => {
                 Box::new(&*snapfaas::fs::lmdb::DBENV)
             }
-            Some(tikv_pd) => {
+            Some(tikv_pds) => {
                 let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-                let client = rt.block_on(async { tikv_client::RawClient::new(vec![tikv_pd], None).await.unwrap() });
+                let client = rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
                 Box::new(snapfaas::fs::tikv::TikvClient::new(client, std::sync::Arc::new(rt)))
             }
         }

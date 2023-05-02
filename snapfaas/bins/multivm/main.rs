@@ -51,12 +51,12 @@ fn main() {
                 .help("Total memory available for all VMs"),
         )
         .arg(
-            Arg::with_name("tikv")
+            Arg::with_name("tikv proxies")
+                .value_name("[ADDR:]PORT")
                 .long("tikv")
-                .value_name("TIKV")
                 .takes_value(true)
                 .required(false)
-                .help("Use TiVK as the backing store.")
+                .help("One or more addresses of TiKV placement driver, separated by space.")
         )
         .get_matches();
 
@@ -82,13 +82,13 @@ fn main() {
 
     // create the worker pool
     let pool_size = manager.total_mem_in_mb() / 128;
-    let pool = match matches.value_of("tikv").map(String::from) {
+    let pool = match matches.value_of("tikv proxies").map(|ts| ts.split_whitespace().into_iter().collect()) {
         None => {
             new_workerpool(pool_size, sched_addr, manager, &*DBENV)
         }
-        Some(tikv_pd) => {
+        Some(tikv_pds) => {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-            let client = rt.block_on(async { tikv_client::RawClient::new(vec![tikv_pd], None).await.unwrap() });
+            let client = rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
             let db = TikvClient::new(client, Arc::new(rt));
             new_workerpool(pool_size, sched_addr, manager, db)
         }
