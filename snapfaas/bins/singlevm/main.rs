@@ -6,7 +6,7 @@ use snapfaas::blobstore::Blobstore;
 use snapfaas::configs::FunctionConfig;
 use snapfaas::fs::lmdb::DBENV;
 use snapfaas::fs::tikv::TikvClient;
-use snapfaas::fs::FS;
+use snapfaas::fs::{FS, BackingStore};
 use snapfaas::syscall_server::SyscallGlobalEnv;
 /// This binary is used to launch a single instance of firerunner
 /// It reads a request from stdin, launches a VM based on cmdline inputs, sends
@@ -304,20 +304,18 @@ fn main() {
             Buckle::parse(&(s.to_string() + ",T")).unwrap()
         });
 
-    let mut env = SyscallGlobalEnv {
-        sched_conn: None,
-        fs: FS::new(
-                match cmd_arguments.value_of("tikv").map(String::from) {
-                    None => {
-                        FSWrapper(Box::new(&*DBENV))
-                    }
-                    Some(tikv_pd) => {
+    let fs: FS<Box<dyn BackingStore>> = match cmd_arguments.value_of("tikv").map(String::from) {
+        None => FS::new(Box::new(&*DBENV)),
+        Some(tikv_pd) => FS::new({
                         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
                         let client = rt.block_on(async { tikv_client::RawClient::new(vec![tikv_pd], None).await.unwrap() });
-                        FSWrapper(Box::new(TikvClient::new(client, Arc::new(rt))))
-                    }
-                }
-            ),
+                        Box::new(TikvClient::new(client, Arc::new(rt)))
+                    }),
+    };
+
+    let mut env = SyscallGlobalEnv {
+        sched_conn: None,
+        fs,
         blobstore: Blobstore::default(),
     };
 
@@ -359,17 +357,4 @@ fn main() {
     eprintln!("Shutting down vm...");
     drop(vm);
     unlink_unix_sockets();
-}
-
-struct FSWrapper(Box<dyn snapfaas::fs::BackingStore>);
-
-impl snapfaas::fs::BackingStore for FSWrapper {
-    fn get(&self, key: &[u8]) -> Option<Vec<u8>> { self.0.get(key) }
-    fn put(&self, key: &[u8], value: &[u8]) { self.0.put(key, value) }
-    fn add(&self, key: &[u8], value: &[u8]) -> bool { self.0.add(key, value) }
-    fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8]) -> Result<(), Option<Vec<u8>>> {
-        self.0.cas(key, expected, value)
-    }
-    fn del(&self, key: &[u8]) { self.0.del(key) }
-    fn get_keys(&self) -> Option<Vec<&[u8]>> { self.0.get_keys() }
 }

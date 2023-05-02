@@ -96,8 +96,20 @@ impl<B: BackingStore> BackingStore for &B {
     }
 }
 
+impl<B: BackingStore + ?Sized> BackingStore for Box<B> {
+    fn get(&self, key: &[u8]) -> Option<Vec<u8>> { self.as_ref().get(key) }
+    fn put(&self, key: &[u8], value: &[u8]) { self.as_ref().put(key, value) }
+    fn add(&self, key: &[u8], value: &[u8]) -> bool { self.as_ref().add(key, value) }
+    fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8]) -> Result<(), Option<Vec<u8>>> {
+        self.as_ref().cas(key, expected, value)
+    }
+    fn del(&self, key: &[u8]) { self.as_ref().del(key) }
+    fn get_keys(&self) -> Option<Vec<&[u8]>> { self.as_ref().get_keys() }
+}
+
+
 #[derive(Debug)]
-pub struct FS<S> {
+pub struct FS<S: ?Sized> {
     storage: S,
 }
 

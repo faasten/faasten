@@ -5,7 +5,7 @@
 
 use clap::{App, ArgGroup, Arg};
 use sha2::Sha256;
-use snapfaas::blobstore;
+use snapfaas::{blobstore, fs::{BackingStore, FS}};
 use std::io::{stdout, Write};
 
 pub fn main() -> std::io::Result<()> {
@@ -37,15 +37,15 @@ pub fn main() -> std::io::Result<()> {
         )
         .get_matches();
 
-    let fs = snapfaas::fs::FS::new(
+    let fs: FS<Box<dyn BackingStore>> = FS::new(
         match matches.value_of("tikv").map(String::from) {
             None => {
-                FSWrapper(Box::new(&*snapfaas::fs::lmdb::DBENV))
+                Box::new(&*snapfaas::fs::lmdb::DBENV)
             }
             Some(tikv_pd) => {
                 let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
                 let client = rt.block_on(async { tikv_client::RawClient::new(vec![tikv_pd], None).await.unwrap() });
-                FSWrapper(Box::new(snapfaas::fs::tikv::TikvClient::new(client, std::sync::Arc::new(rt))))
+                Box::new(snapfaas::fs::tikv::TikvClient::new(client, std::sync::Arc::new(rt)))
             }
         }
     );
@@ -163,17 +163,4 @@ pub fn main() -> std::io::Result<()> {
         log::warn!("Noop.");
     }
     Ok(())
-}
-
-struct FSWrapper(Box<dyn snapfaas::fs::BackingStore>);
-
-impl snapfaas::fs::BackingStore for FSWrapper {
-    fn get(&self, key: &[u8]) -> Option<Vec<u8>> { self.0.get(key) }
-    fn put(&self, key: &[u8], value: &[u8]) { self.0.put(key, value) }
-    fn add(&self, key: &[u8], value: &[u8]) -> bool { self.0.add(key, value) }
-    fn cas(&self, key: &[u8], expected: Option<&[u8]>, value: &[u8]) -> Result<(), Option<Vec<u8>>> {
-        self.0.cas(key, expected, value)
-    }
-    fn del(&self, key: &[u8]) { self.0.del(key) }
-    fn get_keys(&self) -> Option<Vec<&[u8]>> { self.0.get_keys() }
 }
