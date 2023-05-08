@@ -9,6 +9,7 @@ pub mod firecracker_wrapper;
 pub mod fs;
 pub mod sched;
 pub mod syscall_server;
+pub use syscalls::syscalls_capnp;
 pub mod vm;
 
 use log::error;

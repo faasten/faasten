@@ -54,6 +54,7 @@ labeled = { git = "https://github.com/alevy/labeled", features = ["buckle"] }
 bytes = "1.1.0"
 byteorder = ">=1.2.1"
 prost = "0.9.0"
+capnp = "*"
 lmdb-rkv = "0.14.0"
 url = "2.2"
 clap = "2.33.0"
@@ -88,3 +89,4 @@ tikv-client = { git = "https://github.com/tikv/client-rust", rev = "8f54e6114227
 
 [build-dependencies]
 prost-build = "0.9.0"
+capnpc = "*"

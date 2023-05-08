@@ -228,6 +228,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89b2fd2a0dcf38d7971e2194b6b6eebab45ae01067456a7fd93d5547a61b70be"
 
 [[package]]
+name = "capnp"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18eca1b9aca7e3623dda158213b1b79c1e5c4293fbbf0ead6b9ed28a1763bbff"
+
+[[package]]
+name = "capnpc"
+version = "0.16.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55b72fc31ab0a8fd0420a799737d15e0a5297d695ba6c8b7b578d8cc0ba8360c"
+dependencies = [
+ "capnp",
+]
+
+[[package]]
 name = "cc"
 version = "1.0.79"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2615,6 +2630,8 @@ version = "0.1.0"
 dependencies = [
  "byteorder",
  "bytes",
+ "capnp",
+ "capnpc",
  "cgroups",
  "clap 2.34.0",
  "crossbeam",

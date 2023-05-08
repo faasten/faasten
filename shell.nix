@@ -3,5 +3,5 @@
 with pkgs;
 
 mkShell {
-  buildInputs = [ rustup cargo rustc rustfmt protobuf pkg-config openssl unzip cmake];
+  buildInputs = [ rustup cargo rustc rustfmt capnproto protobuf pkg-config openssl unzip cmake];
 }
