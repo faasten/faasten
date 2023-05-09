@@ -34,18 +34,6 @@ fn main() {
         )
         .get_matches();
 
-    // Start garbage collector
-    thread::spawn(|| {
-        use snapfaas::fs;
-        loop {
-            thread::sleep(std::time::Duration::new(5, 0));
-            fs::utils::taint_with_label(labeled::buckle::Buckle::top());
-            let mut fs = fs::FS::new(&*snapfaas::fs::lmdb::DBENV);
-            let collected = fs.collect_garbage().unwrap();
-            log::debug!("garbage collected {}", collected.len())
-        }
-    });
-
     // Intialize remote scheduler
     let sched_addr = matches
         .value_of("scheduler listen address")
