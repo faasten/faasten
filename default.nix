@@ -1,14 +1,14 @@
 { pkgs ? import <nixpkgs> {}} :
 
-pkgs.rustPlatform.buildRustPackage rec {
+pkgs.rust_1_66.packages.stable.buildRustPackages.rustPlatform.buildRustPackage rec {
   pname = "faasten";
   version = "0.1.0";
 
-  buildType = "debug";
+  buildType = "release";
 
   src = ./.;
 
-  cargoSha256 = "sha256-DmgQHMmTBYnCcFVEn5HYFPXwor83wYLZ9NudFiOmDeQ=";
+  cargoSha256 = "sha256-RRqiD91FcLRRkaNxMmqoSLBitxbEw23/dCOxvpoOvIw=";
 
   nativeBuildInputs = [ pkgs.perl pkgs.openssl pkgs.pkg-config pkgs.protobuf pkgs.unzip pkgs.cmake ];
 
