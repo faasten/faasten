@@ -8,7 +8,7 @@ pkgs.rust_1_66.packages.stable.buildRustPackages.rustPlatform.buildRustPackage r
 
   src = ./.;
 
-  cargoSha256 = "sha256-RRqiD91FcLRRkaNxMmqoSLBitxbEw23/dCOxvpoOvIw=";
+  cargoSha256 = "sha256-Vj8GQkAAl2HsLUx+Dgq+BGhJoZETKhUmx7A9JHOlKwc=";
 
   nativeBuildInputs = [ pkgs.perl pkgs.openssl pkgs.pkg-config pkgs.protobuf pkgs.unzip pkgs.cmake ];
 
