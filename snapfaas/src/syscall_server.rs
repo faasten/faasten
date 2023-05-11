@@ -282,13 +282,23 @@ impl SyscallProcessor {
                     };
                     s.send(result.encode_to_vec())?;
                 }
-                Some(SC::DupGate(req)) => {
-                    let policy = pblabel_to_buckle(&req.policy.unwrap());
-                    let value =
-                        fs::utils::dup_gate(&env.fs, req.orig, req.base_dir, req.name, policy).ok();
-                    let result = syscalls::WriteKeyResponse {
-                        success: value.is_some(),
-                    };
+                Some(SC::FsDupGate(dg)) => {
+                    let mut success = false;
+                    if let Ok(orig) = fs::path::Path::parse(&dg.orig) {
+                        if let Ok(path) = fs::path::Path::parse(&dg.path) {
+                            if let Some(base_dir) = path.parent() {
+                                if let Some(name) = path.file_name() {
+                                    if let Ok(policy) = buckle::Buckle::parse(&dg.policy) {
+                                        success = fs::utils::dup_gate(
+                                            &env.fs, orig, base_dir, name, policy,
+                                        )
+                                        .is_ok();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let result = syscalls::WriteKeyResponse { success };
                     s.send(result.encode_to_vec())?;
                 }
                 Some(SC::FsCreateGate(cg)) => {
@@ -763,7 +773,8 @@ impl SyscallProcessor {
                     let result = if let Some(file) = self.blobs.get_mut(&rb.fd) {
                         const MB: usize = 1024 * 1024;
                         let mut buf = Vec::from([0; 2 * MB]);
-                        let limit = std::cmp::min(rb.length.unwrap_or(2 * MB as u64), 2 * MB as u64) as usize;
+                        let limit = std::cmp::min(rb.length.unwrap_or(2 * MB as u64), 2 * MB as u64)
+                            as usize;
                         if let Some(offset) = rb.offset {
                             file.seek(std::io::SeekFrom::Start(offset))
                                 .map_err(|e| SyscallProcessorError::Blob(e))?;

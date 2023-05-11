@@ -31,11 +31,10 @@ message ServiceResponse {
   uint32 status = 2;
 }
 
-message DupGate {
-  repeated PathComponent orig = 1;
-  repeated PathComponent baseDir = 2;
-  string name = 3;
-  Buckle policy = 4;
+message FSDupGate {
+  string orig = 1;
+  string path = 2;
+  string policy = 3;
 }
 
 message Endorse {
@@ -277,7 +276,7 @@ message Syscall {
     FSList fsList = 20;
     FSFacetedList fsFacetedList = 21;
     FSCreateFacetedDir fsCreateFacetedDir = 22;
-    DupGate dupGate = 23;
+    FSDupGate fsDupGate = 23;
     TokenList subPrivilege = 24;
     string buckleParse = 25;
     FSDelete fsDelete = 26;

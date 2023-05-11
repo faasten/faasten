@@ -131,15 +131,6 @@ class Syscall():
         response = self._recv(syscalls_pb2.Buckle())
         return response.secrecy
 
-    def dup_gate(self, orig, path, policy):
-        base, name, ok = split_path(path)
-        if not ok:
-            return False
-        req = syscalls_pb2.Syscall(dupGate = syscalls_pb2.DupGate(orig = convert_path(orig), baseDir = convert_path(base), name = name, policy = policy))
-        self._send(req)
-        response = self._recv(syscalls_pb2.WriteKeyResponse())
-        return response.success
-
     ### github APIs ###
     def github_rest_get(self, route, toblob=False):
         req = syscalls_pb2.Syscall(githubRest = syscalls_pb2.GithubRest(verb = syscalls_pb2.HttpVerb.GET, route = route, body = None, toblob=toblob))
@@ -304,6 +295,12 @@ class Syscall():
 
     def fs_createredirectgate(self, path: str, policy: str, redirect_path: str):
         req = syscalls_pb2.Syscall(fsCreateRedirectGate=syscalls_pb2.FSCreateRedirectGate(path=path, policy=policy, redirectPath=redirect_path))
+        self._send(req)
+        response = self._recv(syscalls_pb2.WriteKeyResponse())
+        return response.success
+
+    def fs_dupgate(self, src: str, dest: str, policy: str):
+        req = syscalls_pb2.Syscall(fsDupGate = syscalls_pb2.FSDupGate(src=src, dest=dest, policy=policy))
         self._send(req)
         response = self._recv(syscalls_pb2.WriteKeyResponse())
         return response.success
