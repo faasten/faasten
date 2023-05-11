@@ -1,10 +1,15 @@
+use std::borrow::{BorrowMut, Borrow};
 ///! secure runtime that holds the handles to the VM and the global file system
 use std::collections::HashMap;
 use std::io::{Read, Seek, Write};
 use std::net::TcpStream;
 
+use capnp::private::capability::ParamsHook;
+use capnp::private::layout::ListBuilder;
 use labeled::buckle::{self, Buckle, Clause, Component};
 use log::{debug, error, warn};
+use std::sync::mpsc::{Sender, channel};
+use capnp_rpc::pry;
 
 use crate::blobstore::{self, Blobstore};
 use crate::fs::{self, BackingStore, FS};
@@ -13,6 +18,7 @@ use crate::sched::{
     message::{ReturnCode, TaskReturn},
 };
 use crate::syscalls::{self, syscall::Syscall as SC};
+use crate::syscalls_capnp;
 
 pub fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Component {
     match component {
@@ -103,6 +109,7 @@ pub struct SyscallGlobalEnv<B: BackingStore> {
 }
 
 pub struct SyscallProcessor {
+    response: Sender<Result<Vec<u8>, SyscallProcessorError>>,
     create_blobs: HashMap<u64, blobstore::NewBlob>,
     blobs: HashMap<u64, blobstore::Blob>,
     dents: HashMap<u64, fs::DirEntry>,
@@ -121,7 +128,10 @@ impl SyscallProcessor {
             fs::utils::set_clearance(clearance);
         }
 
+        let (sender, _) = channel();
+
         Self {
+            response: sender,
             create_blobs: Default::default(),
             blobs: Default::default(),
             dents: Default::default(),
@@ -132,7 +142,10 @@ impl SyscallProcessor {
     }
 
     pub fn new_insecure() -> Self {
+        let (sender, _) = channel();
+
         Self {
+            response: sender,
             create_blobs: Default::default(),
             blobs: Default::default(),
             dents: Default::default(),
@@ -763,7 +776,8 @@ impl SyscallProcessor {
                     let result = if let Some(file) = self.blobs.get_mut(&rb.fd) {
                         const MB: usize = 1024 * 1024;
                         let mut buf = Vec::from([0; 2 * MB]);
-                        let limit = std::cmp::min(rb.length.unwrap_or(2 * MB as u64), 2 * MB as u64) as usize;
+                        let limit = std::cmp::min(rb.length.unwrap_or(2 * MB as u64), 2 * MB as u64)
+                            as usize;
                         if let Some(offset) = rb.offset {
                             file.seek(std::io::SeekFrom::Start(offset))
                                 .map_err(|e| SyscallProcessorError::Blob(e))?;
@@ -812,5 +826,160 @@ impl SyscallProcessor {
                 }
             }
         }
+    }
+}
+
+use capnp::capability::Promise;
+use capnp::{Error, list_list, data_list, text_list};
+use syscalls_capnp::cloud_call::*;
+
+impl syscalls_capnp::cloud_call::Server for SyscallProcessor {
+    fn respond(&mut self, params: RespondParams, _: RespondResults) -> Promise<(), Error> {
+        self.response.send(Ok(pry!(pry!(params.get()).get_payload()).into())).expect("send");
+        Promise::ok(())
+    }
+
+    fn get_current_label(
+        &mut self,
+        _: GetCurrentLabelParams,
+        mut results: GetCurrentLabelResults,
+    ) -> Promise<(), Error> {
+        syscalls::buckle_to_capnp_label(&fs::utils::get_current_label(), &mut results.get().reborrow().init_label());
+        Promise::ok(())
+    }
+
+    fn taint_with_label(
+        &mut self,
+        params: TaintWithLabelParams,
+        mut results: TaintWithLabelResults,
+    ) -> Promise<(), Error> {
+        let label = pry!(syscalls::buckle_from_capnp_label(&pry!(pry!(params.get()).get_label())));
+        syscalls::buckle_to_capnp_label(&fs::utils::taint_with_label(label), &mut results.get().reborrow().init_label());
+        Promise::ok(())
+    }
+
+    fn create_file(&mut self, _: CreateFileParams, _: CreateFileResults) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::create_file not implemented".to_string(),
+        ))
+    }
+
+    fn create_blob(&mut self, _: CreateBlobParams, _: CreateBlobResults) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::create_blob not implemented".to_string(),
+        ))
+    }
+
+    fn create_dir(&mut self, _: CreateDirParams, _: CreateDirResults) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::create_dir not implemented".to_string(),
+        ))
+    }
+
+    fn create_faceted(
+        &mut self,
+        _: CreateFacetedParams,
+        _: CreateFacetedResults,
+    ) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::create_faceted not implemented".to_string(),
+        ))
+    }
+
+    fn open_at(&mut self, _: OpenAtParams, _: OpenAtResults) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::open_at not implemented".to_string(),
+        ))
+    }
+
+    fn open_at_faceted(
+        &mut self,
+        _: OpenAtFacetedParams,
+        _: OpenAtFacetedResults,
+    ) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::open_at_faceted not implemented".to_string(),
+        ))
+    }
+    fn list(
+        &mut self,
+        _: ListParams,
+        _: ListResults,
+    ) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::list not implemented".to_string(),
+        ))
+    }
+    fn write(
+        &mut self,
+        _: WriteParams,
+        _: WriteResults,
+    ) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::write not implemented".to_string(),
+        ))
+    }
+    fn read(
+        &mut self,
+        _: ReadParams,
+        _: ReadResults,
+    ) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::read not implemented".to_string(),
+        ))
+    }
+    fn append(
+        &mut self,
+        _: AppendParams,
+        _: AppendResults,
+    ) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::append not implemented".to_string(),
+        ))
+    }
+    fn finalize(
+        &mut self,
+        _: FinalizeParams,
+        _: FinalizeResults,
+    ) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::finalize not implemented".to_string(),
+        ))
+    }
+    fn read_blob(
+        &mut self,
+        _: ReadBlobParams,
+        _: ReadBlobResults,
+    ) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::read_blob not implemented".to_string(),
+        ))
+    }
+    fn link(
+        &mut self,
+        _: LinkParams,
+        _: LinkResults,
+    ) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::link not implemented".to_string(),
+        ))
+    }
+    fn unlink(
+        &mut self,
+        _: UnlinkParams,
+        _: UnlinkResults,
+    ) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::unlink not implemented".to_string(),
+        ))
+    }
+    fn invoke_gate(
+        &mut self,
+        _: InvokeGateParams,
+        _: InvokeGateResults,
+    ) -> Promise<(), Error> {
+        Promise::err(Error::unimplemented(
+            "method cloud_call::Server::invoke_gate not implemented".to_string(),
+        ))
     }
 }

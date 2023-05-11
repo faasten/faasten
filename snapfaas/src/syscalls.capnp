@@ -72,7 +72,7 @@ struct Optional(T) {
   }
 }
 
-interface CloudCallSVC {
+interface CloudCall {
   # Lifecycle
   respond @0 (payload :Data) -> ();
 
