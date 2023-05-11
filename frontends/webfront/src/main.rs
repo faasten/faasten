@@ -1,6 +1,6 @@
-use clap::{App, Arg};
+use clap::{App, Arg, ArgGroup};
 use openssl::pkey::PKey;
-use snapfaas::blobstore::Blobstore;
+use snapfaas::{blobstore::Blobstore, fs::BackingStore};
 
 mod app;
 pub mod init;
@@ -19,6 +19,15 @@ fn main() -> Result<(), std::io::Error> {
                 .required(false)
                 .default_value("storage")
                 .help("Path to LMDB storage"),
+        )
+        .arg(
+            Arg::with_name("tikv proxies")
+                .long("tikv")
+                .value_name("ADDR1:PORT1,ADDR2:PORT2,...")
+                .takes_value(true)
+                .required(false)
+                .use_delimiter(true)
+                .help("Comma-separated tikv proxy addresses"),
         )
         .arg(
             Arg::with_name("blob path")
@@ -81,15 +90,13 @@ fn main() -> Result<(), std::io::Error> {
                 .required(true)
                 .help("Address of the Faasten scheduler"),
         )
+        .group(
+            ArgGroup::with_name("store")
+                .args(&["storage", "tikv"])
+                .required(true),
+        )
         .get_matches();
 
-    let dbenv = std::boxed::Box::leak(Box::new(lmdb::Environment::new()
-        .set_map_size(100 * 1024 * 1024 * 1024)
-        .set_max_dbs(2)
-        .open(&std::path::Path::new(
-            matches.value_of("storage path").unwrap(),
-        ))
-        .unwrap()));
     let public_key_bytes = std::fs::read(matches.value_of("public key").expect("public key"))?;
     let private_key_bytes = std::fs::read(matches.value_of("secret key").expect("private key"))?;
     let base_url = matches.value_of("base url").expect("base url").to_string();
@@ -101,16 +108,51 @@ fn main() -> Result<(), std::io::Error> {
         matches.value_of("blob path").unwrap().into(),
         matches.value_of("tmp path").unwrap().into(),
     );
-    let fs = snapfaas::fs::FS::new(&*dbenv);
-    let app = app::App::new(
-        PKey::private_key_from_pem(private_key_bytes.as_slice()).unwrap(),
-        PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
-        blobstore,
-        fs,
-        base_url,
-        sched_address,
-    );
     let listen_addr = matches.value_of("listen").unwrap();
+    if matches.is_present("tikv proxies") {
+        let tikv_pds = matches
+            .values_of("tikv proxies")
+            .unwrap()
+            .collect::<Vec<_>>();
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let client =
+            rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
+        let tikv = snapfaas::fs::tikv::TikvClient::new(client, std::sync::Arc::new(rt));
+        let app = app::App::new(
+            PKey::private_key_from_pem(private_key_bytes.as_slice()).unwrap(),
+            PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
+            blobstore,
+            tikv,
+            base_url,
+            sched_address,
+        );
+        start_app(app, listen_addr)
+    } else {
+        let dbenv = std::boxed::Box::leak(Box::new(
+            lmdb::Environment::new()
+                .set_map_size(100 * 1024 * 1024 * 1024)
+                .set_max_dbs(2)
+                .open(&std::path::Path::new(
+                    matches.value_of("storage path").unwrap(),
+                ))
+                .unwrap(),
+        ));
+        let app = app::App::new(
+            PKey::private_key_from_pem(private_key_bytes.as_slice()).unwrap(),
+            PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
+            blobstore,
+            &*dbenv,
+            base_url,
+            sched_address,
+        );
+        start_app(app, listen_addr)
+    }
+}
+
+fn start_app<B>(app: app::App<B>, listen_addr: &str) -> Result<(), std::io::Error>
+where
+    B: BackingStore + Clone + Send + 'static + Sync,
+{
     rouille::start_server(listen_addr, move |request| {
         use log::{error, info};
         use rouille::{Request, Response};
