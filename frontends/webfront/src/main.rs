@@ -92,7 +92,7 @@ fn main() -> Result<(), std::io::Error> {
         )
         .group(
             ArgGroup::with_name("store")
-                .args(&["storage", "tikv"])
+                .args(&["storage path", "tikv proxies"])
                 .required(true),
         )
         .get_matches();
