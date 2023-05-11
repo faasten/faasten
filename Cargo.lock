@@ -3370,6 +3370,8 @@ dependencies = [
  "serde_json",
  "serde_yaml 0.9.21",
  "snapfaas",
+ "tikv-client",
+ "tokio",
 ]
 
 [[package]]

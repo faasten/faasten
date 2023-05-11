@@ -15,8 +15,7 @@ use snapfaas::fs::FS;
 use snapfaas::sched;
 use snapfaas::sched::Scheduler;
 
-#[derive(Clone)]
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 struct Claims {
     pub alg: String,
     pub iat: u64,
@@ -25,24 +24,24 @@ struct Claims {
 }
 
 #[derive(Clone)]
-pub struct App<S: BackingStore> {
+pub struct App<B> {
     pkey: PKey<pkey::Private>,
     pubkey: PKey<pkey::Public>,
     blobstore: Arc<Mutex<Blobstore>>,
-    fs: Arc<FS<S>>,
+    fs: Arc<FS<B>>,
     base_url: String,
     conn: r2d2::Pool<Scheduler>,
 }
 
-impl<S: BackingStore> App<S> {
+impl<B: BackingStore> App<B> {
     pub fn new(
         pkey: PKey<pkey::Private>,
         pubkey: PKey<pkey::Public>,
         blobstore: Blobstore,
-        fs: FS<S>,
+        kvdb: B,
         base_url: String,
         addr: String,
-    ) -> App<S> {
+    ) -> Self {
         let conn = r2d2::Pool::builder()
             .max_size(10)
             .build(Scheduler::new(&addr))
@@ -51,7 +50,7 @@ impl<S: BackingStore> App<S> {
         App {
             conn,
             blobstore,
-            fs: Arc::new(fs),
+            fs: Arc::new(FS::new(kvdb)),
             pkey,
             pubkey,
             base_url,
