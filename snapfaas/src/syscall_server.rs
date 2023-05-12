@@ -183,6 +183,7 @@ impl SyscallProcessor {
                     return Ok(TaskReturn {
                         code: ReturnCode::Success as i32,
                         payload: Some(r.payload),
+                        label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
                     });
                 }
                 Some(SC::InvokeGate(i)) => {
