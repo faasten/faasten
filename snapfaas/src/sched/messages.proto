@@ -94,4 +94,5 @@ enum ReturnCode {
 message TaskReturn {
     ReturnCode code = 1;
     optional string payload = 2;
+    syscalls.Buckle label = 3;
 }

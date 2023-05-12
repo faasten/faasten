@@ -4,6 +4,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
+use crate::fs;
+use crate::syscall_server::buckle_to_pblabel;
+
 use super::message;
 use super::resource_manager::ResourceManager;
 use super::rpc::ResourceInfo;
@@ -97,6 +100,7 @@ impl RpcServer {
                             let ret = message::TaskReturn {
                                 code: message::ReturnCode::QueueFull as i32,
                                 payload: None,
+                                label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
                             };
                             let _ = message::write(&mut stream, &ret);
                         }
@@ -123,6 +127,7 @@ impl RpcServer {
                             let ret = message::TaskReturn {
                                 code: message::ReturnCode::QueueFull as i32,
                                 payload: None,
+                                label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
                             };
                             let _ = message::write(&mut stream, &ret);
                         }

@@ -13,7 +13,7 @@ use log::{debug, error};
 use crate::configs::FunctionConfig;
 use crate::vm::Vm;
 //use crate::metrics::{self, WorkerMetrics};
-use crate::fs::{Function, FS, BackingStore};
+use crate::fs::{Function, FS, BackingStore, self};
 use crate::resource_manager;
 use crate::sched::{
     self,
@@ -123,6 +123,7 @@ impl<B: BackingStore> Worker<B> {
                                 let mut ret = TaskReturn {
                                     code: ReturnCode::ProcessRequestFailed as i32,
                                     payload: None,
+                                    label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
                                 };
                                 loop {
                                     cnt += 1;
@@ -191,6 +192,7 @@ impl<B: BackingStore> Worker<B> {
                                 let ret = TaskReturn {
                                     code: ReturnCode::ResourceExhausted as i32,
                                     payload: None,
+                                    label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
                                 };
                                 if let Err(e) = sched::rpc::finish(
                                     &mut self.env.sched_conn.as_mut().unwrap(),
@@ -219,6 +221,7 @@ impl<B: BackingStore> Worker<B> {
                                 let mut ret = TaskReturn {
                                     code: ReturnCode::ProcessRequestFailed as i32,
                                     payload: None,
+                                    label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
                                 };
                                 loop {
                                     cnt += 1;
@@ -282,6 +285,7 @@ impl<B: BackingStore> Worker<B> {
                                 let ret = TaskReturn {
                                     code: ReturnCode::ResourceExhausted as i32,
                                     payload: None,
+                                    label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
                                 };
                                 if let Err(e) = sched::rpc::finish(
                                     &mut self.env.sched_conn.as_mut().unwrap(),

@@ -7,11 +7,11 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 
-use labeled::buckle;
+use labeled::{buckle, Label};
 use log::{debug, error};
 use rouille::{input::post::BufferedFile, Request, Response};
 use snapfaas::fs::BackingStore;
-use snapfaas::syscall_server::{buckle_to_pblabel, component_to_pbcomponent};
+use snapfaas::syscall_server::{buckle_to_pblabel, component_to_pbcomponent, pblabel_to_buckle};
 use snapfaas::{
     blobstore::Blobstore,
     fs::{self, FS},
@@ -180,32 +180,41 @@ fn wait_for_completion(
     use prost::Message;
     use snapfaas::sched::message::{ReturnCode, TaskReturn};
     let ret = match TaskReturn::decode(bs.as_slice()) {
-        Ok(TaskReturn { code, payload }) => match ReturnCode::from_i32(code) {
-            Some(ReturnCode::QueueFull) => Err(Response::json(&serde_json::json!({
-                "error": "queue full"
-            }))
-            .with_status_code(500)),
-            Some(ReturnCode::LaunchFailed) => Err(Response::json(&serde_json::json!({
-                "error": "failed to launch the VM"
-            }))
-            .with_status_code(500)),
-            Some(ReturnCode::GateNotExist) => Err(Response::json(&serde_json::json!({
-                "error": "gate does not exist"
-            }))
-            .with_status_code(500)),
-            Some(ReturnCode::ResourceExhausted) => Err(Response::json(&serde_json::json!({
-                "error": "resource exhausted"
-            }))
-            .with_status_code(500)),
-            Some(ReturnCode::ProcessRequestFailed) => Err(Response::json(&serde_json::json!({
-                "error": "failed to process request"
-            }))
-            .with_status_code(500)),
-            Some(ReturnCode::Success) => Ok(payload.unwrap()),
-            None => Err(Response::json(&serde_json::json!({
-                "error": "unknown return code"
-            }))
-            .with_status_code(500)),
+        Ok(TaskReturn { code, payload, label }) => {
+            if !pblabel_to_buckle(&label.unwrap()).can_flow_to(&fs::utils::get_current_label()) {
+                Err(Response::json(&serde_json::json!({
+                    "error": "unauthorized to read response"
+                }))
+                .with_status_code(401))
+            } else {
+                match ReturnCode::from_i32(code) {
+                    Some(ReturnCode::QueueFull) => Err(Response::json(&serde_json::json!({
+                        "error": "queue full"
+                    }))
+                    .with_status_code(500)),
+                    Some(ReturnCode::LaunchFailed) => Err(Response::json(&serde_json::json!({
+                        "error": "failed to launch the VM"
+                    }))
+                    .with_status_code(500)),
+                    Some(ReturnCode::GateNotExist) => Err(Response::json(&serde_json::json!({
+                        "error": "gate does not exist"
+                    }))
+                    .with_status_code(500)),
+                    Some(ReturnCode::ResourceExhausted) => Err(Response::json(&serde_json::json!({
+                        "error": "resource exhausted"
+                    }))
+                    .with_status_code(500)),
+                    Some(ReturnCode::ProcessRequestFailed) => Err(Response::json(&serde_json::json!({
+                        "error": "failed to process request"
+                    }))
+                    .with_status_code(500)),
+                    Some(ReturnCode::Success) => Ok(payload.unwrap()),
+                    None => Err(Response::json(&serde_json::json!({
+                        "error": "unknown return code"
+                    }))
+                    .with_status_code(500)),
+                }
+            }
         },
         Err(_) => Err(Response::json(&serde_json::json!({
             "error": "failed to decode return from Faasten core"
