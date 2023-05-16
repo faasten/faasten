@@ -1,4 +1,4 @@
-use clap::{crate_authors, crate_version, App, Arg};
+use clap::Parser;
 
 use std::{
     sync::{Arc, Condvar, Mutex},
@@ -7,44 +7,24 @@ use std::{
 
 use snapfaas::sched::{resource_manager::ResourceManager, rpc_server::RpcServer, schedule};
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Address to listen at
+    #[arg(short, long, value_name = "ADDR:PORT")]
+    listen: String,
+    /// Capacity of the request queue
+    #[arg(short, long, value_name = "CAP_NUM_OF_TASK", default_value_t = 1000000)]
+    qcap: u32,
+}
+
 fn main() {
     env_logger::init();
 
-    let matches = App::new("Faasten Gateway")
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about("Launch Faasten gateway")
-        .arg(
-            Arg::with_name("scheduler listen address")
-                .value_name("[ADDR:]PORT")
-                .long("listen")
-                .short("s")
-                .takes_value(true)
-                .required(true)
-                .help("Address on which Faasten listen for RPCs that requests for tasks"),
-        )
-        .arg(
-            Arg::with_name("queue capacity")
-                .value_name("CAP_NUM_OF_TASK")
-                .long("qcap")
-                .takes_value(true)
-                .required(true)
-                .default_value("1000000")
-                .help("Address on which Faasten listen for RPCs that requests for tasks"),
-        )
-        .get_matches();
+    let cli = Cli::parse();
 
     // Intialize remote scheduler
-    let sched_addr = matches
-        .value_of("scheduler listen address")
-        .map(String::from)
-        .unwrap();
-    let qcap = matches
-        .value_of("queue capacity")
-        .unwrap()
-        .parse::<usize>()
-        .unwrap();
-    let (queue_tx, queue_rx) = crossbeam::channel::bounded(qcap);
+    let (queue_tx, queue_rx) = crossbeam::channel::bounded(cli.qcap as usize);
     let manager = Arc::new(Mutex::new(ResourceManager::new()));
     let cvar = Arc::new(Condvar::new());
 
@@ -56,8 +36,8 @@ fn main() {
     let cvar_dup = cvar.clone();
     thread::spawn(move || schedule(queue_rx, manager_dup, cvar_dup));
 
-    let s = RpcServer::new(&sched_addr, manager.clone(), queue_tx, cvar);
-    log::debug!("Scheduler starts listening at {:?}", sched_addr);
+    let s = RpcServer::new(&cli.listen, manager.clone(), queue_tx, cvar);
+    log::debug!("Scheduler starts listening at {:?}", cli.listen);
     s.run();
 }
 

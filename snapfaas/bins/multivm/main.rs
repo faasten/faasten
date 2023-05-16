@@ -9,89 +9,56 @@
 //!   2. kernel boot argument
 //!   3. function store and their files' locations
 
-use clap::{App, Arg};
+use clap::Parser;
 use log::warn;
+use snapfaas::cli;
 use snapfaas::resource_manager::ResourceManager;
-use snapfaas::{sched, fs::lmdb::DBENV, fs::tikv::TikvClient, fs::BackingStore};
 use snapfaas::worker::Worker;
+use snapfaas::{fs::tikv::TikvClient, fs::BackingStore, sched};
 
 use std::net::{SocketAddr, TcpStream};
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Address of the scheduler
+    #[arg(short, long, value_name = "ADDR:PORT")]
+    scheduler: String,
+    /// Total memory in MBs of the worker machine
+    #[arg(short, long, value_name="MB", value_parser=clap::value_parser!(u32).range(128..))]
+    memory: u32,
+    #[command(flatten)]
+    store: cli::Store,
+}
 
 fn main() {
     env_logger::init();
 
-    let matches = App::new("SnapFaaS controller")
-        .version("0.1")
-        .about("Worker machine local manager")
-        //.arg(
-        //    Arg::with_name("config")
-        //        .value_name("YAML")
-        //        .short("c")
-        //        .long("config")
-        //        .takes_value(true)
-        //        .required(true)
-        //        .help("Path to controller config YAML file"),
-        //)
-        .arg(
-            Arg::with_name("scheduler address")
-                .value_name("[ADDR:]PORT")
-                .long("scheduler")
-                .short("s")
-                .takes_value(true)
-                .required(true)
-                .help("Address on which SnapFaaS listen for RPCs that requests for tasks"),
-        )
-        .arg(
-            Arg::with_name("total memory")
-                .value_name("MB")
-                .long("mem")
-                .takes_value(true)
-                .required(true)
-                .help("Total memory available for all VMs"),
-        )
-        .arg(
-            Arg::with_name("tikv proxies")
-                .value_name("[ADDR:]PORT")
-                .long("tikv")
-                .takes_value(true)
-                .required(false)
-                .help("One or more addresses of TiKV placement driver, separated by space.")
-        )
-        .get_matches();
-
-    // intialize remote scheduler
-    let sched_addr = matches
-        .value_of("scheduler address")
-        .map(String::from)
-        .unwrap();
-    let sched_addr = sched_addr
-        .parse::<SocketAddr>()
-        .expect("invalid socket address");
+    let cli = Cli::parse();
 
     // create the local resource manager
+    let sched_addr: SocketAddr =
+        SocketAddr::from_str(&cli.scheduler).expect("Invalid socket address");
     let mut manager = ResourceManager::new(sched_addr.clone());
 
     // set total memory
-    let total_mem = matches
-        .value_of("total memory")
-        .unwrap()
-        .parse::<usize>()
-        .expect("Total memory is not a valid integer");
-    manager.set_total_mem(total_mem);
+    manager.set_total_mem(cli.memory as usize);
 
     // create the worker pool
     let pool_size = manager.total_mem_in_mb() / 128;
-    let pool = match matches.value_of("tikv proxies").map(|ts| ts.split_whitespace().into_iter().collect()) {
-        None => {
-            new_workerpool(pool_size, sched_addr, manager, &*DBENV)
-        }
-        Some(tikv_pds) => {
-            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-            let client = rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
-            let db = TikvClient::new(client, Arc::new(rt));
-            new_workerpool(pool_size, sched_addr, manager, db)
-        }
+    let pool = if let Some(path) = cli.store.lmdb.as_ref() {
+        let dbenv = std::boxed::Box::leak(Box::new(snapfaas::fs::lmdb::get_dbenv(path)));
+        new_workerpool(pool_size, sched_addr, manager, &*dbenv)
+    } else if let Some(tikv_pds) = cli.store.tikv {
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let client =
+            rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
+        let db = TikvClient::new(client, Arc::new(rt));
+        new_workerpool(pool_size, sched_addr, manager, db)
+    } else {
+        panic!("We shouldn't reach here");
     };
 
     // register signal handler
@@ -105,10 +72,10 @@ fn new_workerpool<T>(
     pool_size: usize,
     sched_addr: SocketAddr,
     manager: ResourceManager,
-    db: T
+    db: T,
 ) -> threadpool::ThreadPool
 where
-    T: BackingStore + Clone + Send + 'static
+    T: BackingStore + Clone + Send + 'static,
 {
     let pool = threadpool::ThreadPool::new(pool_size);
     let manager = Arc::new(Mutex::new(manager));

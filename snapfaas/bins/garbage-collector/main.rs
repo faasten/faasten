@@ -1,63 +1,41 @@
-use clap::{crate_authors, crate_version, App, Arg};
+use clap::Parser;
+use labeled::buckle::Buckle;
+use snapfaas::{cli, fs};
 use std::thread;
 use std::time::Duration;
-use labeled::buckle::Buckle;
-use snapfaas::fs;
 
-const DEFAULT_INTERVAL: &str = "60";
+#[derive(Parser)]
+#[clap(author, version, about, long_about=None)]
+struct Cli {
+    /// Periodically run garbage collection
+    #[arg(short, long, value_name = "SECS", default_value_t = 60)]
+    interval: u64,
+    /// Run garbage collection once
+    #[arg(long, conflicts_with = "interval")]
+    once: bool,
+    #[command(flatten)]
+    store: cli::Store,
+}
 
 fn main() {
     env_logger::init();
 
-    let matches = App::new("Faasten Garbage Collector")
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about("Launch Garbage Collector")
-        .arg(
-            Arg::with_name("fs_addr")
-                .value_name("[ADDR:]PORT")
-                .long("fs_addr")
-                .short("a")
-                .takes_value(true)
-                .required(false)
-                .help("Address on which Faasten connects the remote datastore"),
-        )
-        .arg(
-            Arg::with_name("interval")
-                .value_name("SECOND(S)")
-                .long("interval")
-                .short("i")
-                .takes_value(true)
-                .required(false)
-                .help("Time interval between every two garbage collections"),
-        )
-        .arg(
-            Arg::with_name("once")
-                .value_name("ONCE")
-                .long("once")
-                .takes_value(false)
-                .required(false)
-                .help("Time interval between every two garbage collections"),
-        )
-        .get_matches();
+    let cli = Cli::parse();
 
-    let interval = matches
-        .value_of("interval")
-        .unwrap_or(DEFAULT_INTERVAL)
-        .parse::<u64>()
-        .expect("interval not int");
+    let interval = cli.interval;
 
-    if let Some(_) = matches.value_of("fs_addr").map(String::from) {
+    if let Some(_) = cli.store.tikv {
         todo!();
-    } else {
+    } else if let Some(lmdb) = cli.store.lmdb.as_ref() {
         fs::utils::taint_with_label(Buckle::top());
-        let mut fs = fs::FS::new(&*snapfaas::fs::lmdb::DBENV);
+        let dbenv = std::boxed::Box::leak(Box::new(snapfaas::fs::lmdb::get_dbenv(lmdb)));
+        let mut fs = fs::FS::new(&*dbenv);
         loop {
             if let Ok(collected) = fs.collect_garbage() {
                 log::debug!("garbage collected {}", collected.len())
             }
-            if matches.is_present("once") {
-                break
+            if cli.once {
+                break;
             } else {
                 thread::sleep(Duration::new(interval, 0));
             }

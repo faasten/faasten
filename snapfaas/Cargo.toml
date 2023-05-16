@@ -28,17 +28,17 @@ path = "bins/garbage-collector/main.rs"
 #name = "sfclient"
 #path = "bins/sfclient/main.rs"
 
-[[bin]]
-name = "sfdb"
-path = "bins/sfdb/main.rs"
+#[[bin]]
+#name = "sfdb"
+#path = "bins/sfdb/main.rs"
 
 #[[bin]]
 #name = "sffs"
 #path = "bins/sffs/main.rs"
 
-[[bin]]
-name = "sfblob"
-path = "bins/sfblob/main.rs"
+#[[bin]]
+#name = "sfblob"
+#path = "bins/sfblob/main.rs"
 
 [[bin]]
 name = "admin_fstools"
@@ -56,7 +56,7 @@ byteorder = ">=1.2.1"
 prost = "0.9.0"
 lmdb-rkv = "0.14.0"
 url = "2.2"
-clap = "2.33.0"
+clap = { version = "4.2.7", features = ["derive"] }
 log ={ version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 env_logger = "^0.9.0"
 serde = {version = "1.0.102", features = ["derive"]}

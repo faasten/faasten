@@ -112,9 +112,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionConfig {
+    /// enable network, requires "tap"
+    #[serde(default)]
+    pub mac: Option<String>,
     /// enable network
     #[serde(default)]
-    pub network: bool,
+    pub tap: Option<String>,
     /// path to runtimefs
     pub runtimefs: String,
     /// path to appfs
@@ -156,7 +159,7 @@ pub struct FunctionConfig {
 
 impl From<super::fs::Function> for FunctionConfig {
     fn from(f: super::fs::Function) -> Self {
-        let mut default = Self::default(); 
+        let mut default = Self::default();
         default.memory = f.memory;
         default.runtimefs = f.runtime_image;
         default.appfs = Some(f.app_image);
@@ -168,7 +171,8 @@ impl From<super::fs::Function> for FunctionConfig {
 impl Default for FunctionConfig {
     fn default() -> Self {
         FunctionConfig {
-            network: false,
+            mac: None,
+            tap: None,
             kernel: String::new(),
             runtimefs: String::new(),
             appfs: None,

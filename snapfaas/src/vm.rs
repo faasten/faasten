@@ -17,7 +17,7 @@ use crate::syscall_server::{SyscallChannel, SyscallChannelError};
 use crate::syscalls;
 use crate::syscalls::syscall::Syscall as SC;
 
-const MACPREFIX: &str = "AA:BB:CC:DD";
+//const MACPREFIX: &str = "AA:BB:CC:DD";
 
 #[derive(Debug)]
 pub enum Error {
@@ -92,8 +92,7 @@ impl Vm {
             return Ok(());
         }
         let mem_str = function_config.memory.to_string();
-        // FIXME num_vcpu should scale with memory size.
-        let vcpu_str = 1usize.to_string();
+        let vcpu_str = function_config.vcpus.to_string();
         let cid_str = cid.to_string();
         let id_str = self.id.to_string();
         let mut args = vec![
@@ -137,16 +136,16 @@ impl Vm {
         }
 
         // network config should be of the format <TAP-Name>/<MAC Address>
-        let tap_name = format!("tap{}", cid - 100);
-        let mac_addr = format!(
-            "{}:{:02X}:{:02X}",
-            MACPREFIX,
-            ((cid - 100) & 0xff00) >> 8,
-            (cid - 100) & 0xff
-        );
-        if function_config.network {
-            args.extend_from_slice(&["--tap_name", &tap_name]);
-            args.extend_from_slice(&["--mac", &mac_addr]);
+        //let tap_name = format!("tap{}", cid - 100);
+        //let mac_addr = format!(
+        //    "{}:{:02X}:{:02X}",
+        //    MACPREFIX,
+        //    ((cid - 100) & 0xff00) >> 8,
+        //    (cid - 100) & 0xff
+        //);
+        if function_config.mac.is_some() {
+            args.extend_from_slice(&["--tap_name", function_config.tap.as_ref().unwrap()]);
+            args.extend_from_slice(&["--mac", function_config.mac.as_ref().unwrap()]);
         }
 
         // odirect
