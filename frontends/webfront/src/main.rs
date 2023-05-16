@@ -1,119 +1,51 @@
-use clap::{App, Arg, ArgGroup};
+use clap::Parser;
 use openssl::pkey::PKey;
-use snapfaas::{blobstore::Blobstore, fs::BackingStore};
+use snapfaas::{blobstore::Blobstore, cli, fs::BackingStore};
 
 mod app;
 pub mod init;
+
+#[derive(Parser)]
+#[clap(author, version, about, long_about = None)]
+struct Cli {
+    #[command(flatten)]
+    store: cli::Store,
+    /// Path of the blob directory
+    #[arg(long, value_name = "PATH", default_value = "blobs")]
+    blobs: std::ffi::OsString,
+    /// PATH of the tmpfs directory path
+    #[arg(long, value_name = "PATH", default_value = "tmp")]
+    tmp: std::ffi::OsString,
+    /// Address to listen on
+    #[arg(short, long, value_name = "ADDR:PORT")]
+    listen: String,
+    /// Path of the PEM encoded secret key
+    #[arg(short = 'k', long, value_name = "PATH")]
+    secret_key: std::ffi::OsString,
+    /// Path of the PEM encoded public key
+    #[arg(short = 'p', long, value_name = "PATH")]
+    public_key: std::ffi::OsString,
+    /// Base URL of the gateway server
+    #[arg(long, value_name = "URL")]
+    base_url: String,
+    /// Address of the Faasten scheduler
+    #[arg(long, value_name = "ADDR:PORT")]
+    faasten_scheduler: String,
+}
 
 fn main() -> Result<(), std::io::Error> {
     dotenv::dotenv().ok();
     env_logger::init();
 
-    let matches = App::new("SnapFaaS API Web Server")
-        .arg(
-            Arg::with_name("storage path")
-                .short('s')
-                .long("storage")
-                .value_name("PATH")
-                .takes_value(true)
-                .required(false)
-                .default_value("storage")
-                .help("Path to LMDB storage"),
-        )
-        .arg(
-            Arg::with_name("tikv proxies")
-                .long("tikv")
-                .value_name("ADDR1:PORT1,ADDR2:PORT2,...")
-                .takes_value(true)
-                .required(false)
-                .use_delimiter(true)
-                .help("Comma-separated tikv proxy addresses"),
-        )
-        .arg(
-            Arg::with_name("blob path")
-                .long("blobs")
-                .value_name("PATH")
-                .takes_value(true)
-                .required(false)
-                .default_value("blobs")
-                .help("Path to blob storage"),
-        )
-        .arg(
-            Arg::with_name("tmp path")
-                .long("tmp")
-                .value_name("PATH")
-                .takes_value(true)
-                .required(false)
-                .default_value("tmp")
-                .help("Path to temporary blob storage"),
-        )
-        .arg(
-            Arg::with_name("listen")
-                .long("listen")
-                .short('l')
-                .takes_value(true)
-                .value_name("ADDR:PORT")
-                .required(true)
-                .help("Address to listen on"),
-        )
-        .arg(
-            Arg::with_name("secret key")
-                .long("secret_key")
-                .short('k')
-                .takes_value(true)
-                .value_name("PATH")
-                .required(true)
-                .help("PEM encoded private key"),
-        )
-        .arg(
-            Arg::with_name("public key")
-                .long("public_key")
-                .short('p')
-                .takes_value(true)
-                .value_name("PATH")
-                .required(true)
-                .help("PEM encoded public key"),
-        )
-        .arg(
-            Arg::with_name("base url")
-                .long("base_url")
-                .takes_value(true)
-                .value_name("URL")
-                .required(true)
-                .help("Base URL of server"),
-        )
-        .arg(
-            Arg::with_name("faasten scheduler address")
-                .long("faasten_scheduler")
-                .value_name("[ADDR:]PORT")
-                .takes_value(true)
-                .required(true)
-                .help("Address of the Faasten scheduler"),
-        )
-        .group(
-            ArgGroup::with_name("store")
-                .args(&["storage path", "tikv proxies"])
-                .required(true),
-        )
-        .get_matches();
+    let cli = Cli::parse();
 
-    let public_key_bytes = std::fs::read(matches.value_of("public key").expect("public key"))?;
-    let private_key_bytes = std::fs::read(matches.value_of("secret key").expect("private key"))?;
-    let base_url = matches.value_of("base url").expect("base url").to_string();
-    let sched_address = matches
-        .value_of("faasten scheduler address")
-        .unwrap()
-        .to_string();
-    let blobstore = Blobstore::new(
-        matches.value_of("blob path").unwrap().into(),
-        matches.value_of("tmp path").unwrap().into(),
-    );
-    let listen_addr = matches.value_of("listen").unwrap();
-    if matches.is_present("tikv proxies") {
-        let tikv_pds = matches
-            .values_of("tikv proxies")
-            .unwrap()
-            .collect::<Vec<_>>();
+    let public_key_bytes = std::fs::read(cli.public_key)?;
+    let private_key_bytes = std::fs::read(cli.secret_key)?;
+    let base_url = cli.base_url;
+    let sched_address = cli.faasten_scheduler;
+    let blobstore = Blobstore::new(cli.blobs, cli.tmp);
+    let listen_addr = cli.listen;
+    if let Some(tikv_pds) = cli.store.tikv {
         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
         let client =
             rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
@@ -126,15 +58,13 @@ fn main() -> Result<(), std::io::Error> {
             base_url,
             sched_address,
         );
-        start_app(app, listen_addr)
-    } else {
+        start_app(app, &listen_addr)
+    } else if let Some(path) = cli.store.lmdb {
         let dbenv = std::boxed::Box::leak(Box::new(
             lmdb::Environment::new()
                 .set_map_size(100 * 1024 * 1024 * 1024)
                 .set_max_dbs(2)
-                .open(&std::path::Path::new(
-                    matches.value_of("storage path").unwrap(),
-                ))
+                .open(&std::path::Path::new(&path))
                 .unwrap(),
         ));
         let app = app::App::new(
@@ -145,7 +75,9 @@ fn main() -> Result<(), std::io::Error> {
             base_url,
             sched_address,
         );
-        start_app(app, listen_addr)
+        start_app(app, &listen_addr)
+    } else {
+        panic!("We shouldn't reach here.")
     }
 }
 
