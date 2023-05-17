@@ -1,9 +1,8 @@
 //! Definitions of common CLI arguments
 
-use clap::Args;
+use clap::{Args, Parser};
 
-#[derive(Args, Debug)]
-#[group(multiple = true, required = true)]
+#[derive(Parser, Debug)]
 pub struct VmConfig {
     /// MicroVM ID
     #[arg(long, default_value_t = 0)]
@@ -39,19 +38,24 @@ pub struct VmConfig {
     #[arg(long, value_name = "PATH", group = "load_snapshot")]
     pub load_dir: Option<String>,
     /// If present, load the working set
-    #[arg(long, group = "load_snapshot")]
+    #[arg(long, group = "load_snapshot", requires = "load_dir")]
     pub load_ws: bool,
     /// If present, restore the base memory snapshot by copying
-    #[arg(long, group = "load_snapshot")]
+    #[arg(long, group = "load_snapshot", requires = "load_dir")]
     pub copy_base_memory: bool,
     /// If present, restore the diff memory snapshot by copying
-    #[arg(long, group = "load_snapshot")]
+    #[arg(long, group = "load_snapshot", requires = "load_dir")]
     pub copy_diff_memory: bool,
     /// Directory to create the snapshot in
-    #[arg(long, value_name = "PATH", group = "dump_snapshot")]
+    #[arg(
+        long,
+        value_name = "PATH",
+        group = "dump_snapshot",
+        conflicts_with = "load_snapshot"
+    )]
     pub dump_dir: Option<String>,
     /// If present, dump the working set
-    #[arg(long, group = "dump_snapshot")]
+    #[arg(long, group = "dump_snapshot", requires = "dump_dir")]
     pub dump_ws: bool,
     /// If present, open base memory snapshot with O_DIRECT
     #[arg(long, group = "odirect", requires = "load_snapshot")]
@@ -68,7 +72,7 @@ pub struct VmConfig {
 }
 
 #[derive(Args, Debug)]
-#[group(required = true)]
+#[group(required = true, multiple = false)]
 pub struct Store {
     /// Space delimited addresses of TiKV PDs
     #[arg(long, value_name = "ADDR:PORT")]
