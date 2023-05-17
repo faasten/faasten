@@ -734,12 +734,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotenv"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
-
-[[package]]
 name = "dumbo"
 version = "0.1.0"
 source = "git+https://github.com/princeton-sns/firecracker?rev=37f177869aecc5167b3b9b188ef907d171b59bfb#37f177869aecc5167b3b9b188ef907d171b59bfb"
@@ -3430,7 +3424,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap 4.2.7",
- "dotenv",
  "env_logger",
  "github-types",
  "jwt",

@@ -34,7 +34,6 @@ struct Cli {
 }
 
 fn main() -> Result<(), std::io::Error> {
-    dotenv::dotenv().ok();
     env_logger::init();
 
     let cli = Cli::parse();
