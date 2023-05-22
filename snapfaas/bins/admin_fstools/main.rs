@@ -3,164 +3,215 @@
 //! The preparer installs supported kernels and runtime images in the directory ``home:^T,faasten''.
 //! Kernels and runtime images are stored as blobs.
 
-use clap::{App, ArgGroup, Arg};
+use clap::{Parser, Subcommand};
 use sha2::Sha256;
-use snapfaas::{blobstore, fs::{BackingStore, FS}};
+use snapfaas::{
+    blobstore, cli,
+    fs::{BackingStore, FS},
+};
 use std::io::{stdout, Write};
+
+#[derive(Parser)]
+#[clap(author, version, about, long_about = None)]
+struct Cli {
+    #[clap(subcommand)]
+    action: Action,
+    #[command(flatten)]
+    store: cli::Store,
+}
+
+#[derive(Parser, Debug)]
+struct Bootstrap {
+    /// YAML configuration file for bootstraping
+    #[arg(value_name = "YAML_PATH")]
+    yaml: String,
+}
+
+#[derive(Parser, Debug)]
+struct UpdateImage {
+    /// Path of the new image
+    #[arg(value_name = "LOCAL_PATH")]
+    path: String,
+}
+
+#[derive(Parser, Debug)]
+struct FaastenPath {
+    /// Faasten path
+    #[arg(value_name = "FAASTEN_PATH")]
+    path: String,
+}
+
+#[derive(Parser, Debug)]
+struct CreateBlob {
+    /// Local path of the blob
+    #[arg(value_name = "LOCAL_PATH")]
+    src: String,
+    /// Faasten path of the blob
+    #[arg(value_name = "FAASTEN_PATH")]
+    dest: String,
+    /// Label of the blob in Faasten
+    #[arg(value_name = "BUCKLE")]
+    label: String,
+}
+
+#[derive(Parser, Debug)]
+struct Mkdir {
+    /// Faasten path of the new directory
+    #[arg(value_name = "FAASTEN_PATH")]
+    path: String,
+    /// Label of the directory in Faasten
+    #[arg(value_name = "BUCKLE")]
+    label: String,
+}
+
+#[derive(Subcommand, Debug)]
+enum Action {
+    /// Bootstrap Faasten FS from the configuration file
+    Bootstrap(Bootstrap),
+    /// Update the fsutil image
+    UpdateFsutil(UpdateImage),
+    /// Update the python image
+    UpdatePython(UpdateImage),
+    /// List the Faasten directory
+    List(FaastenPath),
+    /// List the Faasten faceted directory
+    FacetedList(FaastenPath),
+    /// Read the Faasten file
+    Read(FaastenPath),
+    /// Delete the Faasten FS object
+    Delete(FaastenPath),
+    /// Create a blob from a local file
+    CreateBlob(CreateBlob),
+    /// Create a directory
+    Mkdir(Mkdir),
+}
 
 pub fn main() -> std::io::Result<()> {
     env_logger::init();
-    let matches = App::new("Faasten FS Admin Tools")
-        .args_from_usage(
-            "--bootstrap     [YAML] 'YAML file for bootstraping an empty Faasten-FS'
-             --update_fsutil [PATH] 'PATH to updated fsutil image'
-             --update_python [PATH] 'PATH to updated python image'
-             --list          [PATH] 'PATH to a directory or a faceted directory, acting as [faasten]'
-             --faceted-list  [PATH] 'PATH to a directory or a faceted directory, acting as [faasten]'
-             --read          [PATH] 'PATH to a file, acting as [faasten]'
-             --blob          [PATH] [DEST] [LABEL]
-             --mkdir         [PATH] [LABEL]
-             --delete        [PATH]",
-        )
-        .group(
-            ArgGroup::with_name("input")
-                .args(&["bootstrap", "update_fsutil", "update_python", "faceted-list", "list", "read", "blob", "mkdir", "delete"])
-                .required(true),
-        )
-        .arg(
-            Arg::with_name("tikv proxies")
-                .value_name("[ADDR:]PORT")
-                .long("tikv")
-                .takes_value(true)
-                .required(false)
-                .help("One or more addresses of TiKV placement driver, separated by space.")
-        )
-        .get_matches();
+    let cli = Cli::parse();
 
-    let fs: FS<Box<dyn BackingStore>> = FS::new(
-        match matches.value_of("tikv proxies").map(|ts| ts.split_whitespace().into_iter().collect()) {
-            None => {
-                Box::new(&*snapfaas::fs::lmdb::DBENV)
-            }
-            Some(tikv_pds) => {
-                let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-                let client = rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
-                Box::new(snapfaas::fs::tikv::TikvClient::new(client, std::sync::Arc::new(rt)))
-            }
-        }
-    );
+    let fs: FS<Box<dyn BackingStore>> = if let Some(tikv_pds) = cli.store.tikv {
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let client =
+            rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
+        FS::new(Box::new(snapfaas::fs::tikv::TikvClient::new(
+            client,
+            std::sync::Arc::new(rt),
+        )))
+    } else if let Some(lmdb) = cli.store.lmdb.as_ref() {
+        let dbenv = std::boxed::Box::leak(Box::new(snapfaas::fs::lmdb::get_dbenv(lmdb)));
+        FS::new(Box::new(&*dbenv))
+    } else {
+        panic!("We shouldn't reach here.")
+    };
 
     let blobstore = blobstore::Blobstore::default();
-    if matches.is_present("bootstrap") {
-        snapfaas::fs::bootstrap::prepare_fs(&fs, matches.value_of("bootstrap").unwrap());
-    } else if matches.is_present("update_fsutil") {
-        snapfaas::fs::bootstrap::update_fsutil(
-            &fs,
-            blobstore,
-            matches.value_of("update_fsutil").unwrap(),
-        );
-    } else if matches.is_present("update_python") {
-        snapfaas::fs::bootstrap::update_python(
-            &fs,
-            blobstore,
-            matches.value_of("update_python").unwrap(),
-        );
-    } else if matches.is_present("faceted-list") {
-        let clearance = labeled::buckle::Buckle::parse("faasten,T").unwrap();
-        snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
-        snapfaas::fs::utils::taint_with_label(clearance.clone());
-        snapfaas::fs::utils::set_clearance(clearance);
+    match cli.action {
+        Action::Bootstrap(bs) => {
+            snapfaas::fs::bootstrap::prepare_fs(&fs, &bs.yaml);
+        }
+        Action::UpdatePython(ui) => {
+            snapfaas::fs::bootstrap::update_python(&fs, blobstore, &ui.path);
+        }
+        Action::UpdateFsutil(ui) => {
+            snapfaas::fs::bootstrap::update_fsutil(&fs, blobstore, &ui.path);
+        }
+        Action::List(fp) => {
+            let clearance = labeled::buckle::Buckle::parse("faasten,T").unwrap();
+            snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
+            snapfaas::fs::utils::set_clearance(clearance);
 
-        let path =
-            snapfaas::fs::path::Path::parse(matches.value_of("faceted-list").unwrap()).unwrap();
-        match snapfaas::fs::utils::faceted_list(&fs, path) {
-            Ok(entries) => {
-                for (f, entries) in entries {
-                    println!("{}", f);
-                    for entry in entries {
-                        println!("\t{:?}", entry);
+            let path = snapfaas::fs::path::Path::parse(&fp.path).unwrap();
+            match snapfaas::fs::utils::list(&fs, path) {
+                Ok(entries) => {
+                    for (name, dent) in entries {
+                        println!("{}\t{:?}", name, dent);
                     }
                 }
+                Err(e) => log::warn!("Failed list. {:?}", e),
             }
-            Err(e) => log::warn!("Failed list. {:?}", e),
         }
-    } else if matches.is_present("list") {
-        let clearance = labeled::buckle::Buckle::parse("faasten,T").unwrap();
-        snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
-        snapfaas::fs::utils::set_clearance(clearance);
+        Action::FacetedList(fp) => {
+            let clearance = labeled::buckle::Buckle::parse("faasten,T").unwrap();
+            snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
+            snapfaas::fs::utils::taint_with_label(clearance.clone());
+            snapfaas::fs::utils::set_clearance(clearance);
 
-        let path = snapfaas::fs::path::Path::parse(matches.value_of("list").unwrap()).unwrap();
-        match snapfaas::fs::utils::list(&fs, path) {
-            Ok(entries) => {
-                for (name, dent) in entries {
-                    println!("{}\t{:?}", name, dent);
+            let path = snapfaas::fs::path::Path::parse(&fp.path).unwrap();
+            match snapfaas::fs::utils::faceted_list(&fs, path) {
+                Ok(entries) => {
+                    for (f, entries) in entries {
+                        println!("{}", f);
+                        for entry in entries {
+                            println!("\t{:?}", entry);
+                        }
+                    }
                 }
+                Err(e) => log::warn!("Failed list. {:?}", e),
             }
-            Err(e) => log::warn!("Failed list. {:?}", e),
         }
-    } else if matches.is_present("read") {
-        let clearance = labeled::buckle::Buckle::parse("faasten,T").unwrap();
-        snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
-        snapfaas::fs::utils::set_clearance(clearance);
+        Action::Read(fp) => {
+            let clearance = labeled::buckle::Buckle::parse("faasten,T").unwrap();
+            snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
+            snapfaas::fs::utils::set_clearance(clearance);
 
-        let path = snapfaas::fs::path::Path::parse(matches.value_of("read").unwrap()).unwrap();
-        match snapfaas::fs::utils::read(&fs, path) {
-            Ok(mut data) => {
-                stdout().write(&mut data).unwrap();
+            let path = snapfaas::fs::path::Path::parse(&fp.path).unwrap();
+            match snapfaas::fs::utils::read(&fs, path) {
+                Ok(mut data) => {
+                    stdout().write(&mut data).unwrap();
+                }
+                Err(e) => log::warn!("Failed read. {:?}", e),
             }
-            Err(e) => log::warn!("Failed read. {:?}", e),
         }
-    } else if matches.is_present("blob") {
-        snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
+        Action::Delete(fp) => {
+            snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
 
-        let mut args = matches.values_of("blob").unwrap();
-        let path = args.next().unwrap();
-        let mut file = std::fs::File::open(path)?;
-        let dest = snapfaas::fs::path::Path::parse(args.next().unwrap()).unwrap();
-        let label = labeled::buckle::Buckle::parse(args.next().unwrap()).unwrap();
-        let mut blobstore: blobstore::Blobstore<Sha256> = snapfaas::blobstore::Blobstore::default();
-        let mut blob = blobstore.create().unwrap();
-        let _ = std::io::copy(&mut file, &mut blob);
-        let blob = blobstore.save(blob).unwrap();
-        println!(
-            "{}",
-            snapfaas::fs::utils::create_blob(
-                &fs,
-                dest.parent().unwrap(),
-                dest.file_name().unwrap(),
-                label,
-                blob.name
-            )
-            .is_ok()
-        );
-    } else if matches.is_present("mkdir") {
-        snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
+            let path = snapfaas::fs::path::Path::parse(&fp.path).unwrap();
+            println!(
+                "{}",
+                snapfaas::fs::utils::delete(&fs, path.parent().unwrap(), path.file_name().unwrap())
+                    .is_ok()
+            );
+        }
+        Action::Mkdir(md) => {
+            snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
 
-        let mut args = matches.values_of("mkdir").unwrap();
-        let dest = snapfaas::fs::path::Path::parse(args.next().unwrap()).unwrap();
-        let label = labeled::buckle::Buckle::parse(args.next().unwrap()).unwrap();
-        println!(
-            "{}",
-            snapfaas::fs::utils::create_directory(
-                &fs,
-                dest.parent().unwrap(),
-                dest.file_name().unwrap(),
-                label
-            )
-            .is_ok()
-        );
-    } else if matches.is_present("delete") {
-        snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
-
-        let arg = matches.value_of("delete").unwrap();
-        let path = snapfaas::fs::path::Path::parse(arg).unwrap();
-        println!(
-            "{}",
-            snapfaas::fs::utils::delete(&fs, path.parent().unwrap(), path.file_name().unwrap())
+            let dest = snapfaas::fs::path::Path::parse(&md.path).unwrap();
+            let label = labeled::buckle::Buckle::parse(&md.label).unwrap();
+            println!(
+                "{}",
+                snapfaas::fs::utils::create_directory(
+                    &fs,
+                    dest.parent().unwrap(),
+                    dest.file_name().unwrap(),
+                    label
+                )
                 .is_ok()
-        );
-    } else {
-        log::warn!("Noop.");
+            );
+        }
+        Action::CreateBlob(cb) => {
+            snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
+
+            let mut file = std::fs::File::open(&cb.src)?;
+            let dest = snapfaas::fs::path::Path::parse(&cb.dest).unwrap();
+            let label = labeled::buckle::Buckle::parse(&cb.label).unwrap();
+            let mut blobstore: blobstore::Blobstore<Sha256> =
+                snapfaas::blobstore::Blobstore::default();
+            let mut blob = blobstore.create().unwrap();
+            let _ = std::io::copy(&mut file, &mut blob);
+            let blob = blobstore.save(blob).unwrap();
+            println!(
+                "{}",
+                snapfaas::fs::utils::create_blob(
+                    &fs,
+                    dest.parent().unwrap(),
+                    dest.file_name().unwrap(),
+                    label,
+                    blob.name
+                )
+                .is_ok()
+            );
+        }
     }
     Ok(())
 }

@@ -1,23 +1,20 @@
 use std::time::Instant;
 
 use super::STAT;
-use lazy_static;
-use lmdb::{self, Transaction, WriteFlags, Cursor};
+use lmdb::{self, Cursor, Transaction, WriteFlags};
 
-lazy_static::lazy_static! {
-    pub static ref DBENV: lmdb::Environment = {
-        if !std::path::Path::new("storage").exists() {
-            let _ = std::fs::create_dir("storage").unwrap();
-        }
+pub fn get_dbenv(path: &str) -> lmdb::Environment {
+    let path = std::path::Path::new(path);
+    if !path.exists() {
+        let _ = std::fs::create_dir(path).unwrap();
+    }
 
-        lmdb::Environment::new()
-            .set_map_size(100 * 1024 * 1024 * 1024)
-            .set_max_readers(1024)
-            .open(std::path::Path::new("storage"))
-            .unwrap()
-    };
+    lmdb::Environment::new()
+        .set_map_size(100 * 1024 * 1024 * 1024)
+        .set_max_readers(1024)
+        .open(path)
+        .unwrap()
 }
-
 
 impl super::BackingStore for lmdb::Environment {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
