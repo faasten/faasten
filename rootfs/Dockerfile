@@ -1,6 +1,7 @@
 FROM  docker.io/library/alpine:3.16
 
 ADD common/setup-eth0.sh /usr/bin/setup-eth0.sh
+ADD common/ioctl /usr/bin/ioctl
 
 RUN apk add openrc util-linux build-base ca-certificates rng-tools rng-tools-openrc
 RUN rc-update add devfs boot

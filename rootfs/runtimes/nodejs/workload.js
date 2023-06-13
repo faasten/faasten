@@ -1,3 +1,4 @@
+console.log("Hello");
 const vsock = require("vsock");
 const syscalls = require('./syscalls')
 

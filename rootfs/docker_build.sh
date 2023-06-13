@@ -1,6 +1,7 @@
 #!/bin/sh
 
 docker build -q -t faasten:base .
+make -C runtimes/$1
 
 CID=$(docker build -q runtimes/$1)
 cidfile=$(mktemp --dry-run)
