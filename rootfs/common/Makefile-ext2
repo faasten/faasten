@@ -1,6 +1,0 @@
-mkfile_path := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-
-all: do-snapshot-ext2
-
-do-snapshot-ext2: do-snapshot-ext2.c
-	echo "apk add alpine-sdk linux-headers; gcc -o /common/do-snapshot-ext2 /common/do-snapshot-ext2.c" | docker run -i --rm -v $(mkfile_path):/common alpine
