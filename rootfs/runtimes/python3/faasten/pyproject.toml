@@ -1,0 +1,19 @@
+[tool.poetry]
+
+name = "faasten"
+version = "0.1"
+description = "Convenience library for Faasten system calls"
+authors = [ "Faasten Developers" ]
+
+license = "MIT"
+
+packages = [{ include = "faasten" }]
+
+[tool.poetry.dependencies]
+
+python = "^3.10"
+protobuf = "^4"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

@@ -6,26 +6,21 @@ import time
 import socket
 import sys
 import traceback
-from syscalls import Syscall
-
-# vsock to communicate with the host
-VSOCKPORT = 1234
-sock = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
-hostaddr = (socket.VMADDR_CID_HOST, VSOCKPORT)
+import faasten
 
 app = import_module('workload')
 
-sock.connect(hostaddr)
-sc = Syscall(sock)
+VSOCKPORT = 1234
+faasten.vsock(VSOCKPORT)
 while True:
     try:
-        request = sc.request()
+        request = faasten.syscall.request()
 
         start = time.monotonic_ns()
         # return value from Lambda can be not JSON serializable
-        response = app.handle(json.loads(request.payload), sc)
+        response = app.handle(json.loads(request.payload))
         response['duration'] = time.monotonic_ns() - start
-        sc.respond(response)
+        faasten.syscall.respond(response)
     except:
         ty, val, tb = sys.exc_info()
         response = {
@@ -36,4 +31,4 @@ while True:
             },
         }
         response['duration'] = time.monotonic_ns() - start
-        sc.respond(response)
+        faasten.syscall.respond(response)
