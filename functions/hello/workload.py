@@ -1,2 +1,2 @@
-def handle(obj, syscall):
+def handle(obj):
     return {}
