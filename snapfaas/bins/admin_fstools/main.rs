@@ -93,7 +93,7 @@ pub fn main() -> std::io::Result<()> {
     let fs: FS<Box<dyn BackingStore>> = if let Some(tikv_pds) = cli.store.tikv {
         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
         let client =
-            rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
+            rt.block_on(async { tikv_client::RawClient::new(tikv_pds).await.unwrap() });
         FS::new(Box::new(snapfaas::fs::tikv::TikvClient::new(
             client,
             std::sync::Arc::new(rt),
