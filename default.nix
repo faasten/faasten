@@ -8,9 +8,9 @@ pkgs.rust_1_66.packages.stable.buildRustPackages.rustPlatform.buildRustPackage r
 
   src = ./.;
 
-  cargoSha256 = "sha256-fgDOFcDkOojmbYpdzLVUpWeOz9wQNm0FMNzoB7JsXrY=";
+  cargoSha256 = "sha256-vTxgVKxSUwvIIC3MZDK9FHCsqZt7bR/qRPYgpJy16js=";
 
-  nativeBuildInputs = [ pkgs.perl pkgs.openssl pkgs.pkg-config pkgs.protobuf pkgs.unzip pkgs.cmake ];
+  nativeBuildInputs = [ pkgs.perl pkgs.gcc10 pkgs.openssl pkgs.pkg-config pkgs.protobuf pkgs.unzip pkgs.cmake ];
 
   meta = {
     description = "A user-centric function-as-a-service platform";

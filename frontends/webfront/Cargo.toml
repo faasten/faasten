@@ -25,7 +25,7 @@ regex = "1.5.4"
 snapfaas = { path = "../../snapfaas" }
 r2d2 = "0.8.9"
 labeled = { git = "https://github.com/alevy/labeled", features = ["buckle"] }
-prost = "0.9.0"
+prost = "0.11.0"
 mime = "0.3.17"
 tokio = { version = "1", features = [ "rt", "macros",  "process", "net" ] }
-tikv-client = { git = "https://github.com/tikv/client-rust", rev = "8f54e6114227718e256027df2577bbacdf425f86" }
+tikv-client = "0.1.0"

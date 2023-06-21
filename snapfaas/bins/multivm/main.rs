@@ -54,7 +54,7 @@ fn main() {
     } else if let Some(tikv_pds) = cli.store.tikv {
         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
         let client =
-            rt.block_on(async { tikv_client::RawClient::new(tikv_pds, None).await.unwrap() });
+            rt.block_on(async { tikv_client::RawClient::new(tikv_pds).await.unwrap() });
         let db = TikvClient::new(client, Arc::new(rt));
         new_workerpool(pool_size, sched_addr, manager, db)
     } else {
