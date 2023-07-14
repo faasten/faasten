@@ -2,48 +2,11 @@ syntax = "proto3";
 
 package snapfaas.syscalls;
 
-message FSCreateBlobByName {
-  string path = 1;
-  string blobname = 2;
-  optional Buckle label = 3;
-}
-
-// function's presentation on the wire
 message Function {
-    uint64 memory = 1;
-    string appImage = 2;
-    string runtime = 3;
-    string kernel = 4;
-}
-
-message InvokeGate {
-  repeated PathComponent gate = 1;
-  string payload = 2;
-}
-
-message InvokeService {
-  repeated PathComponent serv = 1;
-  optional string body = 2;
-}
-
-message ServiceResponse {
-  bytes data = 1;
-  uint32 status = 2;
-}
-
-message DupGate {
-  repeated PathComponent orig = 1;
-  repeated PathComponent baseDir = 2;
-  string name = 3;
-  Buckle policy = 4;
-}
-
-message Endorse {
-  optional Component withPriv = 1;
-}
-
-message DeclassifyResponse {
-  optional Buckle label = 1;
+  uint64 memory = 1;
+  uint64 appImage = 2; // Blob fd
+  uint64 runtime = 3; // Blob fd
+  uint64 kernel = 4;  // Blob fd
 }
 
 message TokenList {
@@ -55,104 +18,54 @@ message Clause {
   repeated TokenList principals = 1;
 }
 
-message Component {
-  // A conjunction of clauses
+message ClauseList {
   repeated Clause clauses = 1;
+}
+
+message Component {
+  oneof component {
+    Void DCFalse = 1;
+    // A conjunction of clauses
+    ClauseList clauses = 2;
+  }
 }
 
 message Buckle {
   // None means DcFalse, empty clauses means DcTrue, otherwise DcFormula
-  optional Component secrecy = 1;
+  Component secrecy = 1;
   // None means DcFalse, empty clauses means DcTrue, otherwise DcFormula
-  optional Component integrity = 2;
+  Component integrity = 2;
 }
 
+message Void {}
+
 message Request {
-  string payload = 1;
+  bytes payload = 1;
+  map <string, uint64> blobs = 2;
+  map <string, string> headers = 3;
 }
 
 message Response {
-  string payload = 1;
+  bytes payload = 1;
 }
 
-message ReadKeyResponse {
-  optional bytes value = 1;
-}
-
-message WriteKeyResponse {
+message DentResult {
   bool success = 1;
+  optional uint64 fd = 2;
+  optional bytes data = 3;
 }
 
-message ReadDirResponse {
-  repeated bytes keys = 1;
-}
-
-enum HttpVerb {
-  GET = 0;
-  POST = 1;
-  PUT = 2;
-  DELETE = 4;
-}
-
-message GetCurrentLabel {
-}
-
-message PathComponent {
-  oneof component {
-    string dscrp = 1;
-    Buckle facet = 2;
-  }
-}
-
-message FSDelete {
-  string path = 1;
-}
-
-message FSRead {
-  string path = 1;
-}
-
-message FSWrite {
-  string path = 1;
-  bytes data = 2;
-}
-
-message FSCreateDir {
-  string path = 1;
-  optional string label = 2;
-}
-
-message FSCreateFile {
-  string path = 1;
-  optional string label = 2;
-}
-
-message CreateFile {
-  string path = 1;
-  optional string label = 2;
-}
-
-message DentResponse {
+message DentInvokeResult {
   bool success = 1;
-  uint64 dentFd = 2;
+  optional uint64 fd = 2;
+  optional bytes data = 3;
+  map <string, bytes> headers = 4;
 }
 
-message DentWrite {
-  uint64 dentFd = 1;
-  bytes data = 2;
-}
-
-message DentOpen {
-  uint64 dentFd = 1;
-  string name = 2;
-}
-
-message DentClose {
-  uint64 dentFd = 1;
-}
-
-message ExercisePrivilege {
-  Buckle target = 1;
+message DentOpenResult {
+  bool success = 1;
+  uint64 fd = 2;
+  DentKind kind = 3;
 }
 
 message BlobCreate {
@@ -166,17 +79,6 @@ message BlobWrite {
 
 message BlobFinalize {
   uint64 fd = 1;
-  bytes data = 2;
-}
-
-message BlobResponse {
-  bool success = 1;
-  uint64 fd = 2;
-  bytes data = 3;
-}
-
-message BlobOpen {
-  string name = 1;
 }
 
 message BlobRead {
@@ -189,109 +91,171 @@ message BlobClose {
   uint64 fd = 1;
 }
 
-message FSList {
-  string path = 1;
+message DentOpen {
+  uint64  fd = 1;
+  oneof entry {
+    string name = 2;
+    Buckle facet = 3;
+  }
 }
 
-message EntryNameArr {
-  repeated string names = 1;
+message DentLink {
+  uint64  dir_fd = 1;
+  string  name = 2;
+  uint64  target_fd = 3;
 }
 
-message FSListResponse {
-  optional EntryNameArr value = 1;
+
+
+message DentCreate {
+  Buckle   label = 1;
+  oneof kind {
+    Void    directory        = 2;
+    Void    file             = 3;
+    Void    facetedDirectory = 4;
+    Gate    gate             = 5;
+    Service service          = 6;
+    uint64  blob             = 7;
+  }
 }
 
-message FSFacetedList {
-  string path = 1;
+message DentUpdate {
+  uint64 fd = 1;
+  oneof kind {
+    //Void    directory        = 2;
+    bytes     file             = 3;
+    //Void    facetedDirectory = 4;
+    Gate    gate             = 5;
+    Service service          = 6;
+    uint64  blob             = 7;
+  }
 }
 
-message FSFacetedListInner {
-  map<string, EntryNameArr> facets = 1;
+enum DentKind {
+  DentDirectory = 0;
+  DentFile = 1;
+  DentFacetedDirectory = 2;
+  DentGate = 3;
+  DentService = 4;
+  DentBlob = 5;
 }
 
-message FSFacetedListResponse {
-  optional FSFacetedListInner value = 1;
+// Protocol buffers doesn't have type aliasing, but:
+// type Directory = map <string, DentKind>
+// type File = bytes
+
+message Gate {
+  oneof kind {
+    DirectGate direct = 1;
+    RedirectGate redirect = 2;
+  }
 }
 
-message FSCreateFacetedDir {
-  string path = 1;
+message DirectGate {
+    Component privilege = 1;
+    Component invoker_integrity_clearance = 2;
+    Function  function = 3;
+    Component declassify = 4;
 }
 
-message FSCreateGate {
-  string path = 1;
-  string policy = 2;
-  // blobname, direct pointer to the image
-  string appImage = 3;
-  uint64 memory = 4;
-  // Legal values are Faasten-supported language runtimes
-  // currently just python
-  string runtime = 5;
+message RedirectGate {
+    Component privilege = 1;
+    Component invoker_integrity_clearance = 2;
+    uint64    gate = 3;
+    Component declassify = 4;
 }
 
-message FSCreateRedirectGate {
-  string path = 1;
-  string policy = 2;
-  // fs path
-  string redirectPath = 3;
+enum HttpVerb {
+  HttpHead = 0;
+  HttpGet = 1;
+  HttpPost = 2;
+  HttpPut = 3;
+  HttpDelete = 4;
 }
 
-message FSCreateService {
-  string path = 1;
-  string policy = 2;
-  string label = 3;
-  string url = 4;
-  string verb = 5;
-  optional string headers = 6;
+message Service {
+    Component            privilege = 1;
+    Component            invoker_integrity_clearance = 2;
+    Buckle               taint = 3;
+    string               url = 4;
+    HttpVerb             verb = 5;
+    map <string, string> headers = 6;
 }
 
-message FSOpenBlob {
-  string path = 1;
+message DentListResult {
+  bool success = 1;
+  map <string, DentKind> entries = 2;
 }
 
-message FSOpenBlobResponse {
-  optional string name = 1;
+message DentLsFacetedResult {
+  bool success = 1;
+  repeated Buckle facets = 2;
 }
 
-message FSHardLink {
-  string src = 1;
-  string dest = 2;
+message DentLsGateResult {
+  bool success = 1;
+  Gate gate = 2;
+}
+
+message DentLsFaceted {
+  uint64 fd = 1;
+  Buckle clearance = 2;
+}
+
+message DentUnlink {
+  uint64  fd = 1;
+  string name = 2;
+}
+
+message DentInvoke {
+  uint64               fd         = 1;
+  bool                 sync       = 2;
+  bytes                payload    = 3;
+  bool                 toblob     = 4;
+  map <string, string> parameters = 5;
+}
+
+message BlobResult {
+  bool success = 1;
+  uint64 fd = 2;
+  uint64 len = 3;
+  optional bytes data = 4;
+}
+
+message MaybeBuckle {
+  Buckle label = 1;
 }
 
 message Syscall {
   oneof syscall {
+    // Send function response. Marks completion of the function, doesn't return a value
     Response response = 1;
-    GetCurrentLabel getCurrentLabel = 4;
-    Buckle taintWithLabel = 5;
-    InvokeGate invokeGate = 7;
-    FSRead fsRead = 8;
-    FSWrite fsWrite = 9;
-    FSCreateDir fsCreateDir = 10;
-    FSCreateFile fsCreateFile = 11;
-    Component declassify = 12;
-    BlobCreate createBlob = 13;
-    BlobWrite writeBlob = 14;
-    BlobFinalize finalizeBlob = 15;
-    BlobOpen openBlob = 16;
-    BlobRead readBlob = 17;
-    BlobClose closeBlob = 18;
-    FSList fsList = 20;
-    FSFacetedList fsFacetedList = 21;
-    FSCreateFacetedDir fsCreateFacetedDir = 22;
-    DupGate dupGate = 23;
-    TokenList subPrivilege = 24;
-    string buckleParse = 25;
-    FSDelete fsDelete = 26;
-    FSCreateGate fsCreateGate = 27;
-    FSCreateBlobByName fsCreateBlobByName = 29;
-    FSCreateRedirectGate fsCreateRedirectGate = 30;
-    FSCreateService fsCreateService = 31;
-    InvokeService invokeService = 32;
-    FSOpenBlob fsOpenBlob = 33;
-    Endorse endorse = 34;
-    FSHardLink fsHardLink = 35;
-    DentWrite  dentWrite = 36;
-    DentClose  dentClose = 37;
-    DentOpen   dentOpen = 38;
-    CreateFile createFile = 39;
+
+    string buckleParse = 2; // returns MaybeBuckle
+    Void getCurrentLabel = 3; // returns Buckle
+    Buckle taintWithLabel = 4; // rerturns Buckle (new current label)
+    Component declassify = 5; // returns Buckle (new current label)
+    TokenList subPrivilege = 6;
+
+    Void              root           = 99; // returns DentResult
+
+    DentOpen          dentOpen       =  7; // returns DentOpenResult
+    uint64            dentClose      =  8; // returns DentResult
+    DentCreate        dentCreate     =  9; // returns DentResult
+    DentUpdate        dentUpdate     = 10; // returns DentResult
+    uint64            dentRead       = 11; // returns DentResult
+    uint64            dentList       = 12; // returns DentListResult
+    DentLsFaceted     dentLsFaceted  = 13; // returns DentLsFacetedResult
+    DentLink          dentLink       = 14; // returns DentResult
+    DentUnlink        dentUnlink     = 15; // returns DentResult
+    DentInvoke        dentInvoke     = 16; // returns DentInvokeResult
+    uint64            dentLsGate     = 17; // returns DentLsGateResult
+    uint64            dentGetBlob    = 18; // returns BlobResult
+
+    BlobCreate        blobCreate     = 100; // returns BlobResult
+    BlobWrite         blobWrite      = 101; // returns BlobResult
+    BlobFinalize      blobFinalize   = 102; // returns BlobResult
+    BlobRead          blobRead       = 103;  // returns BlobResult
+    BlobClose         blobClose      = 104; // returns BlobResult
   }
 }

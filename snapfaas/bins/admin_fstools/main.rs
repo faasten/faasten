@@ -4,12 +4,16 @@
 //! Kernels and runtime images are stored as blobs.
 
 use clap::{Parser, Subcommand};
+use jwt::{PKeyWithDigest, SignWithKey};
+use labeled::buckle::{Buckle, Component};
+use openssl::pkey::PKey;
+use serde::{Serialize, Deserialize};
 use sha2::Sha256;
 use snapfaas::{
     blobstore, cli,
     fs::{BackingStore, FS},
 };
-use std::io::{stdout, Write};
+use std::{io::{stdout, Write}, time::SystemTime};
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -64,6 +68,14 @@ struct Mkdir {
     label: String,
 }
 
+#[derive(Parser, Debug)]
+struct Jwt {
+    #[arg(value_name = "Component")]
+    component: String,
+    #[arg(short = 'k', long, value_name = "PATH")]
+    secret_key: std::ffi::OsString,
+}
+
 #[derive(Subcommand, Debug)]
 enum Action {
     /// Bootstrap Faasten FS from the configuration file
@@ -84,6 +96,8 @@ enum Action {
     CreateBlob(CreateBlob),
     /// Create a directory
     Mkdir(Mkdir),
+    /// Generate JWT
+    Jwt(Jwt)
 }
 
 pub fn main() -> std::io::Result<()> {
@@ -108,7 +122,7 @@ pub fn main() -> std::io::Result<()> {
     let blobstore = blobstore::Blobstore::default();
     match cli.action {
         Action::Bootstrap(bs) => {
-            snapfaas::fs::bootstrap::prepare_fs(&fs, &bs.yaml);
+            snapfaas::fs::bootstrap::prepare_fs(&fs, &bs.yaml).expect("");
         }
         Action::UpdatePython(ui) => {
             snapfaas::fs::bootstrap::update_python(&fs, blobstore, &ui.path);
@@ -117,49 +131,39 @@ pub fn main() -> std::io::Result<()> {
             snapfaas::fs::bootstrap::update_fsutil(&fs, blobstore, &ui.path);
         }
         Action::List(fp) => {
-            let clearance = labeled::buckle::Buckle::parse("faasten,T").unwrap();
             snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
-            snapfaas::fs::utils::set_clearance(clearance);
 
             let path = snapfaas::fs::path::Path::parse(&fp.path).unwrap();
-            match snapfaas::fs::utils::list(&fs, path) {
+            match fs.list_dir(path) {
                 Ok(entries) => {
                     for (name, dent) in entries {
                         println!("{}\t{:?}", name, dent);
                     }
-                }
+                },
                 Err(e) => log::warn!("Failed list. {:?}", e),
             }
         }
         Action::FacetedList(fp) => {
-            let clearance = labeled::buckle::Buckle::parse("faasten,T").unwrap();
             snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
-            snapfaas::fs::utils::taint_with_label(clearance.clone());
-            snapfaas::fs::utils::set_clearance(clearance);
 
             let path = snapfaas::fs::path::Path::parse(&fp.path).unwrap();
-            match snapfaas::fs::utils::faceted_list(&fs, path) {
+            match fs.list_faceted(path, &Buckle::top()) {
                 Ok(entries) => {
-                    for (f, entries) in entries {
-                        println!("{}", f);
-                        for entry in entries {
-                            println!("\t{:?}", entry);
-                        }
+                    for (label, _directory) in entries {
+                        println!("{:?}", label);
                     }
                 }
                 Err(e) => log::warn!("Failed list. {:?}", e),
             }
         }
         Action::Read(fp) => {
-            let clearance = labeled::buckle::Buckle::parse("faasten,T").unwrap();
             snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
-            snapfaas::fs::utils::set_clearance(clearance);
 
             let path = snapfaas::fs::path::Path::parse(&fp.path).unwrap();
-            match snapfaas::fs::utils::read(&fs, path) {
-                Ok(mut data) => {
-                    stdout().write(&mut data).unwrap();
-                }
+            match fs.read_file(path) {
+                Ok(data) => {
+                    stdout().write(&data).unwrap();
+                },
                 Err(e) => log::warn!("Failed read. {:?}", e),
             }
         }
@@ -169,7 +173,7 @@ pub fn main() -> std::io::Result<()> {
             let path = snapfaas::fs::path::Path::parse(&fp.path).unwrap();
             println!(
                 "{}",
-                snapfaas::fs::utils::delete(&fs, path.parent().unwrap(), path.file_name().unwrap())
+                fs.rm(path.parent().unwrap(), &path.file_name().unwrap())
                     .is_ok()
             );
         }
@@ -178,14 +182,11 @@ pub fn main() -> std::io::Result<()> {
 
             let dest = snapfaas::fs::path::Path::parse(&md.path).unwrap();
             let label = labeled::buckle::Buckle::parse(&md.label).unwrap();
+
+            let new_dir = fs.create_directory(label);
             println!(
                 "{}",
-                snapfaas::fs::utils::create_directory(
-                    &fs,
-                    dest.parent().unwrap(),
-                    dest.file_name().unwrap(),
-                    label
-                )
+                fs.link(dest.parent().unwrap(), dest.file_name().unwrap(), new_dir)
                 .is_ok()
             );
         }
@@ -202,7 +203,7 @@ pub fn main() -> std::io::Result<()> {
             let blob = blobstore.save(blob).unwrap();
             println!(
                 "{}",
-                snapfaas::fs::utils::create_blob(
+                snapfaas::fs::utils::create_or_update_blob(
                     &fs,
                     dest.parent().unwrap(),
                     dest.file_name().unwrap(),
@@ -212,6 +213,37 @@ pub fn main() -> std::io::Result<()> {
                 .is_ok()
             );
         }
+        Action::Jwt(jwt) => {
+            let private_key_bytes = std::fs::read(jwt.secret_key)?;
+            let pkey = PKey::private_key_from_pem(private_key_bytes.as_slice())?;
+
+            let component =  Buckle::parse(format!("{},T", jwt.component).as_str()).unwrap().secrecy;
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            #[derive(Clone, Serialize, Deserialize, Debug)]
+            struct Claims {
+                pub alg: String,
+                pub iat: u64,
+                pub exp: u64,
+                pub sub: Component,
+            }
+
+            let claims = Claims {
+                alg: "ES256".to_string(),
+                iat: now,
+                exp: now + 10 * 60,
+                sub: component,
+            };
+            let key = PKeyWithDigest {
+                key: pkey,
+                digest: openssl::hash::MessageDigest::sha256(),
+            };
+            let token = claims.sign_with_key(&key).unwrap();
+            println!("{}", token);
+        },
     }
     Ok(())
 }

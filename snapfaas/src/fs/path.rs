@@ -1,8 +1,7 @@
+use std::collections::VecDeque;
+
 use labeled::buckle::Buckle;
 use serde::{Deserialize, Serialize};
-
-use crate::syscall_server::pblabel_to_buckle;
-use crate::syscalls;
 
 #[derive(Debug)]
 pub enum Error {
@@ -11,14 +10,14 @@ pub enum Error {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub enum Component {
+pub enum PathComponent {
     Dscrp(String),
     Facet(Buckle),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Path {
-    components: Vec<Component>,
+    components: VecDeque<PathComponent>,
 }
 
 impl Path {
@@ -27,15 +26,13 @@ impl Path {
     /// does not enforce it.
     pub fn parse(input: &str) -> Result<Self, Error> {
         let input = input.trim_matches(':');
-        let mut components = vec![];
+        let mut components = VecDeque::new();
         let mut cs = input.split(":").peekable();
         match cs.peek().unwrap() {
             &"" => return Ok(Path { components }),
             &"~" => {
-                components.append(&mut vec![
-                    Component::Dscrp("home".to_string()),
-                    Component::Facet(super::utils::get_ufacet()),
-                ]);
+                components.push_back(PathComponent::Dscrp("home".to_string()));
+                components.push_back(PathComponent::Facet(super::utils::get_ufacet()));
                 let _ = cs.next();
             }
             &_ => (),
@@ -44,16 +41,16 @@ impl Path {
         let label_re = regex::Regex::new(r"^<(?P<lbl>.+)>$").unwrap();
         for c in cs {
             if c == "%" {
-                components.push(Component::Facet(super::utils::get_current_label()));
+                components.push_back(PathComponent::Facet(super::utils::get_current_label()));
             } else if label_re.is_match(c) {
                 let lblstr = label_re
                     .captures(c)
                     .and_then(|cap| cap.name("lbl").map(|lbl| lbl.as_str()))
                     .ok_or(Error::InvalidFacet)?;
                 let f = Buckle::parse(lblstr).map_err(|_| Error::InvalidFacet)?;
-                components.push(Component::Facet(f));
+                components.push_back(PathComponent::Facet(f));
             } else {
-                components.push(Component::Dscrp(c.to_string()));
+                components.push_back(PathComponent::Dscrp(c.to_string()));
             }
         }
         Ok(Self { components })
@@ -61,50 +58,40 @@ impl Path {
 
     /// The root is represented as an empty vector of path::Component's
     pub fn root() -> Self {
-        Self { components: vec![] }
+        Self { components: VecDeque::new() }
     }
 
-    pub fn split_last(&self) -> Option<(&Component, &[Component])> {
-        self.components.split_last()
+    pub fn pop_front(&mut self) -> Option<PathComponent> {
+        self.components.pop_front()
     }
 
     pub fn parent(&self) -> Option<Self> {
-        self.split_last().map(|(_, prefix)| Self {
-            components: Vec::from(prefix),
-        })
+        let mut res = self.clone();
+        res.components.pop_back();
+        if res.components.is_empty() {
+            None
+        } else {
+            Some(res)
+        }
     }
 
     pub fn file_name(&self) -> Option<String> {
-        self.split_last().and_then(|(last, _)| match last {
-            Component::Dscrp(s) => Some(s.clone()),
-            Component::Facet(_) => None,
-        })
+        self.components.back().and_then(|last|
+            match last {
+                PathComponent::Dscrp(s) => Some(s.clone()),
+                PathComponent::Facet(_) => None,
+            }
+        )
     }
 
     pub fn push_dscrp(&mut self, s: String) {
-        self.components.push(Component::Dscrp(s));
+        self.components.push_back(PathComponent::Dscrp(s));
     }
-
-    //pub fn from_pb(input: &Vec<syscalls::PathComponent>) -> Self {
-    //
-    //}
-
-    // pair("~:", separated_list(alnum_string|label_string, tag(":"))
-    // or
-    // separated_list(alnum_string|label_string, tag(":"))
-    //fn parser(input: &str) {
-    //    use nom::{
-    //        combinator::opt,
-    //        bytes::complete::tag,
-    //        character::complete::alphanumeric1,
-    //        multi::separated_list1,
-    //    };
-    //}
 }
 
 impl IntoIterator for Path {
-    type Item = Component;
-    type IntoIter = std::vec::IntoIter<Self::Item>;
+    type Item = PathComponent;
+    type IntoIter = std::collections::vec_deque::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.components.into_iter()
@@ -112,25 +99,25 @@ impl IntoIterator for Path {
 }
 
 impl<'a> IntoIterator for &'a Path {
-    type Item = &'a Component;
-    type IntoIter = std::slice::Iter<'a, Component>;
+    type Item = &'a PathComponent;
+    type IntoIter = std::collections::vec_deque::Iter<'a, PathComponent>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.components.iter()
     }
 }
 
-impl From<Vec<syscalls::PathComponent>> for Path {
+/*impl From<Vec<syscalls::PathComponent>> for Path {
     fn from(p: Vec<syscalls::PathComponent>) -> Self {
-        let components = p.into_iter().fold(Vec::new(), |mut acc, c| {
-            acc.push(match c.component.unwrap() {
-                syscalls::path_component::Component::Dscrp(s) => Component::Dscrp(s),
+        let components = p.into_iter().fold(VecDeque::new(), |mut acc, c| {
+            acc.push_back(match c.component.unwrap() {
+                syscalls::path_component::Component::Dscrp(s) => PathComponent::Dscrp(s),
                 syscalls::path_component::Component::Facet(f) => {
-                    Component::Facet(pblabel_to_buckle(&f))
+                    PathComponent::Facet(pblabel_to_buckle(&f))
                 }
             });
             acc
         });
         Self { components }
     }
-}
+}*/

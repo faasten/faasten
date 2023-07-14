@@ -6,7 +6,7 @@ use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 
-use labeled::buckle::Buckle;
+use labeled::buckle::{Buckle, Component};
 use labeled::Label;
 use log::{debug, error};
 
@@ -114,8 +114,8 @@ impl<B: BackingStore> Worker<B> {
                             }
                             let task_id = r.task_id;
                             let invoke = r.labeled_invoke.unwrap();
-                            let label = pblabel_to_buckle(invoke.label.as_ref().unwrap());
-                            let privilege = pbcomponent_to_component(&invoke.gate_privilege);
+                            let label = invoke.label.unwrap().into();
+                            let privilege: Component = invoke.gate_privilege.unwrap().into();
                             if let Some(mut vm) =
                                 self.try_allocate(&invoke.function.unwrap().into(), &label)
                             {
@@ -123,7 +123,7 @@ impl<B: BackingStore> Worker<B> {
                                 let mut ret = TaskReturn {
                                     code: ReturnCode::ProcessRequestFailed as i32,
                                     payload: None,
-                                    label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
+                                    label: Some(fs::utils::get_current_label().into()),
                                 };
                                 loop {
                                     cnt += 1;
@@ -156,14 +156,16 @@ impl<B: BackingStore> Worker<B> {
                                         continue;
                                     }
                                     // TODO consider using meaningful clearance
+                                    let blobs = invoke.blobs.iter().map(|(k, b)| (k.clone(), (self.env.blobstore.open(b.clone()).unwrap()))).collect();
                                     let processor = SyscallProcessor::new(
+                                        &mut self.env,
                                         label.clone(),
                                         privilege.clone(),
-                                        Buckle::top(),
                                     );
                                     if let Ok(result) = processor.run(
-                                        &mut self.env,
                                         invoke.payload.clone(),
+                                        blobs,
+                                        invoke.headers.clone(),
                                         &mut vm,
                                     ) {
                                         ret = result;
@@ -192,7 +194,7 @@ impl<B: BackingStore> Worker<B> {
                                 let ret = TaskReturn {
                                     code: ReturnCode::ResourceExhausted as i32,
                                     payload: None,
-                                    label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
+                                    label: Some(fs::utils::get_current_label().into()),
                                 };
                                 if let Err(e) = sched::rpc::finish(
                                     &mut self.env.sched_conn.as_mut().unwrap(),
@@ -221,7 +223,7 @@ impl<B: BackingStore> Worker<B> {
                                 let mut ret = TaskReturn {
                                     code: ReturnCode::ProcessRequestFailed as i32,
                                     payload: None,
-                                    label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
+                                    label: Some(fs::utils::get_current_label().into()),
                                 };
                                 loop {
                                     cnt += 1;
@@ -253,10 +255,12 @@ impl<B: BackingStore> Worker<B> {
                                         );
                                         continue;
                                     }
-                                    let processor = SyscallProcessor::new_insecure();
+                                    let blobs = invoke.blobs.iter().map(|(k, b)| (k.clone(), (self.env.blobstore.open(b.clone()).unwrap()))).collect();
+                                    let processor = SyscallProcessor::new_insecure(&mut self.env);
                                     if let Ok(result) = processor.run(
-                                        &mut self.env,
                                         invoke.payload.clone(),
+                                        blobs,
+                                        invoke.headers.clone(),
                                         &mut vm,
                                     ) {
                                         ret = result;
@@ -285,7 +289,7 @@ impl<B: BackingStore> Worker<B> {
                                 let ret = TaskReturn {
                                     code: ReturnCode::ResourceExhausted as i32,
                                     payload: None,
-                                    label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
+                                    label: Some(fs::utils::get_current_label().into()),
                                 };
                                 if let Err(e) = sched::rpc::finish(
                                     &mut self.env.sched_conn.as_mut().unwrap(),
@@ -313,15 +317,16 @@ impl<B: BackingStore> Worker<B> {
     }
 
     fn try_allocate(&self, f: &Function, payload_label: &Buckle) -> Option<Vm> {
-        if let Some(vm) = self.localrm.lock().unwrap().get_cached_vm(f) {
+        let mut localrm = self.localrm.lock().unwrap();
+        if let Some(vm) = localrm.get_cached_vm(f) {
             // cached VM must NOT be too tainted
             if !vm.label.can_flow_to(payload_label) {
                 return Some(vm);
             } else {
-                self.localrm.lock().unwrap().release(vm);
+                localrm.release(vm);
             }
         }
-        self.localrm.lock().unwrap().new_vm(f.clone())
+        localrm.new_vm(f.clone())
     }
 
     fn try_allocate_no_label_check(&self, f: &Function) -> Option<Vm> {

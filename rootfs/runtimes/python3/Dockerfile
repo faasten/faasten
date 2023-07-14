@@ -1,6 +1,6 @@
 FROM faasten:base
 
-RUN apk add bash python3 python3-dev py3-setuptools py3-protobuf py3-opencv py3-scikit-learn py3-pandas git cmake
+RUN apk add bash python3 python3-dev py3-setuptools py3-protobuf #py3-opencv py3-scikit-learn py3-pandas git cmake
 
 ENV PYTHON python3.10
 

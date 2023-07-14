@@ -100,13 +100,13 @@ impl Vm {
             &id_str,
             "--kernel",
             &function_config.kernel,
-            "--mem_size",
+            "--memory",
             &mem_str,
-            "--vcpu_count",
+            "--vcpu",
             &vcpu_str,
             "--rootfs",
             &function_config.runtimefs,
-            "--cid",
+            "--vsock-cid",
             &cid_str,
         ];
 
@@ -132,7 +132,9 @@ impl Vm {
             }
         }
         if let Some(cmdline) = function_config.cmdline.as_ref() {
-            args.extend_from_slice(&["--kernel_args", cmdline]);
+            args.extend_from_slice(&["--kernel-args", cmdline]);
+        } else {
+            args.extend_from_slice(&["--kernel-args", "console=ttyS0"]);
         }
 
         // network config should be of the format <TAP-Name>/<MAC Address>
@@ -174,7 +176,7 @@ impl Vm {
                 .args(args)
                 .kill_on_drop(true)
                 .stdin(Stdio::null())
-                .stderr(Stdio::null())
+                //.stderr(std::io::stderr())
                 .spawn()
                 .map_err(|e| Error::ProcessSpawn(e))?;
 
@@ -197,9 +199,9 @@ impl Vm {
                 res = vm_listener.accept() => {
                     res.unwrap().0.into_std().unwrap()
                 },
-                _ = vm_process.wait() => {
+                res = vm_process.wait() => {
                     crate::unlink_unix_sockets();
-                    error!("[Worker] cannot connect to the VM");
+                    error!("[Worker] cannot connect to the VM {:?}", res);
                     std::process::exit(1);
                 }
             };

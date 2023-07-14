@@ -34,6 +34,7 @@ impl<D: Digest> Blobstore<D> {
     pub fn create(&mut self) -> Result<NewBlob<D>> {
         Ok(NewBlob {
             digest: D::new(),
+            len: 0,
             file: NamedTempFile::new_in(&self.tmp_dir)?,
         })
     }
@@ -86,6 +87,10 @@ impl Blob {
         self.file.read_at(buf, offset)
     }
 
+    pub fn len(&self) -> Result<u64> {
+        self.file.metadata().map(|m| m.len())
+    }
+
 }
 
 impl Seek for Blob {
@@ -103,13 +108,21 @@ impl Read for Blob {
 #[derive(Debug)]
 pub struct NewBlob<D: Digest = Sha256> {
     digest: D,
+    len: usize,
     file: NamedTempFile,
+}
+
+impl<D: Digest> NewBlob<D> {
+    pub fn len(&self) -> usize {
+        self.len
+    }
 }
 
 impl<D: Digest> Write for NewBlob<D> {
     fn write(&mut self, bytes: &[u8]) -> Result<usize> {
         let n = self.file.write(bytes)?;
         self.digest.update(&bytes[..n]);
+        self.len += n;
         Ok(n)
     }
 
