@@ -451,7 +451,7 @@ impl<'a, B: BackingStore + 'a> SyscallProcessor<'a, B> {
                         privilege: Some(rd.privilege.clone().into()),
                         invoker_integrity_clearance: Some(rd.invoker_integrity_clearance.clone().into()),
                         declassify: Some(rd.declassify.clone().into()),
-                        gate: 0,
+                        gate: 0, // unused field in this case
                     }))}
                 }
             ),
