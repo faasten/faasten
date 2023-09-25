@@ -320,7 +320,7 @@ impl<B: BackingStore> Worker<B> {
         let mut localrm = self.localrm.lock().unwrap();
         if let Some(vm) = localrm.get_cached_vm(f) {
             // cached VM must NOT be too tainted
-            if !vm.label.can_flow_to(payload_label) {
+            if vm.label.can_flow_to(payload_label) {
                 return Some(vm);
             } else {
                 localrm.release(vm);
