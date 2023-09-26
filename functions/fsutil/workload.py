@@ -14,23 +14,17 @@ def handle(syscall, payload=b'', blobs={}, **kwargs):
             ret["value"] = "pong"
         case "mkdir":
             ret["success"] = False
-            print("1")
             with syscall.root().open_at(args["base"]) as dir:
-                print("2")
                 label = syscall.buckle_parse(args["label"])
                 res = syscall.dent_create_dir(label)
-                print("3")
                 if res is not None:
-                    print("4")
                     newfd = res.fd
                     res2 = syscall.link(dir.fd, res.fd, args["name"])
                     if res2 is not None:
-                        print("5")
                         ret["success"] = res2.success
                         ret["value"] = res.fd
         case "ls":
             ret["success"] = False
-            print(args["path"])
             with syscall.root().open_at(args["path"]) as dir:
                 res = dir.ls()
                 if res is not None:
@@ -75,7 +69,6 @@ def handle(syscall, payload=b'', blobs={}, **kwargs):
                 priv = syscall.buckle_parse(args["privilege"] + ",T").secrecy
                 clearance = syscall.buckle_parse(args["clearance"] + ",T").secrecy
                 res = None
-                print(label, blobs)
                 if "memory" in args:
                     memory = args["memory"]
                     app_image = None
@@ -113,7 +106,6 @@ def handle(syscall, payload=b'', blobs={}, **kwargs):
                         gate)
                 if res is not None:
                     newfd = res.fd
-                    print(res)
                     res2 = dir.link(res, args["name"])
                     if res2 is not None:
                         ret["success"] = res2.success
