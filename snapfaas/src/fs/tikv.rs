@@ -47,8 +47,4 @@ impl super::BackingStore  for TikvClient {
             self.client.delete(Vec::from(key)).await.expect("tikv del")
         });
     }
-
-    fn get_keys(&self) -> Option<Vec<&[u8]>> {
-        todo!()
-    }
 }

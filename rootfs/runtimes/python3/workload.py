@@ -2,10 +2,10 @@
 
 from importlib import import_module
 import json
-import time
 import socket
 import sys
 import traceback
+import syscalls
 from syscalls import Syscall
 
 # vsock to communicate with the host
@@ -20,11 +20,13 @@ sc = Syscall(sock)
 while True:
     try:
         request = sc.request()
+        response = app.handle(sc, payload=request.payload, blobs=request.blobs, headers=request.headers)
+        if isinstance(response, dict):
+            response = json.dumps(response)
 
-        start = time.monotonic_ns()
-        # return value from Lambda can be not JSON serializable
-        response = app.handle(json.loads(request.payload), sc)
-        response['duration'] = time.monotonic_ns() - start
+        if isinstance(response, str):
+            response = response.encode('utf-8')
+
         sc.respond(response)
     except:
         ty, val, tb = sys.exc_info()
@@ -35,5 +37,4 @@ while True:
                 'traceback': traceback.format_tb(tb),
             },
         }
-        response['duration'] = time.monotonic_ns() - start
-        sc.respond(response)
+        sc.respond(json.dumps(response).encode('utf-8'))

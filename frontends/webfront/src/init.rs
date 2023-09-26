@@ -3,15 +3,17 @@
 //! for a logged in user or a public user. Moreover, it tracks the label for the file system
 //! traversal and set LabeledInvoke.label to the new label after the traversal.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 
-use labeled::{buckle, Label};
+use labeled::buckle::{Buckle, Component};
+use labeled::{buckle, HasPrivilege};
 use log::{debug, error};
 use rouille::{input::post::BufferedFile, Request, Response};
+use snapfaas::blobstore;
 use snapfaas::fs::BackingStore;
-use snapfaas::syscall_server::{buckle_to_pblabel, component_to_pbcomponent, pblabel_to_buckle};
 use snapfaas::{
     blobstore::Blobstore,
     fs::{self, FS},
@@ -19,46 +21,37 @@ use snapfaas::{
 };
 
 pub fn init<S: BackingStore>(
-    login: Option<String>,
+    login: Option<Component>,
     gate_path: String,
     request: &Request,
     sched_conn: &mut TcpStream,
     fs: &FS<S>,
     blobstore: Arc<Mutex<Blobstore>>,
 ) -> Result<Response, Response> {
-    let (payload, label) = prepare_payload(request, blobstore)?;
-    let (privilege, clearance) = match login {
-        Some(login) => {
-            let user_principal = vec![login.clone()];
-            let user_root_privilege = [buckle::Clause::new_from_vec(vec![user_principal])].into();
-            (
-                user_root_privilege,
-                buckle::Buckle::parse(&(login + ",T")).unwrap(),
-            )
-        }
-        None => (buckle::Component::dc_true(), buckle::Buckle::public()),
-    };
+    let (payload, blob, label, headers) = prepare_payload(request, blobstore)?;
+    let privilege = login.unwrap_or(Component::dc_true());
 
     {
         fs::utils::clear_label();
-        fs::utils::taint_with_label(label);
         fs::utils::set_my_privilge(privilege);
-        fs::utils::set_clearance(clearance);
+        if let Some(label) = label {
+            fs::utils::taint_with_label(label);
+        }
     }
 
-    let req = prepare_labeled_invoke(gate_path, payload, fs)?;
+    let req = prepare_labeled_invoke(gate_path, blob, payload, headers, fs)?;
     wait_for_completion(req, sched_conn)
 }
 
 fn prepare_payload(
     request: &Request,
     blobstore: Arc<Mutex<Blobstore>>,
-) -> Result<(String, buckle::Buckle), Response> {
+) -> Result<(Vec<u8>, HashMap<String, blobstore::Blob>, Option<buckle::Buckle>, HashMap<String, String>), Response> {
     // Parse input into a 3-tuple. support two content types:
     // * multipart/form-data
     // * application/json (passthrough)
     use core::str::FromStr;
-    let (maybe_file, payload, label) = {
+    let (files, payload, label, headers) = {
         let content_type = mime::Mime::from_str(
             request.header("content-type").ok_or(
                 Response::json(&serde_json::json!({"error": "Missing header content-type"}))
@@ -68,21 +61,32 @@ fn prepare_payload(
         .map_err(|_| {
             Response::json(&serde_json::json!({"error": "Unknown MIME"})).with_status_code(415)
         })?;
+        let headers: HashMap<String, String> = request.headers().filter_map(|(k,v)|
+            if k.eq_ignore_ascii_case("authorization") {
+                None
+            } else {
+                Some((k.to_ascii_lowercase(), v.to_string()))
+            }).collect();
         // get rid of the `boundary` param in multipart/form-data
         let essence_type = mime::Mime::from_str(content_type.essence_str()).unwrap();
         if essence_type == mime::MULTIPART_FORM_DATA {
             let parsed_form = rouille::post_input!(&request, {
-                file: Option<BufferedFile>, payload: String, label: String
+                blob: Vec<BufferedFile>, payload: String, label: Option<String>
             })
             .map_err(|e| {
-                Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(400)
+                Response::json(&serde_json::json!({"error": format!("{:?}", e)})).with_status_code(400)
             })?;
-            let label = buckle::Buckle::parse(&parsed_form.label).map_err(|e| {
-                Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(400)
-            })?;
-            (parsed_form.file, parsed_form.payload, label)
+            let label = if let Some(label) = &parsed_form.label {
+                Some(buckle::Buckle::parse(label).map_err(|e| {
+                    Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(400)
+                })?)
+            } else {
+                None
+            };
+            (parsed_form.blob, parsed_form.payload, label, headers)
         } else if essence_type == mime::APPLICATION_JSON {
             let mut payload = String::new();
+            let label = request.header("x-faasten-label").and_then(|b| Buckle::parse(b).ok());
             let _ = request
                 .data()
                 .unwrap()
@@ -93,7 +97,7 @@ fn prepare_payload(
                     }))
                     .with_status_code(400)
                 })?;
-            (None, payload, buckle::Buckle::public())
+            (vec![], payload, label, headers)
         } else {
             return Err(Response::json(&serde_json::json!({
                 "error": format!("Unsupported content-type: {:?}", content_type)
@@ -106,50 +110,52 @@ fn prepare_payload(
     let val: serde_json::Value = serde_json::from_str(&payload).map_err(|e| {
         Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(400)
     })?;
-    let mut payload = serde_json::json!({ "input": val });
-    if let Some(f) = maybe_file {
-        // store file into the blobstore
+    let payload = val;
+    let mut blobs = HashMap::new();
+    for (i, f) in files.iter().enumerate() {
         let mut newblob = blobstore.lock().unwrap().create().map_err(|e| {
             Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
         })?;
         newblob.write_all(f.data.as_ref()).map_err(|e| {
             Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
         })?;
-        let name = blobstore
+        let blob = blobstore
             .lock()
             .unwrap()
             .save(newblob)
             .map_err(|e| {
                 Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
-            })?
-            .name;
-        payload
-            .as_object_mut()
-            .unwrap()
-            .insert("input-blob".to_string(), serde_json::Value::String(name));
-    };
-    Ok((payload.to_string(), label))
+            })?;
+        blobs.insert(f.filename.clone().unwrap_or(format!("blob{}", i)), blob);
+
+    }
+    Ok((payload.to_string().into(), blobs, label, headers))
 }
 
 fn prepare_labeled_invoke<S: BackingStore>(
     gate_path: String,
-    payload: String,
+    mut blobs: HashMap<String, blobstore::Blob>,
+    payload: Vec<u8>,
+    headers: HashMap<String, String>,
     fs: &FS<S>,
 ) -> Result<sched::message::LabeledInvoke, Response> {
     let path = fs::path::Path::parse(&gate_path).map_err(|_| {
         Response::json(&serde_json::json!({"error": "Invalid path."})).with_status_code(400)
     })?;
-    let (f, gate_privilege) = fs::utils::invoke_clearance_check(fs, path).map_err(|e| {
+    let (f, gate_privilege) = fs::utils::resolve_gate_with_clearance_check(fs, path).map_err(|e| {
         Response::json(&serde_json::json!({ "error": format!("{:?}", e) })).with_status_code(400)
     })?;
-    let gate_privilege = component_to_pbcomponent(&gate_privilege);
+    let gate_privilege = Some(gate_privilege.into());
     let label = fs::utils::get_current_label();
-    let label = buckle_to_pblabel(&label);
+    let label = label.into();
+    let blobs = blobs.drain().map(|(k, v)| (k, v.name)).collect();
     Ok(sched::message::LabeledInvoke {
         function: Some(f.into()),
         label: Some(label),
         gate_privilege,
-        payload: payload.to_string(),
+        payload,
+        headers,
+        blobs,
         sync: true,
     })
 }
@@ -181,9 +187,12 @@ fn wait_for_completion(
     use snapfaas::sched::message::{ReturnCode, TaskReturn};
     let ret = match TaskReturn::decode(bs.as_slice()) {
         Ok(TaskReturn { code, payload, label }) => {
-            if !pblabel_to_buckle(&label.unwrap()).can_flow_to(&fs::utils::get_current_label()) {
+            if !Into::<Buckle>::into(label.clone().unwrap()).can_flow_to_with_privilege(&fs::utils::get_current_label(), &fs::utils::get_privilege()) {
                 Err(Response::json(&serde_json::json!({
-                    "error": "unauthorized to read response"
+                    "error": "unauthorized to read response",
+                    "label": format!("{:?}", Into::<Buckle>::into(label.unwrap())),
+                    "current_label": format!("{:?}", fs::utils::get_current_label()),
+                    "privilege": format!("{:?}", fs::utils::get_privilege())
                 }))
                 .with_status_code(401))
             } else {

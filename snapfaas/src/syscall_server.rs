@@ -1,69 +1,16 @@
 ///! secure runtime that holds the handles to the VM and the global file system
 use std::collections::HashMap;
-use std::io::{Read, Seek, Write};
+use std::io::Write;
 use std::net::TcpStream;
 
-use labeled::buckle::{self, Buckle, Clause, Component};
-use log::{debug, error, warn};
-
-use crate::blobstore::{self, Blobstore};
-use crate::fs::{self, BackingStore, FS};
-use crate::sched::{
-    self,
-    message::{ReturnCode, TaskReturn},
-};
+use labeled::Label;
+use labeled::buckle::{Buckle, Component};
+use crate::blobstore::{self, Blobstore, Blob};
+use crate::fs::{self, BackingStore, FS, DirEntry, FsError, CURRENT_LABEL, Function, DirectGate, RedirectGate, Service, Gate};
+use crate::sched::{self, message};
+use crate::sched::message::{ReturnCode, TaskReturn};
+use crate::syscalls::DentInvoke;
 use crate::syscalls::{self, syscall::Syscall as SC};
-
-pub fn pbcomponent_to_component(component: &Option<syscalls::Component>) -> Component {
-    match component {
-        None => Component::DCFalse,
-        Some(set) => Component::DCFormula(
-            set.clauses
-                .iter()
-                .map(|c| {
-                    Clause(
-                        c.principals
-                            .iter()
-                            .map(|p| p.tokens.iter().cloned().collect())
-                            .collect(),
-                    )
-                })
-                .collect(),
-        ),
-    }
-}
-
-pub fn pblabel_to_buckle(label: &syscalls::Buckle) -> Buckle {
-    Buckle {
-        secrecy: pbcomponent_to_component(&label.secrecy),
-        integrity: pbcomponent_to_component(&label.integrity),
-    }
-}
-
-pub fn component_to_pbcomponent(component: &Component) -> Option<syscalls::Component> {
-    match component {
-        Component::DCFalse => None,
-        Component::DCFormula(set) => Some(syscalls::Component {
-            clauses: set
-                .iter()
-                .map(|clause| syscalls::Clause {
-                    principals: clause
-                        .0
-                        .iter()
-                        .map(|vp| syscalls::TokenList { tokens: vp.clone() })
-                        .collect(),
-                })
-                .collect(),
-        }),
-    }
-}
-
-pub fn buckle_to_pblabel(label: &Buckle) -> syscalls::Buckle {
-    syscalls::Buckle {
-        secrecy: component_to_pbcomponent(&label.secrecy),
-        integrity: component_to_pbcomponent(&label.integrity),
-    }
-}
 
 #[derive(Debug)]
 pub enum SyscallChannelError {
@@ -102,7 +49,8 @@ pub struct SyscallGlobalEnv<B: BackingStore> {
     pub blobstore: Blobstore,
 }
 
-pub struct SyscallProcessor {
+pub struct SyscallProcessor<'a, B: BackingStore> {
+    env: &'a mut SyscallGlobalEnv<B>,
     create_blobs: HashMap<u64, blobstore::NewBlob>,
     blobs: HashMap<u64, blobstore::Blob>,
     dents: HashMap<u64, fs::DirEntry>,
@@ -111,28 +59,32 @@ pub struct SyscallProcessor {
     http_client: reqwest::blocking::Client,
 }
 
-impl SyscallProcessor {
-    pub fn new(label: Buckle, privilege: Component, clearance: Buckle) -> Self {
+impl<'a, B: BackingStore + 'a> SyscallProcessor<'a, B> {
+    pub fn new(env: &'a mut SyscallGlobalEnv<B>, label: Buckle, privilege: Component) -> Self {
         {
             // set up label & privilege
             fs::utils::clear_label();
             fs::utils::taint_with_label(label);
             fs::utils::set_my_privilge(privilege);
-            fs::utils::set_clearance(clearance);
         }
 
+        let mut dents: HashMap<u64, fs::DirEntry> = Default::default();
+        dents.insert(0, DirEntry::Directory(fs::ROOT_REF));
+
         Self {
+            env,
             create_blobs: Default::default(),
             blobs: Default::default(),
-            dents: Default::default(),
-            max_blob_id: 0,
-            max_dent_id: 0,
+            dents,
+            max_dent_id: 1,
+            max_blob_id: 1,
             http_client: reqwest::blocking::Client::new(),
         }
     }
 
-    pub fn new_insecure() -> Self {
+    pub fn new_insecure(env: &'a mut SyscallGlobalEnv<B>) -> Self {
         Self {
+            env,
             create_blobs: Default::default(),
             blobs: Default::default(),
             dents: Default::default(),
@@ -144,10 +96,11 @@ impl SyscallProcessor {
 
     fn http_send(
         &self,
-        service_info: &fs::ServiceInfo,
-        body: Option<String>,
+        service_info: &fs::Service,
+        body: Option<Vec<u8>>,
+        parameters: HashMap<String, String>
     ) -> Result<reqwest::blocking::Response, SyscallProcessorError> {
-        let url = service_info.url.clone();
+        let url = strfmt::strfmt(&service_info.url, &parameters).map_err(|_| SyscallProcessorError::BadUrlArgs)?;
         let method = service_info.verb.clone().into();
         let headers = service_info
             .headers
@@ -165,652 +118,659 @@ impl SyscallProcessor {
         }
         request.send().map_err(|e| SyscallProcessorError::Http(e))
     }
+}
 
-    pub fn run<B: BackingStore>(
+impl<'a, B: BackingStore + 'a> SyscallProcessor<'a, B> {
+    fn root(&self) -> syscalls::DentResult {
+        syscalls::DentResult { success: true, fd: None, data: None }
+    }
+
+    fn dent_open(&mut self, dir_fd: u64, entry: syscalls::dent_open::Entry) -> syscalls::DentOpenResult {
+        let result: Option<(u64, syscalls::DentKind)> = self.dents.get(&dir_fd).cloned().and_then(|base| match (base, entry) {
+            (DirEntry::Directory(base_dir), syscalls::dent_open::Entry::Name(name)) => {
+                base_dir.list(&self.env.fs).get(&name).map(|dent| {
+                    let res_id = self.max_dent_id;
+                    let _ = self.dents.insert(self.max_dent_id, dent.clone());
+                    self.max_dent_id += 1;
+                    (res_id, dent.into())
+                })
+            },
+            (DirEntry::FacetedDirectory(base_dir), syscalls::dent_open::Entry::Facet(label)) => {
+                let dent = DirEntry::Directory(base_dir.open(&label.into(), &self.env.fs));
+                let res_id = self.max_dent_id;
+                let _ = self.dents.insert(self.max_dent_id, dent.clone());
+                self.max_dent_id += 1;
+                Some((res_id, syscalls::DentKind::DentDirectory))
+            },
+            (DirEntry::FacetedDirectory(base_dir), syscalls::dent_open::Entry::Name(label_name)) => {
+                if let Ok(label) = Buckle::parse(label_name.as_str()) {
+                    let dent = DirEntry::Directory(base_dir.open(&label, &self.env.fs));
+                    let res_id = self.max_dent_id;
+                    let _ = self.dents.insert(self.max_dent_id, dent.clone());
+                    self.max_dent_id += 1;
+                    Some((res_id, syscalls::DentKind::DentDirectory))
+                } else {
+                    None
+                }
+            },
+            _ => None,
+        });
+        if let Some(result) = result {
+            syscalls::DentOpenResult { success: true, fd: result.0, kind: result.1.into() }
+        } else {
+            syscalls::DentOpenResult { success: false, fd: 0, kind: syscalls::DentKind::DentDirectory.into() }
+        }
+    }
+
+    fn dent_close(&mut self, fd: u64) {
+        syscalls::DentResult { success: self.dents.remove(&fd).is_some(), fd: None, data: None };
+    }
+
+    fn dent_create(&mut self, kind: syscalls::dent_create::Kind, label: Option<Buckle>) -> Result<syscalls::DentResult, FsError> {
+        use syscalls::dent_create::Kind;
+        let label = label.unwrap_or(Buckle::public());
+        let entry: DirEntry = match kind {
+            Kind::Directory(syscalls::Void {}) => {
+                self.env.fs.create_directory(label)
+            },
+            Kind::File(syscalls::Void {}) => {
+                self.env.fs.create_file(label)
+            },
+            Kind::FacetedDirectory(syscalls::Void {}) => {
+                self.env.fs.create_faceted_directory()
+            },
+            Kind::Gate(syscalls::Gate { kind }) => {
+                if let Some(kind) = kind {
+                    match kind {
+                        syscalls::gate::Kind::Direct(dg) => {
+                            let function = dg.function.unwrap();
+
+                            let DirEntry::Blob(app_image) = self.dents.get(&function.app_image).ok_or(FsError::InvalidFd)? else { Err(FsError::NotABlob)? };
+                            let DirEntry::Blob(runtime_image) = self.dents.get(&function.runtime).ok_or(FsError::InvalidFd)? else { Err(FsError::NotABlob)? };
+                            let DirEntry::Blob(kernel) = self.dents.get(&function.kernel).ok_or(FsError::InvalidFd)? else { Err(FsError::NotABlob)? };
+
+
+
+                            let func = Function {
+                                memory: function.memory as usize,
+                                app_image: app_image.get(&self.env.fs).unwrap().unlabel().clone(),
+                                runtime_image: runtime_image.get(&self.env.fs).unwrap().unlabel().clone(),
+                                kernel: kernel.get(&self.env.fs).unwrap().unlabel().clone(),
+                            };
+                            self.env.fs.create_direct_gate(
+                                label,
+                                DirectGate {
+                                    privilege: dg.privilege.unwrap().into(),
+                                    invoker_integrity_clearance: dg.invoker_integrity_clearance.unwrap().into(),
+                                    declassify: dg.declassify.map(|d| d.into()).unwrap_or(Component::dc_true()),
+                                    function: func,
+                                })?
+                        },
+                        syscalls::gate::Kind::Redirect(rd) => {
+                            if let Some(DirEntry::Gate(gate_objref)) = self.dents.get(&rd.gate) {
+                                self.env.fs.create_redirect_gate(
+                                    label,
+                                    RedirectGate {
+                                        privilege: rd.privilege.unwrap().into(),
+                                        invoker_integrity_clearance: rd.invoker_integrity_clearance.unwrap().into(),
+                                        declassify: rd.declassify.map(|d| d.into()).unwrap_or(Component::dc_true()),
+                                        gate: *gate_objref,
+                                    })?
+                            } else {
+                                Err(FsError::NotAGate)?
+                            }
+                        }
+                    }
+                } else {
+                    Err(FsError::NotAGate)?
+                }
+            },
+            Kind::Service(syscalls::Service { taint, privilege, invoker_integrity_clearance, url, verb, mut headers }) => {
+                let verb = syscalls::HttpVerb::from_i32(verb).unwrap_or(syscalls::HttpVerb::HttpHead).into();
+                let headers: std::collections::BTreeMap<String, String> = headers.drain().collect();
+                self.env.fs.create_service(
+                    label,
+                    Service {
+                        taint: taint.unwrap().into(),
+                        privilege: privilege.unwrap().into(),
+                        invoker_integrity_clearance: invoker_integrity_clearance.unwrap().into(),
+                        url,
+                        verb,
+                        headers
+                    })?
+            },
+            Kind::Blob(blobfd) => {
+                let blob = self.blobs.get(&blobfd).ok_or(FsError::NotABlob)?;
+                self.env.fs.create_blob(label, blob.name.clone())?
+            },
+        };
+        let res_id = self.max_dent_id;
+        let _ = self.dents.insert(self.max_dent_id, entry);
+        self.max_dent_id += 1;
+        Ok(syscalls::DentResult { success: true, fd: Some(res_id), data: None })
+    }
+
+    fn dent_update(&mut self, fd: u64, kind: syscalls::dent_update::Kind) -> Result<syscalls::DentResult, FsError> {
+        use syscalls::dent_update::Kind;
+        match kind {
+            Kind::File(data) => {
+                if let Some(DirEntry::File(file)) = self.dents.get(&fd) {
+                    file.write(data, &self.env.fs)?;
+                } else {
+                    return Err(FsError::NotAFile);
+                }
+            },
+            Kind::Gate(syscalls::Gate { kind }) => {
+                if let Some(DirEntry::Gate(gateentry)) = self.dents.get(&fd) {
+                    if let Some(kind) = kind {
+                        match kind {
+                            syscalls::gate::Kind::Direct(dg) => {
+                                let mut gate = if let Some(Gate::Direct(dg)) = gateentry.get(&self.env.fs).map(|e| e.unlabel().clone()) {
+                                    dg
+                                } else {
+                                    return Err(FsError::NotAGate);
+                                };
+                                if let Some(function) = dg.function {
+
+                                    if function.app_image > 0 {
+                                        let DirEntry::Blob(app_image) = self.dents.get(&function.app_image).ok_or(FsError::InvalidFd)? else { Err(FsError::NotABlob)? };
+                                        gate.function.app_image = app_image.get(&self.env.fs).unwrap().unlabel().clone();
+                                    }
+                                    if function.runtime > 0 {
+                                        let DirEntry::Blob(runtime_image) = self.dents.get(&function.runtime).ok_or(FsError::InvalidFd)? else { Err(FsError::NotABlob)? };
+                                        gate.function.runtime_image = runtime_image.get(&self.env.fs).unwrap().unlabel().clone();
+                                    }
+
+                                    if function.kernel > 0 {
+                                        let DirEntry::Blob(kernel) = self.dents.get(&function.kernel).ok_or(FsError::InvalidFd)? else { Err(FsError::NotABlob)? };
+                                        gate.function.kernel = kernel.get(&self.env.fs).unwrap().unlabel().clone();
+                                    }
+
+                                    if function.memory > 0 {
+                                        gate.function.memory = function.memory as usize;
+                                    }
+                                }
+
+                                if let Some(privilege) = dg.privilege {
+                                    gate.privilege = privilege.into();
+                                }
+
+                                if let Some(invoker_integrity_clearance) = dg.invoker_integrity_clearance {
+                                    gate.invoker_integrity_clearance = invoker_integrity_clearance.into();
+                                }
+
+                                gateentry.replace(Gate::Direct(gate), &self.env.fs)?;
+                            },
+                            syscalls::gate::Kind::Redirect(rd) => {
+                                let mut gate = if let Some(Gate::Redirect(rg)) = gateentry.get(&self.env.fs).map(|e| e.unlabel().clone()) {
+                                    rg
+                                } else {
+                                    return Err(FsError::NotAGate);
+                                };
+
+                                if let Some(DirEntry::Gate(gate_objref)) = self.dents.get(&rd.gate) {
+                                    gate.gate = *gate_objref;
+                                } else {
+                                    return Err(FsError::NotAGate);
+                                }
+
+                                if let Some(privilege) = rd.privilege {
+                                    gate.privilege = privilege.into();
+                                }
+
+                                if let Some(invoker_integrity_clearance) = rd.invoker_integrity_clearance {
+                                    gate.invoker_integrity_clearance = invoker_integrity_clearance.into();
+                                }
+
+                                gateentry.replace(Gate::Redirect(gate), &self.env.fs)?
+                            }
+                        }
+                    } else {
+                        return Err(FsError::NotAGate);
+                    }
+                } else {
+                    Err(FsError::NotAGate)?
+                }
+            },
+            Kind::Service(syscalls::Service { taint, privilege, invoker_integrity_clearance, url, verb, mut headers }) => {
+                if let Some(DirEntry::Service(service)) = self.dents.get(&fd) {
+                    let verb = syscalls::HttpVerb::from_i32(verb).unwrap_or(syscalls::HttpVerb::HttpHead).into();
+                    let headers: std::collections::BTreeMap<String, String> = headers.drain().collect();
+                    service.replace(Service {
+                            taint: taint.unwrap().into(),
+                            privilege: privilege.unwrap().into(),
+                            invoker_integrity_clearance: invoker_integrity_clearance.unwrap().into(),
+                            url,
+                            verb,
+                            headers
+                        }, &self.env.fs)?
+                } else {
+                    return Err(FsError::NotAService);
+                }
+            },
+            Kind::Blob(blobfd) => {
+                let blob = self.blobs.get(&blobfd).ok_or(FsError::NotABlob)?;
+                if let Some(DirEntry::Blob(blobentry)) = self.dents.get(&fd) {
+                    blobentry.replace(blob.name.clone(), &self.env.fs)?;
+                } else {
+                    return Err(FsError::NotABlob);
+                }
+            },
+        };
+        Ok(syscalls::DentResult { success: true, fd: None, data: None })
+    }
+
+    fn dent_read(&mut self, fd: u64) -> syscalls::DentResult {
+        let result = self.dents.get(&fd).and_then(|entry| {
+            match entry {
+                DirEntry::File(file) => Ok(file.read(&self.env.fs)),
+                _ => Err(FsError::NotAFile)
+            }.ok()
+        });
+        syscalls::DentResult { success: result.is_some(), fd: Some(fd), data: result }
+    }
+
+    fn dent_list(&mut self, fd: u64) -> syscalls::DentListResult {
+        let result = self.dents.get(&fd).and_then(|entry| match entry {
+            DirEntry::Directory(dir) => Ok(
+                dir.list(&self.env.fs).iter().map(|(name, direntry)| {
+                    let kind = match direntry {
+                        DirEntry::Directory(_) => syscalls::DentKind::DentDirectory,
+                        DirEntry::File(_) => syscalls::DentKind::DentFile,
+                        DirEntry::FacetedDirectory(_) => syscalls::DentKind::DentFacetedDirectory,
+                        DirEntry::Gate(_) => syscalls::DentKind::DentGate,
+                        DirEntry::Service(_) => syscalls::DentKind::DentService,
+                        DirEntry::Blob(_) => syscalls::DentKind::DentBlob,
+                    };
+                    (name.clone(), kind as i32)
+                }).collect()),
+            _ => Err(FsError::NotADir),
+        }.ok());
+        if let Some(entries) = result {
+            syscalls::DentListResult { success: true, entries }
+        } else {
+            syscalls::DentListResult { success: true, entries: Default::default() }
+        }
+    }
+
+    fn dent_list_faceted(&mut self, fd: u64, clearance: Buckle) -> syscalls::DentLsFacetedResult {
+        let result = self.dents.get(&fd).and_then(|entry| match entry {
+            DirEntry::FacetedDirectory(faceted) => Ok(
+                faceted.list(&self.env.fs, &clearance).iter().map(|(label, _)| {
+                    label.clone().into()
+                }).collect()),
+            _ => Err(FsError::NotADir),
+        }.ok());
+        if let Some(facets) = result {
+            syscalls::DentLsFacetedResult { success: true, facets }
+        } else {
+            syscalls::DentLsFacetedResult { success: false, facets: Default::default() }
+        }
+    }
+
+    fn dent_ls_gate(&mut self, fd: u64) -> syscalls::DentLsGateResult {
+        let result = self.dents.get(&fd).map(Clone::clone).and_then(|entry| match entry {
+            DirEntry::Gate(gate) => Ok(
+                match gate.get(&self.env.fs).unwrap().unlabel() {
+                    fs::Gate::Direct(dg) => {
+                        let app_image_fd = {
+                            let blobid = self.max_blob_id;
+                            self.max_blob_id += 1;
+                            let blob = self.env.blobstore.open(dg.function.app_image.clone()).expect("open");
+                            self.blobs.insert(blobid, blob);
+                            blobid
+                        };
+                        let runtime_fd = {
+                            let blobid = self.max_blob_id;
+                            self.max_blob_id += 1;
+                            let blob = self.env.blobstore.open(dg.function.runtime_image.clone()).expect("open");
+                            self.blobs.insert(blobid, blob);
+                            blobid
+                        };
+                        let kernel_fd = {
+                            let blobid = self.max_blob_id;
+                            self.max_blob_id += 1;
+                            let blob = self.env.blobstore.open(dg.function.kernel.clone()).expect("open");
+                            self.blobs.insert(blobid, blob);
+                            blobid
+                        };
+                        let function = syscalls::Function {
+                            memory: dg.function.memory as u64,
+                            app_image: app_image_fd,
+                            runtime: runtime_fd,
+                            kernel: kernel_fd,
+                        };
+                        syscalls::Gate { kind: Some(syscalls::gate::Kind::Direct(syscalls::DirectGate {
+                            privilege: Some(dg.privilege.clone().into()),
+                            invoker_integrity_clearance: Some(dg.invoker_integrity_clearance.clone().into()),
+                            declassify: Some(dg.declassify.clone().into()),
+                            function: Some(function),
+                        }))}
+                    },
+                    fs::Gate::Redirect(rd) => syscalls::Gate { kind: Some(syscalls::gate::Kind::Redirect(syscalls::RedirectGate {
+                        privilege: Some(rd.privilege.clone().into()),
+                        invoker_integrity_clearance: Some(rd.invoker_integrity_clearance.clone().into()),
+                        declassify: Some(rd.declassify.clone().into()),
+                        gate: 0, // unused field in this case
+                    }))}
+                }
+            ),
+            _ => Err(FsError::NotAGate),
+        }.ok());
+        syscalls::DentLsGateResult { success: result.is_some(), gate: result }
+    }
+
+    fn dent_link(&self, dir_fd: u64, name: String, target_fd: u64) -> syscalls::DentResult {
+        let base_dir_m = self.dents.get(&dir_fd).cloned();
+        let target_obj_m = self.dents.get(&target_fd).cloned();
+        let result = base_dir_m.zip(target_obj_m).and_then(|(base, target)| match base {
+            DirEntry::Directory(base_dir) => {
+                base_dir.link(name, target, &self.env.fs).map_err(|e| {
+                    Into::into(e)
+                })
+            },
+            _ => {
+                Err(FsError::NotADir)
+            },
+        }.ok());
+        syscalls::DentResult { success: result.is_some(), fd: None, data: None }
+    }
+
+    fn dent_unlink(&self, fd: u64, name: &String) -> syscalls::DentResult {
+        let result = self.dents.get(&fd).cloned().and_then(|entry| match entry {
+            DirEntry::Directory(base_dir) => {
+                base_dir.unlink(name, &self.env.fs).ok()
+            },
+            _ => None,
+        });
+        syscalls::DentResult { success: result.unwrap_or(false), fd: Some(fd), data: None }
+    }
+
+    fn dent_invoke(&mut self, fd: u64, payload: Vec<u8>, sync: bool, toblob: bool, parameters: HashMap<String, String>) -> syscalls::DentInvokeResult {
+        let (blobfd, data, headers) = self.dents.get(&fd).cloned().and_then(|entry| match entry {
+            DirEntry::Gate(gate) => {
+                let gate = gate.to_invokable(&self.env.fs);
+                if !crate::fs::utils::get_privilege().implies(&gate.invoker_integrity_clearance) {
+                    return None;
+                }
+                sched::rpc::labeled_invoke(self.env.sched_conn.as_mut().unwrap(), sched::message::LabeledInvoke {
+                    function: Some(gate.function.into()),
+                    label: Some(CURRENT_LABEL.with(|cl| cl.borrow().clone()).into()),
+                    gate_privilege: Some(gate.privilege.into()),
+                    blobs: Default::default(),
+                    payload,
+                    headers: parameters,
+                    sync,
+                }).ok()?;
+                if sync {
+                    let res = message::read::<TaskReturn>(self.env.sched_conn.as_mut().unwrap()).ok()?;
+                    let res_label = res.label.clone().map(Into::into).unwrap_or(Buckle::public());
+                    fs::utils::taint_with_label(res_label);
+                    if toblob {
+                        // TODO(alevy): would be better to just pass this intent
+                        // through the request and have the target just write a
+                        // blob in the first place
+                        let mut newblob = self.env.blobstore.create().expect("Create blob");
+                        newblob.write_all(res.payload()).expect("Write to blob");
+                        let blob = self.env.blobstore.save(newblob).expect("Save blob");
+                        let blobfd = self.max_blob_id;
+                        self.max_blob_id += 1;
+                        self.blobs.insert(blobfd, blob);
+                        Some((Some(blobfd), None, None))
+                    } else {
+                        Some((None, Some(res.payload().into()), None))
+                    }
+                } else {
+                    Some((None, Some(vec![]), None))
+                }
+            },
+            DirEntry::Service(service) => {
+                let service_info = service.to_invokable(&self.env.fs);
+                if !crate::fs::utils::get_privilege().implies(&service_info.invoker_integrity_clearance) {
+                    return None;
+                }
+                crate::fs::utils::declassify_with(&service_info.privilege);
+                let sendres = self.http_send(&service_info, Some(payload), parameters);
+                crate::fs::utils::taint_with_label(service_info.taint);
+                match sendres {
+                    Ok(mut response) => {
+                        let headers: HashMap<String, Vec<u8>> = response.headers().iter().map(|(a,b)| (a.to_string(), Vec::from(b.as_bytes()))).collect();
+                        if toblob {
+                            let mut newblob = self.env.blobstore.create().expect("Create blob");
+                            response.copy_to(&mut newblob).expect("Copy to blob");
+                            let blob = self.env.blobstore.save(newblob).expect("Save blob");
+                            let blobfd = self.max_blob_id;
+                            self.max_blob_id += 1;
+                            self.blobs.insert(blobfd, blob);
+                            Some((Some(blobfd), None, Some(headers)))
+                        } else {
+                            Some((None, response.bytes().map(|bs| bs.to_vec()).ok(), Some(headers)))
+                        }
+                    },
+                    Err(_err) => {
+                        None
+                    }
+                }
+            }
+            _ => None
+        }).unwrap_or((None, None, None));
+
+        syscalls::DentInvokeResult { success: blobfd.is_some() || data.is_some(), fd: blobfd, data, headers: headers.unwrap_or(Default::default()) }
+    }
+
+    fn dent_get_blob(&mut self, fd: u64) -> syscalls::BlobResult {
+        match self.dents.get(&fd) {
+            Some(DirEntry::Blob(blobentry)) => {
+                let blob: Blob = self.env.blobstore.open(blobentry.read(&self.env.fs)).expect("blob");
+                let blobfd = self.max_blob_id;
+                self.max_blob_id += 1;
+                let len = blob.len().expect("blob should exist");
+                self.blobs.insert(blobfd, blob);
+                syscalls::BlobResult { success: true, fd: blobfd, len, data: None }
+            },
+            _ => syscalls::BlobResult { success: false, fd: 0, len: 0, data: None }
+        }
+    }
+
+    fn blob_create(&mut self) -> syscalls::BlobResult {
+        match self.env.blobstore.create() {
+            Ok(newblob) => {
+                let blobid = self.max_blob_id;
+                self.max_blob_id += 1;
+                self.create_blobs.insert(blobid, newblob);
+                syscalls::BlobResult { success: true, fd: blobid, len: 0, data: None }
+            }
+            Err(e) => {
+                syscalls::BlobResult { success: false, fd: 0, len: 0, data: Some(e.to_string().into()) }
+            }
+        }
+    }
+
+    fn blob_write(&mut self, fd: u64, data: &[u8]) -> syscalls::BlobResult {
+        if let Some(blob) = self.create_blobs.get_mut(&fd) {
+            match blob.write(data) {
+                Ok(len) => syscalls::BlobResult { success: true, fd, len: len as u64, data: None},
+                Err(e) => syscalls::BlobResult { success: false, fd, len: 0, data: Some(e.to_string().into())}
+            }
+        } else {
+            syscalls::BlobResult { success: false, fd, len: 0, data: None}
+        }
+    }
+
+    fn blob_finalize(&mut self, fd: u64) -> syscalls::BlobResult {
+        if let Some(blob) = self.create_blobs.remove(&fd) {
+            let len = blob.len() as u64;
+            match self.env.blobstore.save(blob) {
+                Ok(blob) => {
+                    self.blobs.insert(fd, blob);
+                    syscalls::BlobResult { success: true, fd, len, data: None}
+                }
+                Err(e) => syscalls::BlobResult { success: false, fd, len, data: Some(e.to_string().into())}
+            }
+        } else {
+            syscalls::BlobResult { success: false, fd, len: 0, data: None}
+        }
+    }
+
+    fn blob_read(&mut self, fd: u64, offset: u64, length: u64) -> syscalls::BlobResult {
+        if let Some(blob) = self.blobs.get(&fd) {
+            let mut buf = vec![0; length as usize];
+            match blob.read_at(&mut buf, offset) {
+                Ok(len) => {
+                    buf.resize(len, 0);
+                    syscalls::BlobResult { success: true, fd, len: len as u64, data: Some(buf) }
+                },
+                Err(e) => syscalls::BlobResult { success: false, fd, len: 0, data: Some(e.to_string().into())}
+            }
+        } else {
+            syscalls::BlobResult { success: false, fd, len: 0, data: None}
+        }
+    }
+
+    fn blob_close(&mut self, fd: u64) -> syscalls::BlobResult {
+        if self.blobs.remove(&fd).is_some() {
+            syscalls::BlobResult { success: true, fd, len: 0, data: None}
+        } else {
+            syscalls::BlobResult { success: false, fd, len: 0, data: None}
+        }
+    }
+
+    fn do_syscall(&mut self, sc: SC, s: &mut impl SyscallChannel) -> Result<Option<TaskReturn>, SyscallProcessorError> {
+        use prost::Message;
+
+        match sc {
+            SC::Response(r) => {
+                let result_label = fs::utils::declassify_with(&crate::fs::utils::get_privilege());
+                return Ok(Some(TaskReturn {
+                    code: ReturnCode::Success as i32,
+                    payload: Some(r.payload),
+                    label: Some(result_label.into()),
+                }));
+            },
+
+            SC::BuckleParse(label) => {
+                let result: Result<syscalls::Buckle, _> = Buckle::parse(label.as_str()).map(Into::into);
+                s.send(syscalls::MaybeBuckle { label: result.ok() }.encode_to_vec())?;
+            },
+            SC::GetCurrentLabel(syscalls::Void {}) => {
+                s.send(CURRENT_LABEL.with(|cl| syscalls::Buckle::from(cl.borrow().clone())).encode_to_vec())?;
+            }
+            SC::TaintWithLabel(label) => {
+                s.send(CURRENT_LABEL.with(|cl| {
+                    *cl.borrow_mut() = cl.borrow().clone().lub(label.into());
+                    syscalls::Buckle::from(cl.borrow().clone())
+                }).encode_to_vec())?;
+            }
+            SC::Declassify(component) => {
+                let target = component.into();
+                let result = syscalls::MaybeBuckle {
+                    label: fs::utils::declassify(target)
+                        .map(Into::into)
+                        .ok(),
+                };
+                s.send(result.encode_to_vec())?;
+            },
+            SC::SubPrivilege(_) => todo!(),
+
+            SC::Root(syscalls::Void {}) => {
+                s.send(self.root().encode_to_vec())?
+            }
+
+            SC::DentOpen(syscalls::DentOpen { fd, entry }) => {
+                s.send(self.dent_open(fd, entry.unwrap()).encode_to_vec())?;
+            },
+            SC::DentClose(fd) => {
+                s.send(self.dent_close(fd).encode_to_vec())?;
+            },
+            SC::DentCreate(syscalls::DentCreate { kind, label }) => {
+                let label = label.map(Into::into);
+                s.send((if let Some(kind) = kind {
+                    self.dent_create(kind, label).map_err(|e| log::info!("Err {:?}", e)).unwrap_or(
+                        syscalls:: DentResult { success: false, fd: None, data: None }
+                    )
+                } else {
+                    syscalls::DentResult { success: false, fd: None, data: None }
+                }).encode_to_vec())?;
+            },
+            SC::DentUpdate(syscalls::DentUpdate { kind, fd }) => {
+                s.send((if let Some(kind) = kind {
+                    self.dent_update(fd, kind).map_err(|e| log::info!("Err {:?}", e)).unwrap_or(
+                        syscalls:: DentResult { success: false, fd: None, data: None }
+                    )
+                } else {
+                    syscalls::DentResult { success: false, fd: None, data: None }
+                }).encode_to_vec())?;
+            },
+            SC::DentRead(fd) => {
+                s.send(self.dent_read(fd).encode_to_vec())?
+            },
+            SC::DentList(fd) => {
+                s.send(self.dent_list(fd).encode_to_vec())?
+            },
+            SC::DentLsFaceted(syscalls::DentLsFaceted { fd, clearance }) => {
+                s.send(self.dent_list_faceted(fd, clearance.map(Into::into).unwrap_or(Buckle::public())).encode_to_vec())?
+            },
+            SC::DentLsGate(fd) => {
+                s.send(self.dent_ls_gate(fd).encode_to_vec())?
+            },
+            SC::DentLink(syscalls::DentLink { dir_fd, name, target_fd }) => {
+                s.send(self.dent_link(dir_fd, name, target_fd).encode_to_vec())?
+            },
+            SC::DentUnlink(syscalls::DentUnlink { fd, name }) => {
+                s.send(self.dent_unlink(fd, &name).encode_to_vec())?
+            },
+            SC::DentInvoke(DentInvoke { fd, sync, payload, toblob, parameters }) => {
+                s.send(self.dent_invoke(fd, payload, sync, toblob, parameters).encode_to_vec())?
+            },
+            SC::DentGetBlob(fd) => {
+                s.send(self.dent_get_blob(fd).encode_to_vec())?
+            },
+
+            SC::BlobCreate(syscalls::BlobCreate { size: _ }) => {
+                s.send(self.blob_create().encode_to_vec())?;
+            }
+            SC::BlobWrite(syscalls::BlobWrite { fd, data }) => {
+                s.send(self.blob_write(fd, &data).encode_to_vec())?;
+            }
+            SC::BlobFinalize(syscalls::BlobFinalize { fd }) => {
+                s.send(self.blob_finalize(fd).encode_to_vec())?;
+            },
+            SC::BlobRead(syscalls::BlobRead { fd, offset, length }) => {
+                s.send(self.blob_read(fd, offset.unwrap_or(0), length.unwrap_or(4096)).encode_to_vec())?;
+            },
+            SC::BlobClose(syscalls::BlobClose { fd }) => {
+                s.send(self.blob_close(fd).encode_to_vec())?;
+            },
+        };
+        Ok(None)
+    }
+
+    pub fn run(
         mut self,
-        env: &mut SyscallGlobalEnv<B>,
-        payload: String,
+        payload: Vec<u8>,
+        mut blobs: HashMap<String, Blob>,
+        headers: HashMap<String, String>,
         s: &mut impl SyscallChannel,
     ) -> Result<TaskReturn, SyscallProcessorError> {
         use prost::Message;
-        s.send(syscalls::Request { payload }.encode_to_vec())?;
+        let blobfds = blobs.drain().map(|(k, b)| {
+            let blobfd = self.max_blob_id;
+            self.max_blob_id += 1;
+            self.blobs.insert(blobfd, b);
+            (k, blobfd)
+        }).collect();
+        s.send(syscalls::Request { payload, blobs: blobfds, headers }.encode_to_vec())?;
 
         loop {
-            let sc = s.wait()?;
-            match sc {
-                Some(SC::Response(r)) => {
-                    debug!("function response: {}", r.payload);
-                    return Ok(TaskReturn {
-                        code: ReturnCode::Success as i32,
-                        payload: Some(r.payload),
-                        label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
-                    });
-                }
-                Some(SC::InvokeGate(i)) => {
-                    let result = match env.sched_conn.as_mut() {
-                        None => {
-                            warn!("No scheduler presents. Syscall invoke is noop.");
-                            syscalls::WriteKeyResponse { success: false }
-                        }
-                        Some(sched_conn) => {
-                            // FIXME change to string path
-                            let ret = fs::utils::invoke(&env.fs, i.gate).ok();
-                            let result = syscalls::WriteKeyResponse {
-                                success: ret.is_some(),
-                            };
-                            if ret.is_some() {
-                                let (f, p) = ret.unwrap();
-                                let label = fs::utils::get_current_label();
-                                let sched_invoke = sched::message::LabeledInvoke {
-                                    function: Some(f.into()),
-                                    payload: i.payload,
-                                    gate_privilege: component_to_pbcomponent(&p),
-                                    label: Some(buckle_to_pblabel(&label)),
-                                    sync: false,
-                                };
-                                sched::rpc::labeled_invoke(sched_conn, sched_invoke).map_err(
-                                    |e| {
-                                        error!("{:?}", e);
-                                        SyscallProcessorError::UnreachableScheduler
-                                    },
-                                )?;
-                            }
-                            result
-                        }
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::InvokeService(req)) => {
-                    let service = fs::utils::invoke_service(&env.fs, req.serv).ok();
-                    let resp = match service {
-                        Some(s) => {
-                            fs::utils::taint_with_label(s.label.clone());
-                            Some(self.http_send(&s, req.body)?)
-                        }
-                        None => None,
-                    };
-                    let result = match resp {
-                        None => syscalls::ServiceResponse {
-                            data: "Fail to invoke the external service".as_bytes().to_vec(),
-                            status: 0,
-                        },
-                        Some(resp) => syscalls::ServiceResponse {
-                            status: resp.status().as_u16() as u32,
-                            data: resp
-                                .bytes()
-                                .map_err(|e| SyscallProcessorError::Http(e))?
-                                .to_vec(),
-                        },
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsDelete(del)) => {
-                    let value = fs::path::Path::parse(&del.path).ok().and_then(|p| {
-                        p.file_name().and_then(|name| {
-                            p.parent().and_then(|base_dir| {
-                                fs::utils::delete(&env.fs, base_dir, name).ok()
-                            })
-                        })
-                    });
-                    let result = syscalls::WriteKeyResponse {
-                        success: value.is_some(),
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::BuckleParse(bstr)) => {
-                    let result = syscalls::DeclassifyResponse {
-                        label: Buckle::parse(&bstr).ok().map(|l| buckle_to_pblabel(&l)),
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::SubPrivilege(suffix)) => {
-                    // omnipotent privilege: dc_false + suffix = dc_false
-                    // empty privilege: dc_true + suffix = dc_true
-                    let mut my_priv = component_to_pbcomponent(&fs::utils::my_privilege());
-                    if let Some(clauses) = my_priv.as_mut() {
-                        if let Some(clause) = clauses.clauses.first_mut() {
-                            clause
-                                .principals
-                                .first_mut()
-                                .unwrap()
-                                .tokens
-                                .extend(suffix.tokens);
-                        }
-                    }
-                    let result = syscalls::Buckle {
-                        secrecy: my_priv,
-                        integrity: None,
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::DupGate(req)) => {
-                    let policy = pblabel_to_buckle(&req.policy.unwrap());
-                    let value =
-                        fs::utils::dup_gate(&env.fs, req.orig, req.base_dir, req.name, policy).ok();
-                    let result = syscalls::WriteKeyResponse {
-                        success: value.is_some(),
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsCreateGate(cg)) => {
-                    let mut success = false;
-                    if let Ok(path) = fs::path::Path::parse(&cg.path) {
-                        if let Some(base_dir) = path.parent() {
-                            if let Some(name) = path.file_name() {
-                                if let Ok(policy) = buckle::Buckle::parse(&cg.policy) {
-                                    let runtime_blob =
-                                        fs::bootstrap::get_runtime_blob(&env.fs, &cg.runtime);
-                                    let kernel_blob = fs::bootstrap::get_kernel_blob(&env.fs);
-                                    let value = fs::utils::create_gate(
-                                        &env.fs,
-                                        base_dir,
-                                        name,
-                                        policy,
-                                        fs::Function {
-                                            memory: cg.memory as usize,
-                                            app_image: cg.app_image,
-                                            runtime_image: runtime_blob,
-                                            kernel: kernel_blob,
-                                        },
-                                    );
-                                    if value.is_err() {
-                                        debug!("fs-create-gate failed: {:?}", value.unwrap_err());
-                                    } else {
-                                        success = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    let result = syscalls::WriteKeyResponse { success };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsCreateRedirectGate(crg)) => {
-                    let mut success = false;
-                    if let Ok(path) = fs::path::Path::parse(&crg.path) {
-                        if let Some(base_dir) = path.parent() {
-                            if let Some(name) = path.file_name() {
-                                if let Ok(policy) = buckle::Buckle::parse(&crg.policy) {
-                                    if let Ok(redirect_path) =
-                                        fs::path::Path::parse(&crg.redirect_path)
-                                    {
-                                        let value = fs::utils::create_redirect_gate(
-                                            &env.fs,
-                                            base_dir,
-                                            name,
-                                            policy,
-                                            redirect_path,
-                                        );
-                                        if value.is_err() {
-                                            debug!(
-                                                "fs-create-redirect-gate failed: {:?}",
-                                                value.unwrap_err()
-                                            );
-                                        } else {
-                                            success = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    let result = syscalls::WriteKeyResponse { success };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsCreateService(cs)) => {
-                    let mut success = false;
-                    if let Ok(path) = fs::path::Path::parse(&cs.path) {
-                        if let Some(base_dir) = path.parent() {
-                            if let Some(name) = path.file_name() {
-                                if let Ok(policy) = buckle::Buckle::parse(&cs.policy) {
-                                    if let Ok(label) = buckle::Buckle::parse(&cs.label) {
-                                        if let Ok(url) =
-                                            reqwest::Url::parse(&cs.url).map(|u| u.to_string())
-                                        {
-                                            if let Ok(verb) =
-                                                reqwest::Method::from_bytes(cs.verb.as_bytes())
-                                            {
-                                                const DEFAULT_HEADERS: &[(&str, &str)] =
-                                                    &[("ACCEPT", "*/*"), ("USER_AGENT", "faasten")];
-                                                let headers = cs.headers.map_or_else(
-                                                    || {
-                                                        Ok(DEFAULT_HEADERS
-                                                            .iter()
-                                                            .map(|(n, v)| {
-                                                                (n.to_string(), v.to_string())
-                                                            })
-                                                            .collect::<HashMap<_, _>>())
-                                                    },
-                                                    |hs| serde_json::from_str(&hs),
-                                                );
-                                                if let Ok(headers) = headers {
-                                                    let value = fs::utils::create_service(
-                                                        &env.fs, base_dir, name, policy, label,
-                                                        url, verb, headers,
-                                                    );
-                                                    if value.is_err() {
-                                                        debug!(
-                                                            "fs-create-service failed: {:?}",
-                                                            value.unwrap_err()
-                                                        );
-                                                    } else {
-                                                        success = true;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    let result = syscalls::WriteKeyResponse { success };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsRead(rd)) => {
-                    let value = fs::path::Path::parse(&rd.path)
-                        .ok()
-                        .and_then(|p| fs::utils::read(&env.fs, p).ok());
-                    let result = syscalls::ReadKeyResponse { value };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsOpenBlob(rd)) => {
-                    let value = fs::path::Path::parse(&rd.path)
-                        .ok()
-                        .and_then(|p| fs::utils::open_blob(&env.fs, p).ok());
-                    let result = syscalls::FsOpenBlobResponse { name: value };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsList(req)) => {
-                    let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
-                        fs::utils::list(&env.fs, p)
-                            .ok()
-                            .map(|m| syscalls::EntryNameArr {
-                                names: m.keys().cloned().collect(),
-                            })
-                    });
-                    let result = syscalls::FsListResponse { value };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsFacetedList(req)) => {
-                    let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
-                        fs::utils::faceted_list(&env.fs, p).ok().map(|facets| {
-                            syscalls::FsFacetedListInner {
-                                facets: facets
-                                    .iter()
-                                    .map(|(k, m)| {
-                                        (
-                                            k.clone(),
-                                            syscalls::EntryNameArr {
-                                                names: m.keys().cloned().collect(),
-                                            },
-                                        )
-                                    })
-                                    .collect::<HashMap<String, syscalls::EntryNameArr>>(),
-                            }
-                        })
-                    });
-                    let result = syscalls::FsFacetedListResponse { value };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsWrite(wr)) => {
-                    let value = fs::path::Path::parse(&wr.path)
-                        .ok()
-                        .and_then(|p| fs::utils::write(&env.fs, p, wr.data).ok());
-                    let result = syscalls::WriteKeyResponse {
-                        success: value.is_some(),
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsHardLink(hl)) => {
-                    let success = fs::path::Path::parse(&hl.src)
-                        .ok()
-                        .and_then(|src| {
-                            fs::path::Path::parse(&hl.dest).ok().and_then(|dest| {
-                                match fs::utils::read_path(&env.fs, src) {
-                                    Ok(dent) => match dent {
-                                        fs::DirEntry::FacetedDirectory(_)
-                                        | fs::DirEntry::Directory(_)
-                                        | fs::DirEntry::File(_)
-                                        | fs::DirEntry::Blob(_) => Some(dent.clone()),
-                                        _other_dent => None,
-                                    },
-                                    Err(_e) => None,
-                                }
-                                .and_then(|hard_link| {
-                                    fs::utils::hard_link(&env.fs, dest, hard_link).ok()
-                                })
-                            })
-                        })
-                        .is_some();
-                    let result = syscalls::WriteKeyResponse { success };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsCreateFacetedDir(req)) => {
-                    let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
-                        p.file_name().and_then(|name| {
-                            p.parent().and_then(|base_dir| {
-                                fs::utils::create_faceted(&env.fs, base_dir, name).ok()
-                            })
-                        })
-                    });
-                    let result = syscalls::WriteKeyResponse {
-                        success: value.is_some(),
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsCreateDir(req)) => {
-                    let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
-                        p.file_name().and_then(|name| {
-                            p.parent().and_then(|base_dir| {
-                                if let Some(l) = req.label {
-                                    buckle::Buckle::parse(&l).ok().and_then(|l| {
-                                        fs::utils::create_directory(&env.fs, base_dir, name, l).ok()
-                                    })
-                                } else {
-                                    let l = fs::utils::get_current_label();
-                                    fs::utils::create_directory(&env.fs, base_dir, name, l).ok()
-                                }
-                            })
-                        })
-                    });
-                    let result = syscalls::WriteKeyResponse {
-                        success: value.is_some(),
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsCreateFile(req)) => {
-                    let value = fs::path::Path::parse(&req.path).ok().and_then(|p| {
-                        p.file_name().and_then(|name| {
-                            p.parent().and_then(|base_dir| {
-                                if let Some(l) = req.label {
-                                    buckle::Buckle::parse(&l).ok().and_then(|l| {
-                                        fs::utils::create_file(&env.fs, base_dir, name, l).ok()
-                                    })
-                                } else {
-                                    let l = fs::utils::get_current_label();
-                                    fs::utils::create_file(&env.fs, base_dir, name, l).ok()
-                                }
-                            })
-                        })
-                    });
-                    let result = syscalls::WriteKeyResponse {
-                        success: value.is_some(),
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::CreateFile(req)) => {
-                    let value = fs::path::Path::parse(&req.path)
-                        .ok()
-                        .and_then(|p| {
-                            p.file_name().and_then(|name| {
-                                p.parent().and_then(|base_dir| {
-                                    if let Some(l) = req.label.as_ref() {
-                                        buckle::Buckle::parse(&l).ok().and_then(|l| {
-                                            fs::utils::create_file(&env.fs, base_dir, name, l).ok()
-                                        })
-                                    } else {
-                                        let l = fs::utils::get_current_label();
-                                        fs::utils::create_file(&env.fs, base_dir, name, l).ok()
-                                    }
-                                })
-                            })
-                        })
-                        .and_then(|dent| {
-                            let _ = self.dents.insert(self.max_dent_id, dent);
-                            self.max_dent_id += 1;
-                            Some(self.max_dent_id - 1)
-                        });
-                    let result = value.map_or_else(
-                        || syscalls::DentResponse {
-                            success: false,
-                            dent_fd: 0,
-                        },
-                        |fd| syscalls::DentResponse {
-                            success: true,
-                            dent_fd: fd,
-                        },
-                    );
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::DentWrite(r)) => {
-                    let success = self
-                        .dents
-                        .get(&r.dent_fd)
-                        .and_then(|dent| match dent {
-                            fs::DirEntry::File(f) => env.fs.write(&f, &r.data).ok(),
-                            _ => None,
-                        })
-                        .is_some();
-                    let result = syscalls::WriteKeyResponse { success };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::DentOpen(r)) => {
-                    let value = self
-                        .dents
-                        .get(&r.dent_fd)
-                        .and_then(|dent| match dent {
-                            fs::DirEntry::Directory(dir) => {
-                                env.fs.list(dir).ok().and_then(|l| l.get(&r.name).cloned())
-                            }
-                            _ => None,
-                        })
-                        .and_then(|dent| {
-                            self.dents.insert(self.max_dent_id, dent);
-                            self.max_dent_id += 1;
-                            Some(self.max_dent_id - 1)
-                        });
-                    let result = value.map_or_else(
-                        || syscalls::DentResponse {
-                            success: false,
-                            dent_fd: 0,
-                        },
-                        |fd| syscalls::DentResponse {
-                            success: true,
-                            dent_fd: fd,
-                        },
-                    );
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::DentClose(r)) => {
-                    // TODO garbage collector should correctly handle opened direntries
-                    let success = self.dents.remove(&r.dent_fd).is_some();
-                    let result = syscalls::WriteKeyResponse { success };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FsCreateBlobByName(req)) => {
-                    let mut success = false;
-                    if let Ok(path) = fs::path::Path::parse(&req.path) {
-                        if let Some(base_dir) = path.parent() {
-                            if let Some(name) = path.file_name() {
-                                let label = req.label.map_or_else(
-                                    || fs::utils::get_current_label(),
-                                    |lpb| pblabel_to_buckle(&lpb),
-                                );
-                                if fs::utils::create_blob(
-                                    &env.fs,
-                                    base_dir,
-                                    name,
-                                    label,
-                                    req.blobname,
-                                )
-                                .is_ok()
-                                {
-                                    success = true;
-                                }
-                            }
-                        }
-                    }
-                    let result = syscalls::WriteKeyResponse { success };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::GetCurrentLabel(_)) => {
-                    let result = buckle_to_pblabel(&fs::utils::get_current_label());
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::TaintWithLabel(label)) => {
-                    let label = pblabel_to_buckle(&label);
-                    let result = buckle_to_pblabel(&fs::utils::taint_with_label(label));
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::Declassify(target)) => {
-                    let target = pbcomponent_to_component(&Some(target));
-                    let result = syscalls::DeclassifyResponse {
-                        label: fs::utils::declassify(target)
-                            .map(|l| buckle_to_pblabel(&l))
-                            .ok(),
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::Endorse(_en)) => {
-                    let with_priv = _en.with_priv.map_or_else(
-                        || fs::utils::my_privilege(),
-                        |p| pbcomponent_to_component(&Some(p)),
-                    );
-                    fs::utils::endorse_with(&with_priv);
-                    let result = syscalls::DeclassifyResponse {
-                        label: Some(buckle_to_pblabel(&fs::utils::get_current_label())),
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::CreateBlob(_cb)) => {
-                    if let Ok(newblob) = env
-                        .blobstore
-                        .create()
-                        .map_err(|e| SyscallProcessorError::Blob(e))
-                    {
-                        self.max_blob_id += 1;
-                        self.create_blobs.insert(self.max_blob_id, newblob);
+            if let Some(sc) = s.wait()? {
+                match self.do_syscall(sc, s) {
+                    Err(er) => return Err(er),
+                    Ok(Some(tr)) => return Ok(tr),
+                    _ => {}
 
-                        let result = syscalls::BlobResponse {
-                            success: true,
-                            fd: self.max_blob_id,
-                            data: Vec::new(),
-                        };
-                        s.send(result.encode_to_vec())?;
-                    } else {
-                        let result = syscalls::BlobResponse {
-                            success: false,
-                            fd: 0,
-                            data: Vec::new(),
-                        };
-                        s.send(result.encode_to_vec())?;
-                    }
                 }
-                Some(SC::WriteBlob(wb)) => {
-                    let result = if let Some(newblob) = self.create_blobs.get_mut(&wb.fd) {
-                        let data = wb.data.as_ref();
-                        if newblob.write_all(data).is_ok() {
-                            syscalls::BlobResponse {
-                                success: true,
-                                fd: wb.fd,
-                                data: Vec::new(),
-                            }
-                        } else {
-                            syscalls::BlobResponse {
-                                success: false,
-                                fd: wb.fd,
-                                data: Vec::from("Failed to write"),
-                            }
-                        }
-                    } else {
-                        syscalls::BlobResponse {
-                            success: false,
-                            fd: wb.fd,
-                            data: Vec::from("Blob doesn't exist"),
-                        }
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::FinalizeBlob(fb)) => {
-                    let result = if let Some(mut newblob) = self.create_blobs.remove(&fb.fd) {
-                        let blob = newblob
-                            .write_all(&fb.data)
-                            .and_then(|_| env.blobstore.save(newblob))
-                            .map_err(|e| SyscallProcessorError::Blob(e))?;
-                        syscalls::BlobResponse {
-                            success: true,
-                            fd: fb.fd,
-                            data: Vec::from(blob.name),
-                        }
-                    } else {
-                        syscalls::BlobResponse {
-                            success: false,
-                            fd: fb.fd,
-                            data: Vec::from("Blob doesn't exist"),
-                        }
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::OpenBlob(ob)) => {
-                    let result = if let Ok(file) = env.blobstore.open(ob.name) {
-                        self.max_blob_id += 1;
-                        self.blobs.insert(self.max_blob_id, file);
-                        syscalls::BlobResponse {
-                            success: true,
-                            fd: self.max_blob_id,
-                            data: Vec::new(),
-                        }
-                    } else {
-                        syscalls::BlobResponse {
-                            success: false,
-                            fd: 0,
-                            data: Vec::new(),
-                        }
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::ReadBlob(rb)) => {
-                    let result = if let Some(file) = self.blobs.get_mut(&rb.fd) {
-                        const MB: usize = 1024 * 1024;
-                        let mut buf = Vec::from([0; 2 * MB]);
-                        let limit = std::cmp::min(rb.length.unwrap_or(2 * MB as u64), 2 * MB as u64) as usize;
-                        if let Some(offset) = rb.offset {
-                            file.seek(std::io::SeekFrom::Start(offset))
-                                .map_err(|e| SyscallProcessorError::Blob(e))?;
-                        }
-                        if let Ok(len) = file.read(&mut buf[0..limit]) {
-                            buf.truncate(len);
-                            syscalls::BlobResponse {
-                                success: true,
-                                fd: rb.fd,
-                                data: buf,
-                            }
-                        } else {
-                            syscalls::BlobResponse {
-                                success: false,
-                                fd: rb.fd,
-                                data: Vec::new(),
-                            }
-                        }
-                    } else {
-                        syscalls::BlobResponse {
-                            success: false,
-                            fd: rb.fd,
-                            data: Vec::new(),
-                        }
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                Some(SC::CloseBlob(cb)) => {
-                    let result = if self.blobs.remove(&cb.fd).is_some() {
-                        syscalls::BlobResponse {
-                            success: true,
-                            fd: cb.fd,
-                            data: Vec::new(),
-                        }
-                    } else {
-                        syscalls::BlobResponse {
-                            success: false,
-                            fd: cb.fd,
-                            data: Vec::new(),
-                        }
-                    };
-                    s.send(result.encode_to_vec())?;
-                }
-                None => {
-                    // Should never happen, so just ignore??
-                }
+            } else {
+                // Should never reach here
             }
         }
     }

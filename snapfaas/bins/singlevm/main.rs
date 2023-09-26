@@ -136,15 +136,15 @@ fn main() {
         let t1 = Instant::now();
         debug!("request: {:?}", req);
         let processor =
-            syscall_server::SyscallProcessor::new(startlbl.clone(), mypriv.clone(), Buckle::top());
-        match processor.run(&mut env, req, &mut vm) {
+            syscall_server::SyscallProcessor::new(&mut env, startlbl.clone(), mypriv.clone());
+        match processor.run(req.into(), Default::default(), Default::default(), &mut vm) {
             Ok(rsp) => {
                 let t2 = Instant::now();
                 eprintln!(
                     "request returned in: {} us",
                     t2.duration_since(t1).as_micros()
                 );
-                println!("{}", rsp.payload.unwrap_or(String::from("")));
+                println!("{}", String::from_utf8_lossy(rsp.payload.unwrap_or(vec![]).as_ref()));
                 num_rsp += 1;
             }
             Err(e) => {

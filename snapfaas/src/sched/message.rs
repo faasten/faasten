@@ -42,6 +42,12 @@ pub fn write<T: Message>(stream: &mut TcpStream, msg: &T) -> Result<(), Error> {
     write_u8(stream, &buf)
 }
 
+/// Wrapper function that reads a message
+pub fn read<T: Message + Default>(stream: &mut TcpStream) -> Result<T, Error> {
+    let buf = _read_u8(stream, true)?;
+    T::decode(&buf[..]).map_err(Error::Rpc)
+}
+
 /// Wrapper function that reads a request
 pub fn read_request(stream: &mut TcpStream) -> Result<Request, Error> {
     let buf = _read_u8(stream, true)?;

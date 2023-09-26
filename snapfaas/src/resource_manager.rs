@@ -220,7 +220,7 @@ impl ResourceManager {
 impl Drop for ResourceManager {
     fn drop(&mut self) {
         for l in self.cache.values_mut() {
-            for vm in l.iter_mut() {
+            for vm in l.drain(..) {
                 drop(vm); // Just being explicit here, not strictly necessary
             }
         }

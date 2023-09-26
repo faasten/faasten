@@ -36,6 +36,9 @@ struct Cli {
 fn main() -> Result<(), std::io::Error> {
     env_logger::init();
 
+    let github_client_id = std::env::var("GITHUB_CLIENT_ID").expect("client id");
+    let github_client_secret = std::env::var("GITHUB_CLIENT_SECRET").expect("client secret");
+
     let cli = Cli::parse();
 
     let public_key_bytes = std::fs::read(cli.public_key)?;
@@ -52,6 +55,10 @@ fn main() -> Result<(), std::io::Error> {
         let app = app::App::new(
             PKey::private_key_from_pem(private_key_bytes.as_slice()).unwrap(),
             PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
+            app::GithubOAuthCredentials {
+                client_id: github_client_id,
+                client_secret: github_client_secret,
+            },
             blobstore,
             tikv,
             base_url,
@@ -69,6 +76,10 @@ fn main() -> Result<(), std::io::Error> {
         let app = app::App::new(
             PKey::private_key_from_pem(private_key_bytes.as_slice()).unwrap(),
             PKey::public_key_from_pem(public_key_bytes.as_slice()).unwrap(),
+            app::GithubOAuthCredentials {
+                client_id: github_client_id,
+                client_secret: github_client_secret,
+            },
             blobstore,
             &*dbenv,
             base_url,
