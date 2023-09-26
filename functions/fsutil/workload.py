@@ -215,15 +215,3 @@ def handle(syscall, payload=b'', blobs={}, **kwargs):
             ret['error'] = '[fsutil] unknown op'
     return ret
 
-#def trigger(triggers, syscall, op, path):
-#    ret = {'success': [], 'failure': []}
-#    for gate in triggers:
-#        payload = {
-#            'source-op': op,
-#            'object-path': path,
-#        }
-#        if syscall.invoke(gate, json.dumps(payload)):
-#            ret['success'].append(gate)
-#        else:
-#            ret['failure'].append(gate)
-#    return ret
