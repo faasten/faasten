@@ -105,7 +105,8 @@ impl<B: BackingStore> App<B> {
                     "Access-Control-Allow-Headers",
                     "Authorization, Content-type,X-Faasten-Label"
                 )
-                .with_additional_header("Access-Control-Allow-Methods", "*");
+                .with_additional_header("Access-Control-Allow-Methods", "*")
+                .with_additional_header("Access-Control-Max-Age", "86400");
         }
         rouille::router!(request,
             (GET) (/login/cas) => {
