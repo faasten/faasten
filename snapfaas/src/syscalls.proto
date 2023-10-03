@@ -60,6 +60,7 @@ message DentInvokeResult {
   optional uint64 fd = 2;
   optional bytes data = 3;
   map <string, bytes> headers = 4;
+  uint32 status = 5;
 }
 
 message DentOpenResult {

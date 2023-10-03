@@ -487,7 +487,7 @@ impl<'a, B: BackingStore + 'a> SyscallProcessor<'a, B> {
     }
 
     fn dent_invoke(&mut self, fd: u64, payload: Vec<u8>, sync: bool, toblob: bool, parameters: HashMap<String, String>) -> syscalls::DentInvokeResult {
-        let (blobfd, data, headers) = self.dents.get(&fd).cloned().and_then(|entry| match entry {
+        let (blobfd, data, headers, status) = self.dents.get(&fd).cloned().and_then(|entry| match entry {
             DirEntry::Gate(gate) => {
                 let gate = gate.to_invokable(&self.env.fs);
                 if !crate::fs::utils::get_privilege().implies(&gate.invoker_integrity_clearance) {
@@ -516,12 +516,12 @@ impl<'a, B: BackingStore + 'a> SyscallProcessor<'a, B> {
                         let blobfd = self.max_blob_id;
                         self.max_blob_id += 1;
                         self.blobs.insert(blobfd, blob);
-                        Some((Some(blobfd), None, None))
+                        Some((Some(blobfd), None, None, 200))
                     } else {
-                        Some((None, Some(res.payload().into()), None))
+                        Some((None, Some(res.payload().into()), None, 200))
                     }
                 } else {
-                    Some((None, Some(vec![]), None))
+                    Some((None, Some(vec![]), None, 0))
                 }
             },
             DirEntry::Service(service) => {
@@ -535,6 +535,7 @@ impl<'a, B: BackingStore + 'a> SyscallProcessor<'a, B> {
                 match sendres {
                     Ok(mut response) => {
                         let headers: HashMap<String, Vec<u8>> = response.headers().iter().map(|(a,b)| (a.to_string(), Vec::from(b.as_bytes()))).collect();
+                        let status = response.status().as_u16();
                         if toblob {
                             let mut newblob = self.env.blobstore.create().expect("Create blob");
                             response.copy_to(&mut newblob).expect("Copy to blob");
@@ -542,9 +543,9 @@ impl<'a, B: BackingStore + 'a> SyscallProcessor<'a, B> {
                             let blobfd = self.max_blob_id;
                             self.max_blob_id += 1;
                             self.blobs.insert(blobfd, blob);
-                            Some((Some(blobfd), None, Some(headers)))
+                            Some((Some(blobfd), None, Some(headers), status))
                         } else {
-                            Some((None, response.bytes().map(|bs| bs.to_vec()).ok(), Some(headers)))
+                            Some((None, response.bytes().map(|bs| bs.to_vec()).ok(), Some(headers), status))
                         }
                     },
                     Err(_err) => {
@@ -553,9 +554,9 @@ impl<'a, B: BackingStore + 'a> SyscallProcessor<'a, B> {
                 }
             }
             _ => None
-        }).unwrap_or((None, None, None));
+        }).unwrap_or((None, None, None, 0));
 
-        syscalls::DentInvokeResult { success: blobfd.is_some() || data.is_some(), fd: blobfd, data, headers: headers.unwrap_or(Default::default()) }
+        syscalls::DentInvokeResult { success: blobfd.is_some() || data.is_some(), fd: blobfd, data, headers: headers.unwrap_or(Default::default()), status: status as u32 }
     }
 
     fn dent_get_blob(&mut self, fd: u64) -> syscalls::BlobResult {
