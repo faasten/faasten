@@ -114,21 +114,21 @@ impl Vm {
             args.extend_from_slice(&["--appfs", f]);
         }
         if let Some(load_dir) = function_config.load_dir.as_ref() {
-            args.extend_from_slice(&["--load_from", load_dir]);
+            args.extend_from_slice(&["--load-from", load_dir]);
             if function_config.copy_base {
-                args.push("--copy_base");
+                args.push("--copy-base");
             }
             if function_config.copy_diff {
-                args.push("--copy_diff");
+                args.push("--copy-diff");
             }
             if function_config.load_ws {
-                args.push("--load_ws");
+                args.push("--load-ws");
             }
         }
         if let Some(dump_dir) = function_config.dump_dir.as_ref() {
-            args.extend_from_slice(&["--dump_to", dump_dir]);
+            args.extend_from_slice(&["--dump-to", dump_dir]);
             if function_config.dump_ws {
-                args.push("--dump_ws");
+                args.push("--dump-ws");
             }
         }
         if let Some(cmdline) = function_config.cmdline.as_ref() {
@@ -146,23 +146,23 @@ impl Vm {
         //    (cid - 100) & 0xff
         //);
         if function_config.mac.is_some() {
-            args.extend_from_slice(&["--tap_name", function_config.tap.as_ref().unwrap()]);
+            args.extend_from_slice(&["--tap-name", function_config.tap.as_ref().unwrap()]);
             args.extend_from_slice(&["--mac", function_config.mac.as_ref().unwrap()]);
         }
 
         // odirect
         if let Some(odirect) = odirect {
             if odirect.base {
-                args.push("--odirect_base");
+                args.push("--odirect-base");
             }
             if !odirect.diff {
-                args.push("--no_odirect_diff");
+                args.push("--no-odirect-diff");
             }
             if !odirect.rootfs {
-                args.push("--no_odirect_root");
+                args.push("--no-odirect-root");
             }
             if !odirect.appfs {
-                args.push("--no_odirect_app");
+                args.push("--no-odirect-app");
             }
         }
 
