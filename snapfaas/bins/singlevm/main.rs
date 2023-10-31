@@ -44,29 +44,29 @@ fn main() {
 
     // Create a FunctionConfig value based on cmdline inputs
     let vm_app_config = FunctionConfig {
-        mac: cli.vmconfig.mac,
-        tap: cli.vmconfig.tap,
+        mac: cli.vmconfig.network.mac,
+        tap: cli.vmconfig.network.tap,
         runtimefs: cli.vmconfig.rootfs,
         appfs: cli.vmconfig.appfs,
         vcpus: cli.vmconfig.vcpu as u64,
         memory: cli.vmconfig.memory as usize,
         concurrency_limit: 1,
-        load_dir: cli.vmconfig.load_dir,
-        dump_dir: cli.vmconfig.dump_dir,
-        copy_base: cli.vmconfig.copy_base_memory,
-        copy_diff: cli.vmconfig.copy_diff_memory,
+        load_dir: cli.vmconfig.load.load_dir,
+        copy_base: cli.vmconfig.load.copy_base_memory,
+        copy_diff: cli.vmconfig.load.copy_diff_memory,
+        load_ws: cli.vmconfig.load.load_ws,
+        dump_dir: cli.vmconfig.dump.dump_dir,
+        dump_ws: cli.vmconfig.dump.dump_ws,
         kernel: cli.vmconfig.kernel,
         cmdline: cli.vmconfig.kernel_args,
-        dump_ws: cli.vmconfig.dump_ws,
-        load_ws: cli.vmconfig.load_ws,
     };
 
     let id = cli.vmconfig.id as usize;
     let odirect = snapfaas::vm::OdirectOption {
-        base: cli.vmconfig.odirect_base,
-        diff: cli.vmconfig.no_odirect_diff,
-        rootfs: cli.vmconfig.no_odirect_root,
-        appfs: cli.vmconfig.no_odirect_app,
+        base: cli.vmconfig.load.odirect_base,
+        diff: !cli.vmconfig.load.no_odirect_diff,
+        rootfs: !cli.vmconfig.no_odirect_root,
+        appfs: !cli.vmconfig.no_odirect_app,
     };
 
     // Launch a vm based on the FunctionConfig value
@@ -131,7 +131,7 @@ fn main() {
     };
 
     // Synchronously send the request to vm and wait for a response
-    let dump_working_set = true && cli.vmconfig.dump_ws;
+    let dump_working_set = true && cli.vmconfig.dump.dump_ws;
     for req in requests {
         let t1 = Instant::now();
         debug!("request: {:?}", req);
@@ -144,7 +144,11 @@ fn main() {
                     "request returned in: {} us",
                     t2.duration_since(t1).as_micros()
                 );
-                println!("{}", String::from_utf8_lossy(rsp.payload.unwrap_or(vec![]).as_ref()));
+                println!("status code: {}", rsp.payload.as_ref().unwrap().status_code);
+                println!(
+                    "body: {}",
+                    String::from_utf8_lossy(rsp.payload.unwrap().body())
+                );
                 num_rsp += 1;
             }
             Err(e) => {

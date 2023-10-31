@@ -28,47 +28,63 @@ pub struct VmConfig {
     /// CID of the microVM's vsock
     #[arg(long, value_name = "CID", default_value_t = 100)]
     pub vsock_cid: u32,
-    /// MAC address of the microVM's network device
-    #[arg(long, value_name = "MAC", group = "network", requires = "tap")]
-    pub mac: Option<String>,
-    /// Name of the tap device that backs the microVM's network device
-    #[arg(long, value_name = "NAME", group = "network")]
-    pub tap: Option<String>,
-    /// Directory to load the snapshot from
-    #[arg(long, value_name = "PATH", group = "load_snapshot")]
-    pub load_dir: Option<String>,
-    /// If present, load the working set
-    #[arg(long, group = "load_snapshot", requires = "load_dir")]
-    pub load_ws: bool,
-    /// If present, restore the base memory snapshot by copying
-    #[arg(long, group = "load_snapshot", requires = "load_dir")]
-    pub copy_base_memory: bool,
-    /// If present, restore the diff memory snapshot by copying
-    #[arg(long, group = "load_snapshot", requires = "load_dir")]
-    pub copy_diff_memory: bool,
-    /// Directory to create the snapshot in
-    #[arg(
-        long,
-        value_name = "PATH",
-        group = "dump_snapshot",
-        conflicts_with = "load_snapshot"
-    )]
-    pub dump_dir: Option<String>,
-    /// If present, dump the working set
-    #[arg(long, group = "dump_snapshot", requires = "dump_dir")]
-    pub dump_ws: bool,
-    /// If present, open base memory snapshot with O_DIRECT
-    #[arg(long, group = "odirect", requires = "load_snapshot")]
-    pub odirect_base: bool,
-    /// If present, don't open diff memory snapshot with O_DIRECT
-    #[arg(long, group = "odirect", requires = "load_snapshot")]
-    pub no_odirect_diff: bool,
+    #[command(flatten)]
+    pub network: Network,
+    #[command(flatten)]
+    pub load: Load,
+    #[command(flatten)]
+    pub dump: Dump,
     /// If present, don't open rootfs with O_DIRECT (required when using tmpfs)
-    #[arg(long, group = "odirect")]
+    #[arg(long)]
     pub no_odirect_root: bool,
     /// If present, don't open appfs with O_DIRECT (required when using tmpfs)
-    #[arg(long, group = "odirect")]
+    #[arg(long)]
     pub no_odirect_app: bool,
+}
+
+#[derive(Args, Debug)]
+#[group(required = false, multiple = true)]
+pub struct Network {
+    /// MAC address of the microVM's network device
+    #[arg(long, value_name = "MAC", requires = "tap")]
+    pub mac: Option<String>,
+    /// Name of the tap device that backs the microVM's network device
+    #[arg(long, value_name = "NAME")]
+    pub tap: Option<String>,
+}
+
+#[derive(Args, Debug)]
+#[group(required = false, multiple = true)]
+pub struct Load {
+    /// Directory to load the snapshot from
+    #[arg(long, value_name = "PATH")]
+    pub load_dir: Option<String>,
+    /// If present, load the working set
+    #[arg(long, requires = "load_dir")]
+    pub load_ws: bool,
+    /// If present, restore the base memory snapshot by copying
+    #[arg(long, requires = "load_dir")]
+    pub copy_base_memory: bool,
+    /// If present, restore the diff memory snapshot by copying
+    #[arg(long, requires = "load_dir")]
+    pub copy_diff_memory: bool,
+    /// If present, open base memory snapshot with O_DIRECT
+    #[arg(long, requires = "load_dir")]
+    pub odirect_base: bool,
+    /// If present, don't open diff memory snapshot with O_DIRECT
+    #[arg(long, requires = "load_dir")]
+    pub no_odirect_diff: bool,
+}
+
+#[derive(Args, Debug)]
+#[group(required = false, multiple = true, conflicts_with = "Load")]
+pub struct Dump {
+    /// Directory to create the snapshot in
+    #[arg(long, value_name = "PATH")]
+    pub dump_dir: Option<String>,
+    /// If present, dump the working set
+    #[arg(long, requires = "dump_dir")]
+    pub dump_ws: bool,
 }
 
 #[derive(Args, Debug)]
