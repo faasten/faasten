@@ -40,23 +40,23 @@ fn main() {
 
     // optional arguments:
     let appfs = args.appfs.map(PathBuf::from);
-    let dump_dir = args.dump_dir.map(PathBuf::from);
-    let load_dir = args.load_dir.map_or(Vec::new(), |x| {
+    let dump_dir = args.dump.dump_dir.map(PathBuf::from);
+    let load_dir = args.load.load_dir.map_or(Vec::new(), |x| {
         x.split(',')
             .collect::<Vec<&str>>()
             .iter()
             .map(PathBuf::from)
             .collect()
     });
-    let copy_base = args.copy_base_memory;
-    let copy_diff = args.copy_diff_memory;
-    let odirect_base = args.odirect_base;
-    let odirect_diff = !args.no_odirect_diff;
+    let copy_base = args.load.copy_base_memory;
+    let copy_diff = args.load.copy_diff_memory;
+    let odirect_base = args.load.odirect_base;
+    let odirect_diff = !args.load.no_odirect_diff;
     let odirect_rootfs = !args.no_odirect_root;
     let odirect_appfs = !args.no_odirect_app;
-    let load_ws = args.load_ws;
-    let mac = args.mac;
-    let tap_name = args.tap;
+    let load_ws = args.load.load_ws;
+    let mac = args.network.mac;
+    let tap_name = args.network.tap;
     let cid = args.vsock_cid;
 
     // Make sure kernel, rootfs, appfs, load_dir, dump_dir exist
@@ -222,7 +222,7 @@ fn main() {
     }
 
     // listen for dump working set
-    if args.dump_ws {
+    if args.dump.dump_ws {
         let listener_port = format!("dump_ws-{}.sock", instance_id);
         let unix_sock_listener =
             UnixListener::bind(listener_port).expect("Failed to bind to unix listener");
