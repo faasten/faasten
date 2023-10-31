@@ -5,8 +5,7 @@ import json
 import socket
 import sys
 import traceback
-import syscalls
-from syscalls import Syscall
+from syscalls import Syscall, Response, ResponseDict
 
 # vsock to communicate with the host
 VSOCKPORT = 1234
@@ -21,12 +20,7 @@ while True:
     try:
         request = sc.request()
         response = app.handle(sc, payload=request.payload, blobs=request.blobs, headers=request.headers)
-        if isinstance(response, dict):
-            response = json.dumps(response)
-
-        if isinstance(response, str):
-            response = response.encode('utf-8')
-
+        assert(isinstance(response, Response))
         sc.respond(response)
     except:
         ty, val, tb = sys.exc_info()
@@ -37,4 +31,4 @@ while True:
                 'traceback': traceback.format_tb(tb),
             },
         }
-        sc.respond(json.dumps(response).encode('utf-8'))
+        sc.respond(ResponseDict(response))

@@ -3,6 +3,8 @@ import json
 import base64
 from contextlib import ExitStack
 
+from syscalls import ResponseDict
+
 def handle(syscall, payload=b'', blobs={}, **kwargs):
     request = json.loads(payload)
     args = request['args']
@@ -221,7 +223,7 @@ def handle(syscall, payload=b'', blobs={}, **kwargs):
         case _:
             ret['success'] = False
             ret['error'] = '[fsutil] unknown op'
-    return ret
+    return ResponseDict(ret)
 
 #def trigger(triggers, syscall, op, path):
 #    ret = {'success': [], 'failure': []}
