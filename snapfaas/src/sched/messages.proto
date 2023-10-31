@@ -104,6 +104,6 @@ enum ReturnCode {
 
 message TaskReturn {
     ReturnCode code = 1;
-    optional bytes payload = 2;
+    syscalls.Response payload = 2;
     syscalls.Buckle label = 3;
 }
