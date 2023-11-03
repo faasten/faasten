@@ -135,6 +135,10 @@ pub fn main() -> std::io::Result<()> {
             std::sync::Arc::new(rt),
         )))
     } else if let Some(lmdb) = cli.store.lmdb.as_ref() {
+        if !std::path::Path::new(lmdb).exists() {
+            eprintln!("LMDB path does not exist: {}", lmdb);
+            std::process::exit(1);
+        }
         let dbenv = std::boxed::Box::leak(Box::new(snapfaas::fs::lmdb::get_dbenv(lmdb)));
         FS::new(Box::new(&*dbenv))
     } else {
