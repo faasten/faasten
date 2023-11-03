@@ -6,20 +6,20 @@ from cryptography.hazmat.primitives import serialization
 import jwt
 import datetime
 
-PEM_FILE=['home', 'faasten,faasten', 'signkey']
-def handle(syscall, payload=b'', blobs={}, env={}, **kwargs):
+PEM_FILE=['home', 'faasten,faasten', 'private_key']
+def handle(syscall, payload=b'', blobs={}, invoker=[], **kwargs):
     request = json.loads(payload)
     sub = request['sub']
-    idp = 'princeton.edu' # TODO read this from env
+    # the invoker should be of length 1 and the tokens list should also be of length 1
+    idp = invoker[0].tokens[0]
     # read private key PEM file
-    with syscall.root().open_at(PEM_FILE) as entry:
-        with entry.get() as f:
-            data = f.read()
-            private_key = serialization.load_pem_private_key(
-                data,
-                password=None,  # replace with your password if the private key is encrypted
-                backend=default_backend()
-            )
+    with syscall.root().open_at(PEM_FILE) as f:
+        data = f.read()
+        private_key = serialization.load_pem_private_key(
+            data,
+            password=None,  # replace with your password if the private key is encrypted
+            backend=default_backend()
+        )
     claims = {
         "sub": f"{idp}/{sub}",          # subject (typically a user id)
         "iat": datetime.datetime.utcnow(),             # issued at

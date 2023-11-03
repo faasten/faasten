@@ -13,7 +13,7 @@ use log::{debug, error};
 use crate::configs::FunctionConfig;
 use crate::vm::Vm;
 //use crate::metrics::{self, WorkerMetrics};
-use crate::fs::{Function, FS, BackingStore, self};
+use crate::fs::{self, BackingStore, Function, FS};
 use crate::resource_manager;
 use crate::sched::{
     self,
@@ -156,7 +156,16 @@ impl<B: BackingStore> Worker<B> {
                                         continue;
                                     }
                                     // TODO consider using meaningful clearance
-                                    let blobs = invoke.blobs.iter().map(|(k, b)| (k.clone(), (self.env.blobstore.open(b.clone()).unwrap()))).collect();
+                                    let blobs = invoke
+                                        .blobs
+                                        .iter()
+                                        .map(|(k, b)| {
+                                            (
+                                                k.clone(),
+                                                (self.env.blobstore.open(b.clone()).unwrap()),
+                                            )
+                                        })
+                                        .collect();
                                     let processor = SyscallProcessor::new(
                                         &mut self.env,
                                         label.clone(),
@@ -166,101 +175,7 @@ impl<B: BackingStore> Worker<B> {
                                         invoke.payload.clone(),
                                         blobs,
                                         invoke.headers.clone(),
-                                        &mut vm,
-                                    ) {
-                                        ret = result;
-                                        self.localrm.lock().unwrap().release(vm);
-                                        break;
-                                    }
-                                    if cnt == 5 {
-                                        if vm.handle.is_none() {
-                                            ret.code = ReturnCode::LaunchFailed as i32;
-                                        }
-                                        self.localrm.lock().unwrap().delete(vm);
-                                        break;
-                                    }
-                                }
-                                if let Err(e) = sched::rpc::finish(
-                                    &mut self.env.sched_conn.as_mut().unwrap(),
-                                    task_id,
-                                    ret,
-                                ) {
-                                    error!(
-                                        "[Worker {:?}] Failed scheduler finish RPC: {:?}",
-                                        self.thread_id, e
-                                    );
-                                }
-                            } else {
-                                let ret = TaskReturn {
-                                    code: ReturnCode::ResourceExhausted as i32,
-                                    payload: None,
-                                    label: Some(fs::utils::get_current_label().into()),
-                                };
-                                if let Err(e) = sched::rpc::finish(
-                                    &mut self.env.sched_conn.as_mut().unwrap(),
-                                    task_id,
-                                    ret,
-                                ) {
-                                    error!(
-                                        "[Worker {:?}] Failed scheduler finish RPC: {:?}",
-                                        self.thread_id, e
-                                    );
-                                };
-                            }
-                        }
-                        Some(Kind::ProcessTaskInsecure(r)) => {
-                            debug!("{:?}", r);
-                            if r.unlabeled_invoke.is_none() {
-                                error!("[Worker {:?}] labeled_invoke is None", self.thread_id);
-                                continue;
-                            }
-                            let task_id = r.task_id;
-                            let invoke = r.unlabeled_invoke.unwrap();
-                            if let Some(mut vm) =
-                                self.try_allocate_no_label_check(&invoke.function.unwrap().into())
-                            {
-                                let mut cnt = 0;
-                                let mut ret = TaskReturn {
-                                    code: ReturnCode::ProcessRequestFailed as i32,
-                                    payload: None,
-                                    label: Some(fs::utils::get_current_label().into()),
-                                };
-                                loop {
-                                    cnt += 1;
-                                    let mut config: FunctionConfig = vm.function.clone().into();
-                                    config.kernel = self
-                                        .env
-                                        .blobstore
-                                        .local_path_string(&vm.function.kernel)
-                                        .unwrap_or_default();
-                                    config.appfs = self
-                                        .env
-                                        .blobstore
-                                        .local_path_string(&vm.function.app_image);
-                                    config.runtimefs = self
-                                        .env
-                                        .blobstore
-                                        .local_path_string(&vm.function.runtime_image)
-                                        .unwrap_or_default();
-                                    if let Err(e) = vm.launch(
-                                        self.vm_listener.try_clone().unwrap(),
-                                        self.cid,
-                                        false,
-                                        config,
-                                        None,
-                                    ) {
-                                        error!(
-                                            "[Worker {:?}] Failed VM launch: {:?}",
-                                            self.thread_id, e
-                                        );
-                                        continue;
-                                    }
-                                    let blobs = invoke.blobs.iter().map(|(k, b)| (k.clone(), (self.env.blobstore.open(b.clone()).unwrap()))).collect();
-                                    let processor = SyscallProcessor::new_insecure(&mut self.env);
-                                    if let Ok(result) = processor.run(
-                                        invoke.payload.clone(),
-                                        blobs,
-                                        invoke.headers.clone(),
+                                        invoke.invoker.clone().unwrap().into(),
                                         &mut vm,
                                     ) {
                                         ret = result;
@@ -327,12 +242,5 @@ impl<B: BackingStore> Worker<B> {
             }
         }
         localrm.new_vm(f.clone())
-    }
-
-    fn try_allocate_no_label_check(&self, f: &Function) -> Option<Vm> {
-        if let Some(vm) = self.localrm.lock().unwrap().get_cached_vm(f) {
-            return Some(vm);
-        }
-        self.localrm.lock().unwrap().new_vm(f.clone())
     }
 }

@@ -36,6 +36,7 @@ message LabeledInvoke {
     map <string, string> blobs            = 5;
     map <string, string> headers          = 6;
     bool                 sync             = 7;
+    syscalls.Component   invoker          = 8;
 }
 
 message UpdateResource {

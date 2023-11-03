@@ -19,7 +19,7 @@ sc = Syscall(sock)
 while True:
     try:
         request = sc.request()
-        response = app.handle(sc, payload=request.payload, blobs=request.blobs, headers=request.headers)
+        response = app.handle(sc, payload=request.payload, blobs=request.blobs, headers=request.headers, invoker=request.invoker)
         assert(isinstance(response, Response))
         sc.respond(response)
     except:

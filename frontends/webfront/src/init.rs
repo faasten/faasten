@@ -170,6 +170,7 @@ fn prepare_labeled_invoke<S: BackingStore>(
         headers,
         blobs,
         sync: true,
+        invoker: Some(fs::utils::get_privilege().into()),
     })
 }
 
