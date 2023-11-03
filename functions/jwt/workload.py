@@ -26,4 +26,12 @@ def handle(syscall, payload=b'', blobs={}, invoker=[], **kwargs):
         "exp": datetime.datetime.utcnow() + datetime.timedelta(days=1),  # expiration time
     }
     encoded_jwt = jwt.encode(claims, private_key, algorithm='ES256')
+
+    # TODO: declassify to remove "faasten" in secrecy
+    # syscall.declassify(f"{idp}")
+
+    # TODO:register fsutil for first timers
+    # i.e. copy the public fsutil gate over to ["home", f"{idp}/{sub},{idp}/{sub}", "fsutil"]
+    # Note that this gate should run with the privilege {idp}&faasten
+
     return ResponseStr(encoded_jwt)
