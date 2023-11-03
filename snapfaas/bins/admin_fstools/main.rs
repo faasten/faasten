@@ -7,13 +7,16 @@ use clap::{Parser, Subcommand};
 use jwt::{PKeyWithDigest, SignWithKey};
 use labeled::buckle::{Buckle, Component};
 use openssl::pkey::PKey;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use snapfaas::{
     blobstore, cli,
     fs::{BackingStore, FS},
 };
-use std::{io::{stdout, Write}, time::SystemTime};
+use std::{
+    io::{stdout, Write},
+    time::SystemTime,
+};
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -76,6 +79,24 @@ struct Jwt {
     secret_key: std::ffi::OsString,
 }
 
+#[derive(Parser, Debug)]
+struct GenKeypair {
+    /// Faasten path to store the private key
+    #[arg(
+        long,
+        value_name = "FAASTEN_PATH",
+        default_value = "home:<faasten,faasten>:private_key"
+    )]
+    private_key: String,
+    /// Faasten path to store the private key
+    #[arg(
+        long,
+        value_name = "FAASTEN_PATH",
+        default_value = "home:<T,faasten>:public_key"
+    )]
+    public_key: String,
+}
+
 #[derive(Subcommand, Debug)]
 enum Action {
     /// Bootstrap Faasten FS from the configuration file
@@ -97,7 +118,9 @@ enum Action {
     /// Create a directory
     Mkdir(Mkdir),
     /// Generate JWT
-    Jwt(Jwt)
+    Jwt(Jwt),
+    /// Generate a key pair and store them in Faasten storage
+    GenKeypair(GenKeypair),
 }
 
 pub fn main() -> std::io::Result<()> {
@@ -106,8 +129,7 @@ pub fn main() -> std::io::Result<()> {
 
     let fs: FS<Box<dyn BackingStore>> = if let Some(tikv_pds) = cli.store.tikv {
         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-        let client =
-            rt.block_on(async { tikv_client::RawClient::new(tikv_pds).await.unwrap() });
+        let client = rt.block_on(async { tikv_client::RawClient::new(tikv_pds).await.unwrap() });
         FS::new(Box::new(snapfaas::fs::tikv::TikvClient::new(
             client,
             std::sync::Arc::new(rt),
@@ -139,7 +161,7 @@ pub fn main() -> std::io::Result<()> {
                     for (name, dent) in entries {
                         println!("{}\t{:?}", name, dent);
                     }
-                },
+                }
                 Err(e) => log::warn!("Failed list. {:?}", e),
             }
         }
@@ -163,7 +185,7 @@ pub fn main() -> std::io::Result<()> {
             match fs.read_file(path) {
                 Ok(data) => {
                     stdout().write(&data).unwrap();
-                },
+                }
                 Err(e) => log::warn!("Failed read. {:?}", e),
             }
         }
@@ -187,7 +209,7 @@ pub fn main() -> std::io::Result<()> {
             println!(
                 "{}",
                 fs.link(dest.parent().unwrap(), dest.file_name().unwrap(), new_dir)
-                .is_ok()
+                    .is_ok()
             );
         }
         Action::CreateBlob(cb) => {
@@ -213,11 +235,73 @@ pub fn main() -> std::io::Result<()> {
                 .is_ok()
             );
         }
+        Action::GenKeypair(gkp) => {
+            use openssl::ec::{EcGroup, EcKey};
+            use openssl::error::ErrorStack;
+            use openssl::nid::Nid;
+            struct KeyPairPem {
+                private_key_pem: Vec<u8>,
+                public_key_pem: Vec<u8>,
+            }
+            fn generate_ec_keys() -> Result<KeyPairPem, ErrorStack> {
+                // Create a new EC group object for the prime256v1 curve
+                let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+
+                // Generate the EC key pair
+                let ec_key = EcKey::generate(&group)?;
+
+                // Serialize the private key to PEM
+                let private_key_pem = ec_key.private_key_to_pem()?;
+
+                // We need to explicitly create a public key here
+                let public_key = ec_key.public_key();
+                let ec_key_with_pub = EcKey::from_public_key(&group, public_key)?;
+                let public_key_pem = ec_key_with_pub.public_key_to_pem()?;
+                Ok(KeyPairPem {
+                    private_key_pem,
+                    public_key_pem,
+                })
+            }
+            let KeyPairPem {
+                private_key_pem,
+                public_key_pem,
+            } = generate_ec_keys()?;
+
+            snapfaas::fs::utils::set_my_privilge(snapfaas::fs::bootstrap::FAASTEN_PRIV.clone());
+            let private_dest = snapfaas::fs::path::Path::parse(&gkp.private_key).unwrap();
+            let private_label = labeled::buckle::Buckle::parse("faasten,faasten").unwrap();
+            println!(
+                "{}",
+                snapfaas::fs::utils::create_or_update_file(
+                    &fs,
+                    private_dest.parent().unwrap(),
+                    private_dest.file_name().unwrap(),
+                    private_label,
+                    private_key_pem,
+                )
+                .is_ok()
+            );
+            let public_dest = snapfaas::fs::path::Path::parse(&gkp.public_key).unwrap();
+            let public_label = labeled::buckle::Buckle::parse("T,faasten").unwrap();
+            println!(
+                "{}",
+                snapfaas::fs::utils::create_or_update_file(
+                    &fs,
+                    public_dest.parent().unwrap(),
+                    public_dest.file_name().unwrap(),
+                    public_label,
+                    public_key_pem,
+                )
+                .is_ok()
+            );
+        }
         Action::Jwt(jwt) => {
             let private_key_bytes = std::fs::read(jwt.secret_key)?;
             let pkey = PKey::private_key_from_pem(private_key_bytes.as_slice())?;
 
-            let component =  Buckle::parse(format!("{},T", jwt.component).as_str()).unwrap().secrecy;
+            let component = Buckle::parse(format!("{},T", jwt.component).as_str())
+                .unwrap()
+                .secrecy;
             let now = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
@@ -243,7 +327,7 @@ pub fn main() -> std::io::Result<()> {
             };
             let token = claims.sign_with_key(&key).unwrap();
             println!("{}", token);
-        },
+        }
     }
     Ok(())
 }
