@@ -117,32 +117,6 @@ impl RpcServer {
                         }
                     }
                 }
-                Some(Kind::UnlabeledInvoke(r)) => {
-                    debug!("RPC UNLABELED INVOKE received {:?}", r);
-                    let uuid = uuid::Uuid::new_v4();
-                    match queue_tx.try_send(Task::InvokeInsecure(uuid, r)) {
-                        Err(crossbeam::channel::TrySendError::Full(_)) => {
-                            warn!("Dropping Invocation from {:?}", stream.peer_addr());
-                            let ret = message::TaskReturn {
-                                code: message::ReturnCode::QueueFull as i32,
-                                payload: None,
-                                label: Some(fs::utils::get_current_label().into()),
-                            };
-                            let _ = message::write(&mut stream, &ret);
-                        }
-                        Err(crossbeam::channel::TrySendError::Disconnected(_)) => {
-                            panic!("Broken request queue")
-                        }
-                        Ok(()) => (),
-                    }
-                }
-                //Some(Kind::TerminateAll(_)) => {
-                //    debug!("RPC TERMINATEALL received");
-                //    let _ = manager.lock().unwrap().remove_all();
-                //    let res = Response { kind: None };
-                //    let _ = message::write(&mut stream, &res);
-                //    break;
-                //}
                 Some(Kind::UpdateResource(r)) => {
                     debug!("RPC UPDATE received");
                     let manager = &mut manager.lock().unwrap();
