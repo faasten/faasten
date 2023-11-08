@@ -46,7 +46,15 @@ pub fn init<S: BackingStore>(
 fn prepare_payload(
     request: &Request,
     blobstore: Arc<Mutex<Blobstore>>,
-) -> Result<(Vec<u8>, HashMap<String, blobstore::Blob>, Option<buckle::Buckle>, HashMap<String, String>), Response> {
+) -> Result<
+    (
+        Vec<u8>,
+        HashMap<String, blobstore::Blob>,
+        Option<buckle::Buckle>,
+        HashMap<String, String>,
+    ),
+    Response,
+> {
     // Parse input into a 3-tuple. support two content types:
     // * multipart/form-data
     // * application/json (passthrough)
@@ -61,12 +69,16 @@ fn prepare_payload(
         .map_err(|_| {
             Response::json(&serde_json::json!({"error": "Unknown MIME"})).with_status_code(415)
         })?;
-        let headers: HashMap<String, String> = request.headers().filter_map(|(k,v)|
-            if k.eq_ignore_ascii_case("authorization") {
-                None
-            } else {
-                Some((k.to_ascii_lowercase(), v.to_string()))
-            }).collect();
+        let headers: HashMap<String, String> = request
+            .headers()
+            .filter_map(|(k, v)| {
+                if k.eq_ignore_ascii_case("authorization") {
+                    None
+                } else {
+                    Some((k.to_ascii_lowercase(), v.to_string()))
+                }
+            })
+            .collect();
         // get rid of the `boundary` param in multipart/form-data
         let essence_type = mime::Mime::from_str(content_type.essence_str()).unwrap();
         if essence_type == mime::MULTIPART_FORM_DATA {
@@ -74,11 +86,13 @@ fn prepare_payload(
                 blob: Vec<BufferedFile>, payload: String, label: Option<String>
             })
             .map_err(|e| {
-                Response::json(&serde_json::json!({"error": format!("{:?}", e)})).with_status_code(400)
+                Response::json(&serde_json::json!({"error": format!("{:?}", e)}))
+                    .with_status_code(400)
             })?;
             let label = if let Some(label) = &parsed_form.label {
                 Some(buckle::Buckle::parse(label).map_err(|e| {
-                    Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(400)
+                    Response::json(&serde_json::json!({"error": e.to_string()}))
+                        .with_status_code(400)
                 })?)
             } else {
                 None
@@ -86,7 +100,9 @@ fn prepare_payload(
             (parsed_form.blob, parsed_form.payload, label, headers)
         } else if essence_type == mime::APPLICATION_JSON {
             let mut payload = String::new();
-            let label = request.header("x-faasten-label").and_then(|b| Buckle::parse(b).ok());
+            let label = request
+                .header("x-faasten-label")
+                .and_then(|b| Buckle::parse(b).ok());
             let _ = request
                 .data()
                 .unwrap()
@@ -119,15 +135,10 @@ fn prepare_payload(
         newblob.write_all(f.data.as_ref()).map_err(|e| {
             Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
         })?;
-        let blob = blobstore
-            .lock()
-            .unwrap()
-            .save(newblob)
-            .map_err(|e| {
-                Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
-            })?;
+        let blob = blobstore.lock().unwrap().save(newblob).map_err(|e| {
+            Response::json(&serde_json::json!({"error": e.to_string()})).with_status_code(500)
+        })?;
         blobs.insert(f.filename.clone().unwrap_or(format!("blob{}", i)), blob);
-
     }
     Ok((payload.to_string().into(), blobs, label, headers))
 }
@@ -142,9 +153,11 @@ fn prepare_labeled_invoke<S: BackingStore>(
     let path = fs::path::Path::parse(&gate_path).map_err(|_| {
         Response::json(&serde_json::json!({"error": "Invalid path."})).with_status_code(400)
     })?;
-    let (f, gate_privilege) = fs::utils::resolve_gate_with_clearance_check(fs, path).map_err(|e| {
-        Response::json(&serde_json::json!({ "error": format!("{:?}", e) })).with_status_code(400)
-    })?;
+    let (f, gate_privilege) =
+        fs::utils::resolve_gate_with_clearance_check(fs, path).map_err(|e| {
+            Response::json(&serde_json::json!({ "error": format!("{:?}", e) }))
+                .with_status_code(400)
+        })?;
     let gate_privilege = Some(gate_privilege.into());
     let label = fs::utils::get_current_label();
     let label = label.into();
@@ -184,52 +197,32 @@ fn wait_for_completion(
     })?;
 
     use prost::Message;
-    use snapfaas::sched::message::{ReturnCode, TaskReturn};
-    let ret = match TaskReturn::decode(bs.as_slice()) {
-        Ok(TaskReturn { code, payload, label }) => {
-            if !Into::<Buckle>::into(label.clone().unwrap()).can_flow_to_with_privilege(&fs::utils::get_current_label(), &fs::utils::get_privilege()) {
+    use snapfaas::sched::message::TaskReturn;
+    match TaskReturn::decode(bs.as_slice()) {
+        Ok(tr) => {
+            if !Into::<Buckle>::into(tr.label.clone().unwrap()).can_flow_to_with_privilege(
+                &fs::utils::get_current_label(),
+                &fs::utils::get_privilege(),
+            ) {
                 Err(Response::json(&serde_json::json!({
                     "error": "unauthorized to read response",
-                    "label": format!("{:?}", Into::<Buckle>::into(label.unwrap())),
+                    "label": format!("{:?}", Into::<Buckle>::into(tr.label.unwrap())),
                     "current_label": format!("{:?}", fs::utils::get_current_label()),
                     "privilege": format!("{:?}", fs::utils::get_privilege())
                 }))
                 .with_status_code(401))
             } else {
-                match ReturnCode::from_i32(code) {
-                    Some(ReturnCode::QueueFull) => Err(Response::json(&serde_json::json!({
-                        "error": "queue full"
-                    }))
-                    .with_status_code(500)),
-                    Some(ReturnCode::LaunchFailed) => Err(Response::json(&serde_json::json!({
-                        "error": "failed to launch the VM"
-                    }))
-                    .with_status_code(500)),
-                    Some(ReturnCode::GateNotExist) => Err(Response::json(&serde_json::json!({
-                        "error": "gate does not exist"
-                    }))
-                    .with_status_code(500)),
-                    Some(ReturnCode::ResourceExhausted) => Err(Response::json(&serde_json::json!({
-                        "error": "resource exhausted"
-                    }))
-                    .with_status_code(500)),
-                    Some(ReturnCode::ProcessRequestFailed) => Err(Response::json(&serde_json::json!({
-                        "error": "failed to process request"
-                    }))
-                    .with_status_code(500)),
-                    Some(ReturnCode::Success) => Ok(payload.unwrap()),
-                    None => Err(Response::json(&serde_json::json!({
-                        "error": "unknown return code"
-                    }))
-                    .with_status_code(500)),
+                let resp: Response = tr.into();
+                if resp.is_success() {
+                    Ok(resp)
+                } else {
+                    Err(resp)
                 }
             }
-        },
+        }
         Err(_) => Err(Response::json(&serde_json::json!({
             "error": "failed to decode return from Faasten core"
         }))
         .with_status_code(500)),
-    }?;
-
-    Ok(Response::from_data("application/octet-stream", ret))
+    }
 }

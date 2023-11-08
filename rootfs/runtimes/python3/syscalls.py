@@ -1,3 +1,4 @@
+from abc import abstractmethod
 import syscalls_pb2
 import socket
 import struct
@@ -39,6 +40,41 @@ def convert_path(path):
     return converted
 
 ### end of helper functions ###
+
+class Response():
+    @abstractmethod
+    def body_to_bytes(self):
+        pass
+    @abstractmethod
+    def status_code(self):
+        pass
+
+class ResponseDict(Response):
+    def __init__(self, val, code=200):
+        self._val = val
+        self._code = code
+    def body_to_bytes(self):
+        return json.dumps(self._val).encode('utf-8')
+    def status_code(self):
+        return self._code
+
+class ResponseStr(Response):
+    def __init__(self, val, code=200):
+        self._val = val
+        self._code = code
+    def body_to_bytes(self):
+        return self._val.encode('utf-8')
+    def status_code(self):
+        return self._code
+
+class ResponseRaw(Response):
+    def __init__(self, val, code=200):
+        self._val = val
+        self._code = code
+    def body_to_bytes(self):
+        return self._val
+    def status_code(self):
+        return self._code
 
 class DummyBackend():
     def sendall(self, bs):
@@ -264,8 +300,8 @@ class Syscall():
         request = syscalls_pb2.Request()
         return self._recv(request)
 
-    def respond(self, response):
-        response = syscalls_pb2.Syscall(response = syscalls_pb2.Response(payload = response))
+    def respond(self, resp: Response):
+        response = syscalls_pb2.Syscall(response = syscalls_pb2.Response(body = resp.body_to_bytes(), statusCode = resp.status_code()))
         self._send(response)
 
     def root(self):

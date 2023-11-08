@@ -46,7 +46,8 @@ message Request {
 }
 
 message Response {
-  bytes payload = 1;
+  optional bytes body = 1;
+  uint32 statusCode = 2;
 }
 
 message DentResult {

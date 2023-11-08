@@ -87,6 +87,7 @@ tikv-client = "0.2.0"
 openssl = "*"
 jwt = { version = "0.15.0", features = [ "openssl" ]}
 strfmt = "*"
+rouille = "3.6.2"
 
 
 [build-dependencies]
