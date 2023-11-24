@@ -6,7 +6,7 @@ use std::net::TcpStream;
 use crate::blobstore::{self, Blob, Blobstore};
 use crate::fs::{
     self, BackingStore, DirEntry, DirectGate, FsError, Function, Gate, RedirectGate, Service,
-    CURRENT_LABEL, FS,
+    CURRENT_LABEL, FS, PRIVILEGE,
 };
 use crate::sched::message::{ReturnCode, TaskReturn};
 use crate::sched::{self, message};
@@ -708,6 +708,7 @@ impl<'a, B: BackingStore + 'a> SyscallProcessor<'a, B> {
                             payload,
                             headers: parameters,
                             sync,
+                            invoker: Some(PRIVILEGE.with(|p| p.borrow().clone()).into()),
                         },
                     )
                     .ok()?;
@@ -1094,6 +1095,7 @@ impl<'a, B: BackingStore + 'a> SyscallProcessor<'a, B> {
         payload: Vec<u8>,
         mut blobs: HashMap<String, Blob>,
         headers: HashMap<String, String>,
+        invoker: Component,
         s: &mut impl SyscallChannel,
     ) -> Result<TaskReturn, SyscallProcessorError> {
         use prost::Message;
@@ -1106,11 +1108,32 @@ impl<'a, B: BackingStore + 'a> SyscallProcessor<'a, B> {
                 (k, blobfd)
             })
             .collect();
+        use self::syscalls::TokenList;
+        fn from_invoker_privilege_to_invoker_principal_list(invoker: Component) -> Vec<TokenList> {
+            match invoker {
+                labeled::buckle::Component::DCFalse => {
+                    // no one can be the root
+                    panic!("The invoker is deemed to be the root.")
+                }
+                labeled::buckle::Component::DCFormula(set) => {
+                    // A privilege should always be a conjunction of singleton clauses
+                    // e.g., princeton/alice&princeton/bob&... and never
+                    // princeton/alice|princeton/bob&princeton/emily
+                    set.iter().fold(Vec::new(), |mut res, clause| {
+                        res.push(TokenList {
+                            tokens: clause.0.first().unwrap().clone(),
+                        });
+                        res
+                    })
+                }
+            }
+        }
         s.send(
             syscalls::Request {
                 payload,
                 blobs: blobfds,
                 headers,
+                invoker: from_invoker_privilege_to_invoker_principal_list(invoker),
             }
             .encode_to_vec(),
         )?;

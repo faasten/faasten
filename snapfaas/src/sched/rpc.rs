@@ -65,29 +65,6 @@ pub fn labeled_invoke(
     Ok(())
 }
 
-/// This method is for workers to invoke a function
-pub fn unlabeled_invoke(
-    stream: &mut TcpStream,
-    unlabeled_invoke: message::UnlabeledInvoke,
-) -> Result<(), Error> {
-    let req = Request {
-        kind: Some(ReqKind::UnlabeledInvoke(unlabeled_invoke)),
-    };
-    message::write(stream, &req)?;
-    //let _ = message::read_response(stream)?;
-    Ok(())
-}
-
-///// This method is to terminate all workers (for debug)
-//pub fn terminate_all(stream: &mut TcpStream) -> Result<(), Error> {
-//    let req = Request {
-//        kind: Some(ReqKind::TerminateAll(message::TerminateAll {})),
-//    };
-//    message::write(stream, &req)?;
-//    //let _ = message::read_response(stream)?;
-//    Ok(())
-//}
-
 /// This method is for local resource managers to update it's
 /// resource status, such as number of cached VMs per function
 pub fn update_resource(stream: &mut TcpStream, info: ResourceInfo) -> Result<(), Error> {

@@ -43,6 +43,8 @@ message Request {
   bytes payload = 1;
   map <string, uint64> blobs = 2;
   map <string, string> headers = 3;
+  // list of principals in the invoker's privilege
+  repeated TokenList invoker = 4;
 }
 
 message Response {

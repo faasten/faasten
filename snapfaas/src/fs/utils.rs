@@ -1,6 +1,46 @@
+//! Util functions called by admin_fstools
 use super::*;
 use labeled::buckle::{Buckle, Component};
 use labeled::Label;
+
+pub fn create_or_update_file<S: BackingStore, P: Into<self::path::Path>>(
+    fs: &FS<S>,
+    base_dir: P,
+    name: String,
+    label: Buckle,
+    data: Vec<u8>,
+) -> Result<(), FsError> {
+    if let DirEntry::Directory(dir) = fs.read_path(base_dir)? {
+        match dir.list(fs).get(&name) {
+            Some(DirEntry::File(fileentry)) => fileentry.write(data, fs).map_err(Into::into),
+            Some(_) => {
+                dir.unlink(&name, fs)?;
+                let new_file = fs.create_file(label);
+                match new_file {
+                    DirEntry::File(filentry) => {
+                        filentry.write(data, fs).map_err(Into::<FsError>::into)?
+                    }
+                    _ => panic!("should never reach here."),
+                }
+                dir.link(name, new_file, fs)?;
+                Ok(())
+            }
+            None => {
+                let new_file = fs.create_file(label);
+                match new_file {
+                    DirEntry::File(filentry) => {
+                        filentry.write(data, fs).map_err(Into::<FsError>::into)?
+                    }
+                    _ => panic!("should never reach here."),
+                }
+                dir.link(name, new_file, fs)?;
+                Ok(())
+            }
+        }
+    } else {
+        Err(FsError::BadPath)
+    }
+}
 
 pub fn create_or_update_blob<S: BackingStore, P: Into<self::path::Path>>(
     fs: &FS<S>,
@@ -11,15 +51,13 @@ pub fn create_or_update_blob<S: BackingStore, P: Into<self::path::Path>>(
 ) -> Result<(), FsError> {
     if let DirEntry::Directory(dir) = fs.read_path(base_dir)? {
         match dir.list(fs).get(&name) {
-            Some(DirEntry::Blob(blobentry)) => {
-                blobentry.replace(blob_name, fs).map_err(Into::into)
-            },
+            Some(DirEntry::Blob(blobentry)) => blobentry.replace(blob_name, fs).map_err(Into::into),
             Some(_) => {
                 dir.unlink(&name, fs)?;
                 let new_blob = fs.create_blob(label, blob_name)?;
                 dir.link(name, new_blob, fs)?;
                 Ok(())
-            },
+            }
             None => {
                 let new_blob = fs.create_blob(label, blob_name)?;
                 dir.link(name, new_blob, fs)?;
@@ -60,7 +98,7 @@ pub fn resolve_gate_with_clearance_check<S: BackingStore, P: Into<self::path::Pa
                     Err(FsError::GateError(GateError::CannotInvoke))
                 }
             })
-        },
+        }
         _ => Err(FsError::NotAGate),
     }
 }

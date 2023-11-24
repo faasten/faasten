@@ -137,7 +137,13 @@ fn main() {
         debug!("request: {:?}", req);
         let processor =
             syscall_server::SyscallProcessor::new(&mut env, startlbl.clone(), mypriv.clone());
-        match processor.run(req.into(), Default::default(), Default::default(), &mut vm) {
+        match processor.run(
+            req.into(),
+            Default::default(),
+            Default::default(),
+            mypriv.clone(),
+            &mut vm,
+        ) {
             Ok(rsp) => {
                 let t2 = Instant::now();
                 eprintln!(

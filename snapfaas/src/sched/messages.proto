@@ -21,13 +21,6 @@ message Function {
   string kernel = 4;
 }
 
-message UnlabeledInvoke {
-    Function             function = 1;
-    bytes                payload  = 2;
-    map <string, string> blobs    = 3;
-    map <string, string> headers  = 4;
-}
-
 message LabeledInvoke {
     Function             function         = 1;
     syscalls.Buckle      label            = 2;
@@ -36,6 +29,7 @@ message LabeledInvoke {
     map <string, string> blobs            = 5;
     map <string, string> headers          = 6;
     bool                 sync             = 7;
+    syscalls.Component   invoker          = 8;
 }
 
 message UpdateResource {
@@ -50,11 +44,6 @@ message TerminateAll {}
 message ProcessTask {
     string        taskId        = 1;
     LabeledInvoke labeledInvoke = 2;
-}
-
-message ProcessTaskInsecure {
-    string taskId = 1;
-    UnlabeledInvoke unlabeledInvoke = 2;
 }
 
 message Terminate {}
@@ -75,7 +64,6 @@ message Request {
         // Debug
         TerminateAll   terminateAll   = 6;
         Ping           ping           = 7;
-        UnlabeledInvoke unlabeledInvoke = 8;
     }
 }
 
@@ -88,8 +76,6 @@ message Response {
         Fail        fail        = 3;
         TaskReturn  success     = 4;
         Pong        pong        = 5;
-        // Worker
-        ProcessTaskInsecure processTaskInsecure = 6;
     }
 }
 
