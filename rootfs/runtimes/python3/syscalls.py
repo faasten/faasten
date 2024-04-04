@@ -691,13 +691,13 @@ class Syscall():
         Yield:
             An instance of class NewBlob
         """
-        req = syscalls_pb2.Syscall(createBlob=syscalls_pb2.BlobCreate(size=size))
+        req = syscalls_pb2.Syscall(blobCreate=syscalls_pb2.BlobCreate(size=size))
         self._send(req)
         response = self._recv(syscalls_pb2.BlobResponse())
         if response.success:
             fd = response.fd
             yield NewBlob(fd, self)
-            syscalls_pb2.Syscall(closeBlob=syscalls_pb2.BlobClose(fd=fd))
+            syscalls_pb2.Syscall(blobClose=syscalls_pb2.BlobClose(fd=fd))
             self._send(req)
             response = self._recv(syscalls_pb2.BlobResponse())
         else:
@@ -739,13 +739,13 @@ class NewBlob():
         self.syscall = syscall
 
     def write(self, data):
-        req = syscalls_pb2.Syscall(writeBlob=syscalls_pb2.BlobWrite(fd=self.fd, data=data))
+        req = syscalls_pb2.Syscall(blobWrite=syscalls_pb2.BlobWrite(fd=self.fd, data=data))
         self.syscall._send(req)
         response = self.syscall._recv(syscalls_pb2.BlobResponse())
         return response.success
 
     def finalize(self, data):
-        req = syscalls_pb2.Syscall(finalizeBlob=syscalls_pb2.BlobFinalize(fd=self.fd, data=data))
+        req = syscalls_pb2.Syscall(blobFinalize=syscalls_pb2.BlobFinalize(fd=self.fd, data=data))
         self.syscall._send(req)
         response = self.syscall._recv(syscalls_pb2.BlobResponse())
         return response.data.decode("utf-8")
