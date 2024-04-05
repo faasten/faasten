@@ -745,7 +745,7 @@ class NewBlob():
         return response.success
 
     def finalize(self, data):
-        req = syscalls_pb2.Syscall(blobFinalize=syscalls_pb2.BlobFinalize(fd=self.fd, data=data))
+        req = syscalls_pb2.Syscall(blobFinalize=syscalls_pb2.BlobFinalize(fd=self.fd))
         self.syscall._send(req)
         response = self.syscall._recv(syscalls_pb2.BlobResult())
         return response.data.decode("utf-8")
