@@ -1,0 +1,24 @@
+FROM openwhisk/python3action:95f1358
+
+RUN apk add openrc
+RUN rc-update add devfs boot
+RUN rc-update add procfs boot
+
+RUN printf '#!/sbin/openrc-run\n \
+    command="/bin/workload"\n' > /etc/init.d/serverless-workload
+RUN chmod +x /etc/init.d/serverless-workload
+RUN rc-update add serverless-workload default
+
+RUN echo -n > /etc/fstab
+
+ADD workload.sh /bin/workload
+RUN chmod +x /bin/workload
+
+ADD workload.py /bin/runtime-workload.py
+
+ENV PYTHON python3.6
+
+ADD syscalls.py /usr/local/lib/$PYTHON/syscalls.py
+ADD syscalls_pb2.py /usr/local/lib/$PYTHON/syscalls_pb2.py
+
+CMD ls /bin | grep workload
