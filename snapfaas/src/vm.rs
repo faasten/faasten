@@ -114,7 +114,7 @@ impl Vm {
             args.extend_from_slice(&["--appfs", f]);
         }
         if let Some(load_dir) = function_config.load_dir.as_ref() {
-            args.extend_from_slice(&["--load-from", load_dir]);
+            args.extend_from_slice(&["--load-dir", load_dir]);
             if function_config.copy_base {
                 args.push("--copy-base");
             }

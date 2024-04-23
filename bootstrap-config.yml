@@ -1,4 +1,4 @@
-kernel: resources/images/vmlinux-4.20.0
+kernel: resources/images/vmlinux-5.10.210
 python: rootfs/python3.img
 fsutil: functions/output/fsutil.img
 other_runtimes: []
